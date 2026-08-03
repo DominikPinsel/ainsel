@@ -1,0 +1,32 @@
+{{- if and .Values.ui.enabled .Values.ui.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hub-frontend
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "ainsel.labels" . | nindent 4 }}
+    app.kubernetes.io/component: hub-frontend
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    {{- with .Values.ui.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ui.ingress.className }}
+  tls:
+    - hosts:
+        - {{ .Values.ui.ingress.host }}
+      secretName: forgejo-tls
+  rules:
+    - host: {{ .Values.ui.ingress.host }}
+      http:
+        paths:
+          - path: {{ .Values.ui.ingress.path }}
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: hub-frontend
+                port:
+                  name: http
+{{- end }}

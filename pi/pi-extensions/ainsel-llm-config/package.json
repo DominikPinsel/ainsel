@@ -1,0 +1,11 @@
+{
+  "name": "pi-ainsel-llm-config",
+  "version": "0.1.0",
+  "description": "Workaround pi extension: injects LLM sampling params (temperature) into provider requests via before_provider_request. Delete once pi adds native temperature support to models.json.",
+  "main": "index.ts",
+  "type": "module",
+  "license": "Apache-2.0",
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}

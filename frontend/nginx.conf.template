@@ -1,0 +1,41 @@
+# DNS resolver for runtime upstream lookup. In Kubernetes this is the cluster
+# DNS service (10.96.0.10 by default; override via RESOLVER_ADDRESS).
+resolver ${RESOLVER_ADDRESS} ipv6=off valid=30s;
+
+server {
+    listen 80;
+    server_name _;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # SPA fallback: anything not matching a static file falls back to index.html
+    # so client-side React Router can handle the route.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Proxy API calls to the hub backend.
+    # Variable-based proxy_pass forces nginx to resolve at request time so the
+    # container starts even if the backend is down.
+    location /api/ {
+        set $backend "http://${BACKEND_HOST}:${BACKEND_PORT}";
+        proxy_pass $backend/api/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_read_timeout 300s;
+    }
+
+    location /ws/ {
+        set $ws_backend "http://${BACKEND_HOST}:${BACKEND_PORT}";
+        proxy_pass $ws_backend/ws/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 86400s;
+    }
+}

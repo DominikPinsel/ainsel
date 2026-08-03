@@ -1,0 +1,1 @@
+export { ImageDetailPage as ImageDetail } from './ImageDetailPage'

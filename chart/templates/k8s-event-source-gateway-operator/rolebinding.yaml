@@ -1,0 +1,16 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Release.Name }}-k8s-event-source-gateway-operator
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "ainsel.labels" . | nindent 4 }}
+    app.kubernetes.io/component: k8s-event-source-gateway-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .Release.Name }}-k8s-event-source-gateway-operator
+subjects:
+  - kind: ServiceAccount
+    name: k8s-event-source-gateway-operator
+    namespace: {{ .Values.namespace }}

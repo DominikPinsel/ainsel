@@ -1,0 +1,16 @@
+ALTER TABLE mcp_servers
+  ADD COLUMN url          TEXT NOT NULL DEFAULT '',
+  ADD COLUMN bearer_token TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE mcp_servers
+  DROP COLUMN IF EXISTS image_repo,
+  DROP COLUMN IF EXISTS image_tag,
+  DROP COLUMN IF EXISTS transport,
+  DROP COLUMN IF EXISTS port,
+  DROP COLUMN IF EXISTS path,
+  DROP COLUMN IF EXISTS env,
+  DROP COLUMN IF EXISTS env_from,
+  DROP COLUMN IF EXISTS resources,
+  DROP COLUMN IF EXISTS managed_by;
+
+DROP INDEX IF EXISTS idx_mcp_servers_managed_by;

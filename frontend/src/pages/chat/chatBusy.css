@@ -1,0 +1,26 @@
+/* ===== Chat busy notification ===== */
+.chat-busy {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--paper-2);
+  border-bottom: var(--hair) solid var(--ink);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+.chat-busy-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+  animation: chat-busy-pulse 1.4s ease-in-out infinite;
+}
+@keyframes chat-busy-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}

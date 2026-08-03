@@ -1,0 +1,32 @@
+{{- if .Values.hub.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hub-backend
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "ainsel.labels" . | nindent 4 }}
+    app.kubernetes.io/component: hub-backend
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    {{- with .Values.hub.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.hub.ingress.className }}
+  tls:
+    - hosts:
+        - {{ .Values.hub.ingress.host }}
+      secretName: hub-tls
+  rules:
+    - host: {{ .Values.hub.ingress.host }}
+      http:
+        paths:
+          - path: {{ .Values.hub.ingress.path }}(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: hub-backend
+                port:
+                  name: http
+{{- end }}

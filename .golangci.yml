@@ -1,0 +1,29 @@
+# golangci-lint configuration for the AInsel monorepo.
+#
+# Enables gosec with a starter set of security rules (issue #307).
+# All Go CI workflows already run `golangci-lint run ./...` and will
+# pick up this root config automatically — golangci-lint walks upward
+# from the working-directory to find the config file.
+
+run:
+  timeout: 5m
+
+linters:
+  # Preserve default linters (errcheck, gosimple, govet, ineffassign,
+  # staticcheck, unused) and add gosec for security scanning.
+  enable:
+    - gosec
+
+linters-settings:
+  gosec:
+    # Full gosec rule set enabled (issue #307).
+    exclude-generated: true
+    nosec: true
+    excludes:
+      - G706  # Log injection — false positive with slog structured logging
+      - G705  # XSS — false positive with JSON API responses
+
+issues:
+  # Show all gosec findings so they can be triaged.
+  max-issues-per-linter: 0
+  max-same-issues: 0

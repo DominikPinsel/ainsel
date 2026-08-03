@@ -1,0 +1,4 @@
+bin/
+/server
+/ainsel-mcp
+*.exe

@@ -1,0 +1,223 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: agentimages.ainsel.dev
+spec:
+  group: ainsel.dev
+  names:
+    kind: AgentImage
+    listKind: AgentImageList
+    plural: agentimages
+    singular: agentimage
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.displayName
+      name: Display Name
+      type: string
+    - jsonPath: .spec.imageURL
+      name: Image
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: AgentImage is the Schema for the agentimages API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: AgentImageSpec defines the desired state of an AgentImage.
+            properties:
+              description:
+                type: string
+              displayName:
+                type: string
+              enabledSkills:
+                items:
+                  type: string
+                type: array
+              env:
+                items:
+                  description: |-
+                    AgentImageEnvVar is a name/value environment variable injected into every
+                    agent pod that uses this image. These act as defaults: any variable already
+                    set by the operator (e.g. FORGEJO_URL from a wired connector) takes
+                    precedence.
+
+                    When Secret is true the value is treated as sensitive. The Hub API never
+                    returns the value for a secret env var; the frontend renders a masked
+                    input. On update, sending value "" for a secret env var means "keep the
+                    existing value".
+                  properties:
+                    name:
+                      type: string
+                    secret:
+                      type: boolean
+                    value:
+                      type: string
+                  required:
+                  - name
+                  - value
+                  type: object
+                type: array
+              imageURL:
+                type: string
+              mcpServers:
+                items:
+                  description: |-
+                    AgentImageMCPServer configures an external MCP server whose tools are
+                    imported into the image tool catalog via an explicit refresh.
+                  properties:
+                    name:
+                      type: string
+                    tokenFromEnv:
+                      description: |-
+                        TokenFromEnv is the name of an agent-pod env var whose value is
+                        forwarded as the bearer token to this MCP server. Empty means anonymous.
+                      maxLength: 64
+                      pattern: ^[A-Z_][A-Z0-9_]*$
+                      type: string
+                    url:
+                      type: string
+                  required:
+                  - name
+                  - url
+                  type: object
+                type: array
+              sidecars:
+                items:
+                  description: |-
+                    AgentImageSidecar configures a sidecar container injected into every
+                    agent pod that uses this image. Sidecars run alongside the agent runtime
+                    in the same pod and share its network namespace (accessible via localhost).
+
+                    When a sidecar's MCPPath is non-empty, the operator automatically appends
+                    an entry to MCP_SERVERS in the form "<name>=http://localhost:<port><mcpPath>".
+                  properties:
+                    env:
+                      description: |-
+                        Env is a list of environment variables injected into the sidecar container.
+                        Values that reference Secret keys use the same <agent>-image-env Secret
+                        as the main container.
+                      items:
+                        description: |-
+                          AgentImageEnvVar is a name/value environment variable injected into every
+                          agent pod that uses this image. These act as defaults: any variable already
+                          set by the operator (e.g. FORGEJO_URL from a wired connector) takes
+                          precedence.
+
+                          When Secret is true the value is treated as sensitive. The Hub API never
+                          returns the value for a secret env var; the frontend renders a masked
+                          input. On update, sending value "" for a secret env var means "keep the
+                          existing value".
+                        properties:
+                          name:
+                            type: string
+                          secret:
+                            type: boolean
+                          value:
+                            type: string
+                        required:
+                        - name
+                        - value
+                        type: object
+                      type: array
+                    image:
+                      description: Image is the container image URL.
+                      type: string
+                    mcpPath:
+                      description: |-
+                        MCPPath, when non-empty, causes the operator to append an MCP_SERVERS
+                        entry pointing to this sidecar (e.g. "/mcp"). Empty means the sidecar
+                        is not an MCP server and no MCP_SERVERS entry is added.
+                      type: string
+                    name:
+                      description: Name is the container name and the MCP server name
+                        used in MCP_SERVERS.
+                      type: string
+                    port:
+                      description: Port is the container listen port. Defaults to
+                        8080.
+                      format: int32
+                      type: integer
+                  required:
+                  - image
+                  - name
+                  type: object
+                type: array
+              tools:
+                items:
+                  description: AgentImageTool describes a single capability exposed
+                    by the image.
+                  properties:
+                    description:
+                      type: string
+                    disabled:
+                      type: boolean
+                    examples:
+                      items:
+                        properties:
+                          snippet:
+                            type: string
+                          title:
+                            type: string
+                        required:
+                        - snippet
+                        - title
+                        type: object
+                      type: array
+                    isNew:
+                      type: boolean
+                    kind:
+                      enum:
+                      - container
+                      - shell
+                      - mcp
+                      type: string
+                    mcpSource:
+                      type: string
+                    name:
+                      type: string
+                  required:
+                  - kind
+                  - name
+                  type: object
+                type: array
+            required:
+            - displayName
+            - imageURL
+            type: object
+          status:
+            description: AgentImageStatus defines the observed state of an AgentImage.
+            properties:
+              phase:
+                enum:
+                - Ready
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

@@ -1,0 +1,64 @@
+# ainsel-pi variant: .NET MAUI
+#
+# Extends the base ainsel-pi image with the .NET 8 SDK, Android SDK,
+# and the MAUI Android workload so agents can build, test, and lint
+# .NET MAUI projects.
+#
+# Build:
+#   docker build --build-arg BASE_TAG=main -t ainsel/ainsel-pi:maui -f pi/Dockerfile.maui pi/
+
+ARG BASE_TAG=latest
+FROM dpinsel/ainsel-pi:${BASE_TAG}
+
+USER root
+
+# Install dependencies for .NET + Android SDK.
+# - wget: fetch Microsoft packages and Android command line tools.
+# - unzip: extract Android command line tools archive.
+# - openjdk-17-jdk: Android SDK requires a JDK.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        wget unzip openjdk-17-jdk \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install .NET 8 SDK via Microsoft APT repository.
+RUN wget -q "https://packages.microsoft.com/config/debian/12/packages-microsoft-prod.deb" \
+        -O /tmp/packages-microsoft-prod.deb \
+    && dpkg -i /tmp/packages-microsoft-prod.deb \
+    && rm /tmp/packages-microsoft-prod.deb \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends dotnet-sdk-8.0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Android SDK command line tools and required components.
+ENV ANDROID_HOME=/usr/local/android-sdk
+ENV ANDROID_SDK_ROOT=${ANDROID_HOME}
+ENV PATH=${PATH}:${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools
+
+# Download and unpack Android command line tools.  The URL below redirects
+# to the latest version; the checksum is not pinned because Google rotates
+# the archive frequently.  This is acceptable for an agent build image.
+RUN mkdir -p ${ANDROID_HOME}/cmdline-tools \
+    && wget -q \
+        "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip" \
+        -O /tmp/cmdline-tools.zip \
+    && unzip -q /tmp/cmdline-tools.zip -d ${ANDROID_HOME}/cmdline-tools \
+    && mv ${ANDROID_HOME}/cmdline-tools/cmdline-tools \
+        ${ANDROID_HOME}/cmdline-tools/latest \
+    && rm /tmp/cmdline-tools.zip
+
+# Accept Android SDK licenses silently and install the minimum set of
+# packages needed to compile a MAUI Android app.
+RUN yes | sdkmanager --licenses >/dev/null 2>&1 \
+    && sdkmanager \
+        "platform-tools" \
+        "platforms;android-34" \
+        "build-tools;34.0.0"
+
+# Install the MAUI Android workload.  This pulls in the Android target
+# framework packs required by `dotnet build` for MAUI projects.
+RUN dotnet workload install maui-android --no-cache
+
+# Re-assert the agent user so the runtime stays non-root.
+USER agent
+
+# Inherits ENTRYPOINT from the base image.

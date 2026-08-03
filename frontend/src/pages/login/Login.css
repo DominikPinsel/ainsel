@@ -1,0 +1,78 @@
+.login-card {
+  width: 380px;
+  max-width: 100%;
+  display: grid;
+  gap: 18px;
+  padding: 32px 28px;
+  border: var(--rule-w) solid var(--ink);
+  background: var(--paper);
+}
+.login-brand {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  margin-bottom: 4px;
+}
+.login-brand h1 {
+  margin: 0;
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 28px;
+  letter-spacing: -0.01em;
+  line-height: 1;
+}
+.login-brand h1 em {
+  font-style: italic;
+  font-weight: 400;
+  color: var(--ink-3);
+}
+.login-brand .brand-mark {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--ink);
+  position: relative;
+  transform: translateY(4px);
+}
+.login-brand .brand-mark::before,
+.login-brand .brand-mark::after {
+  content: '';
+  position: absolute;
+  background: var(--ink);
+}
+.login-brand .brand-mark::before {
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 2px;
+}
+.login-brand .brand-mark::after {
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+}
+.login-brand .brand-mark span {
+  position: absolute;
+  inset: 4px;
+  background: var(--signal);
+  width: 6px;
+  height: 6px;
+}
+.login-error {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--signal);
+  border: 1.5px solid var(--signal);
+  padding: 8px 10px;
+  background: var(--signal-haze);
+}
+.login-remember {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}

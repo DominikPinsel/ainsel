@@ -1,0 +1,46 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Release.Name }}-agent-operator
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "ainsel.labels" . | nindent 4 }}
+    app.kubernetes.io/component: k8s-ai-agent-operator
+rules:
+  - apiGroups: ["ainsel.dev"]
+    resources: ["agents", "agents/status", "agentimages", "agentimages/status"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["ainsel.dev"]
+    resources: ["webhookconnectors"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["services", "secrets", "serviceaccounts"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # configmaps: The operator creates/updates two ConfigMaps per agent:
+  #   - <agent>-pi-models: LLM model definitions for ollama-cloud agents
+  #   - <agent>-forgejo-urls: connector URL mappings for multi-connector mode
+  # Persona ConfigMaps ("persona-<id>") are owned by the hub and only need
+  # read access, but the operator-owned ConfigMaps require write verbs.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["monitoring.coreos.com"]
+    resources: ["servicemonitors"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # The operator reconciles a KEDA ScaledObject per Agent (driving the
+  # min/maxReplicas + autoscaling). Without this rule the
+  # reconcile aborts at the ScaledObject step before injecting downstream env
+  # (notably FORGEJO_URL) into the Deployment, so new agent pods fail
+  # readiness with "FORGEJO_URL is not set" and crash-loop indefinitely.
+  - apiGroups: ["keda.sh"]
+    resources: ["scaledobjects"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

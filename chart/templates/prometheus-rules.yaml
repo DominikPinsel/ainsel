@@ -1,0 +1,31 @@
+{{- if .Values.observability.prometheusRules.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ .Release.Name }}-alerts
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "ainsel.labels" . | nindent 4 }}
+spec:
+  groups:
+    - name: ainsel.resource-alerts
+      rules:
+        - alert: CPUThrottlingHigh
+          annotations:
+            summary: "Container CPU throttling is high for {{`{{ $labels.namespace }}`}}/{{`{{ $labels.pod }}`}}/{{`{{ $labels.container }}`}}"
+            description: "Container {{`{{ $labels.container }}`}} in pod {{`{{ $labels.pod }}`}} (namespace {{`{{ $labels.namespace }}`}}) is being throttled for more than 25% of the time over the last 5 minutes."
+          expr: |
+            rate(container_cpu_cfs_throttled_seconds_total[5m]) > 0.25
+          for: 5m
+          labels:
+            severity: warning
+        - alert: ContainerOOMKilled
+          annotations:
+            summary: "Container {{`{{ $labels.container }}`}} was OOMKilled in {{`{{ $labels.namespace }}`}}/{{`{{ $labels.pod }}`}}"
+            description: "Container {{`{{ $labels.container }}`}} in pod {{`{{ $labels.pod }}`}} (namespace {{`{{ $labels.namespace }}`}}) was terminated due to OOMKilled."
+          expr: |
+            increase(kube_pod_container_status_last_terminated_reason{reason="OOMKilled"}[5m]) > 0
+          for: 1m
+          labels:
+            severity: critical
+{{- end }}

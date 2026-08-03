@@ -1,0 +1,26 @@
+#!/bin/sh
+# /usr/local/bin/agent — the list-tools shim.
+#
+# hub-backend's AgentImage tool-sync Job sets
+#   command: ["agent", "--list-tools"]
+# which overrides the container's ENTRYPOINT and exec's THIS script.
+# We dispatch to agent-shim.js for the manifest output.
+#
+# Any other `agent` subcommand is unsupported in the pi-native image —
+# the event loop lives in runner.js (launched by entrypoint.sh), not here.
+
+set -eu
+
+case "${1:-}" in
+  --list-tools)
+    exec node /usr/local/share/ainsel-pi/agent-shim.js --list-tools
+    ;;
+  *)
+    cat >&2 <<'EOF'
+agent: this is the pi-native ainsel-pi runtime image. Only `agent --list-tools`
+is supported as an `agent` subcommand. The runtime event loop
+is `node /usr/local/bin/runner.js`, launched by /usr/local/bin/entrypoint.sh.
+EOF
+    exit 64
+    ;;
+esac

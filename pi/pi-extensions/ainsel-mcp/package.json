@@ -1,0 +1,14 @@
+{
+  "name": "pi-ainsel-mcp",
+  "version": "0.1.0",
+  "description": "Pi extension: connects to MCP servers listed in MCP_SERVERS env and registers their tools with pi.registerTool.",
+  "main": "index.ts",
+  "type": "module",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}

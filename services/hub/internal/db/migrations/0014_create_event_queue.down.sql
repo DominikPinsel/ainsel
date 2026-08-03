@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS agent_tasks;
+DROP TABLE IF EXISTS events;

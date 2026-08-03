@@ -1,0 +1,116 @@
+# Example values overlay for OSS users
+# Copy this file and fill in your own values before deploying.
+# Do NOT commit secrets into version control.
+
+namespace: ainsel
+
+agentOperator:
+  image:
+    repository: dpinsel/ainsel-k8s-ai-agent-operator
+    tag: latest
+    pullPolicy: IfNotPresent
+  forgejoUrl: ""
+  forgejoTokenSecret:
+    name: forgejo-admin-token
+    key: token
+
+connectorOperator:
+  image:
+    repository: dpinsel/ainsel-k8s-event-source-gateway-operator
+    tag: latest
+    pullPolicy: IfNotPresent
+  # Pull policy for the webhook-receiver connector pods the operator creates.
+  # Set to Always when using a mutable tag (e.g. dev/latest).
+  connectorImagePullPolicy: IfNotPresent
+
+hub:
+  image:
+    repository: dpinsel/ainsel-hub-backend
+    tag: latest
+    pullPolicy: IfNotPresent
+  namespace: ainsel
+  platformExternalUrl: "https://ainsel.example.com/ainsel"
+  connectorImages:
+    webhook:
+      repository: dpinsel/ainsel-webhook-receiver
+      tag: latest
+  ingress:
+    enabled: true
+    host: ainsel.example.com
+    path: /ainsel/api
+    className: nginx
+    annotations:
+      nginx.ingress.kubernetes.io/rewrite-target: /api/$2
+      # Example environment-specific annotations — uncomment and adjust:
+      # cert-manager.io/cluster-issuer: letsencrypt-prod
+      # nginx.ingress.kubernetes.io/ssl-redirect: "true"
+      # nginx.ingress.kubernetes.io/auth-url: http://authelia.auth.svc.cluster.local:9091/authelia/api/authz/auth-request
+      # nginx.ingress.kubernetes.io/auth-signin: https://ainsel.example.com/authelia/?rd=$scheme://$host$request_uri
+ui:
+  enabled: true
+  basePath: /ainsel
+  image:
+    repository: dpinsel/ainsel-hub-frontend
+    tag: latest
+    pullPolicy: IfNotPresent
+  ingress:
+    enabled: true
+    host: ainsel.example.com
+    path: /ainsel(/|$)(.*)
+    className: nginx
+    annotations:
+      nginx.ingress.kubernetes.io/rewrite-target: /$2
+      # Example environment-specific annotations — uncomment and adjust:
+      # cert-manager.io/cluster-issuer: letsencrypt-prod
+      # nginx.ingress.kubernetes.io/ssl-redirect: "true"
+      # nginx.ingress.kubernetes.io/auth-url: http://authelia.auth.svc.cluster.local:9091/authelia/api/authz/auth-request
+      # nginx.ingress.kubernetes.io/auth-signin: https://ainsel.example.com/authelia/?rd=$scheme://$host$request_uri
+
+qdrant:
+  enabled: true
+  image:
+    repository: qdrant/qdrant
+    tag: latest
+  storage: 5Gi
+
+postgres:
+  enabled: true
+  storage: 5Gi
+
+observability:
+  prometheus:
+    url: ""
+  serviceMonitor:
+    enabled: false
+    labels: {}
+  podMonitor:
+    enabled: false
+    labels: {}
+
+auth:
+  oidcIssuer: ""
+  oidcClientId: ""
+  oidcProjectId: ""
+  internalValidateSecret: ""
+
+forgejo:
+  apiBase: ""
+  repo: ""
+
+mcp:
+  enabled: false
+  image:
+    repository: dpinsel/ainsel-mcp
+    tag: latest
+    pullPolicy: IfNotPresent
+  ingress:
+    enabled: true
+    host: ainsel.example.com
+    path: /ainsel/mcp
+    className: nginx
+    annotations:
+      # Example environment-specific annotations — uncomment and adjust:
+      # cert-manager.io/cluster-issuer: letsencrypt-prod
+      # nginx.ingress.kubernetes.io/ssl-redirect: "true"
+      # nginx.ingress.kubernetes.io/auth-url: http://authelia.auth.svc.cluster.local:9091/authelia/api/authz/auth-request
+      # nginx.ingress.kubernetes.io/auth-signin: https://ainsel.example.com/authelia/?rd=$scheme://$host$request_uri

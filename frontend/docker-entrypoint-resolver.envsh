@@ -1,0 +1,14 @@
+#!/bin/sh
+# Detect the DNS resolver from /etc/resolv.conf and export it so nginx's
+# envsubst template can use it. Falls back to 127.0.0.11 (Docker's embedded
+# DNS) if no nameserver is found.
+set -eu
+
+if [ -z "${RESOLVER_ADDRESS:-}" ]; then
+  RESOLVER_ADDRESS="$(awk '/^nameserver/ {print $2; exit}' /etc/resolv.conf 2>/dev/null || true)"
+  if [ -z "$RESOLVER_ADDRESS" ]; then
+    RESOLVER_ADDRESS="127.0.0.11"
+  fi
+  export RESOLVER_ADDRESS
+fi
+echo "ainsel-hub-frontend: using DNS resolver ${RESOLVER_ADDRESS}"

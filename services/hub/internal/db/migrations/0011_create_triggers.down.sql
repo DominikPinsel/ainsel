@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS cron_triggers;
+DROP TABLE IF EXISTS triggers;

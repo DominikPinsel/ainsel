@@ -1,0 +1,114 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: k8s-ai-agent-operator
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "ainsel.labels" . | nindent 4 }}
+    app.kubernetes.io/component: k8s-ai-agent-operator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ainsel-k8s-ai-agent-operator
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ainsel-k8s-ai-agent-operator
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: k8s-ai-agent-operator
+        {{- with .Values.agentOperator.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.agentOperator.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: k8s-ai-agent-operator
+      {{- with .Values.agentOperator.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.agentOperator.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.agentOperator.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.agentOperator.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.agentOperator.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.agentOperator.priorityClassName }}
+      priorityClassName: {{ .Values.agentOperator.priorityClassName }}
+      {{- end }}
+      containers:
+        - name: operator
+          image: "{{ .Values.agentOperator.image.repository }}:{{ .Values.agentOperator.image.tag }}"
+          imagePullPolicy: {{ .Values.agentOperator.image.pullPolicy }}
+          {{- with .Values.agentOperator.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          args:
+            - --leader-elect            {{- if .Values.agentOperator.agentGracePeriod }}
+            - --agent-grace-period={{ .Values.agentOperator.agentGracePeriod }}
+            {{- end }}
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: HUB_URL
+              value: "http://hub-backend.{{ .Values.namespace }}.svc.cluster.local:{{ .Values.hub.port | default 8080 }}"
+            {{- if .Values.auth.internalValidateSecret }}
+            - name: HUB_INTERNAL_VALIDATE_SECRET
+              value: {{ .Values.auth.internalValidateSecret | quote }}
+            {{- end }}
+            {{- if and .Values.chatMCP.image.repository .Values.chatMCP.image.tag }}
+            - name: CHAT_MCP_IMAGE
+              value: "{{ .Values.chatMCP.image.repository }}:{{ .Values.chatMCP.image.tag }}"
+            {{- end }}
+            {{- if .Values.agentOperator.forgejoUrl }}
+            - name: FORGEJO_URL
+              value: {{ .Values.agentOperator.forgejoUrl | quote }}
+            {{- end }}
+            {{- if .Values.agentOperator.forgejoTokenSecret }}
+            - name: FORGEJO_TOKEN_SECRET_NAME
+              value: {{ .Values.agentOperator.forgejoTokenSecret.name | quote }}
+            - name: FORGEJO_TOKEN_SECRET_KEY
+              value: {{ .Values.agentOperator.forgejoTokenSecret.key | quote }}
+            {{- end }}
+            {{- with .Values.agentOperator.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.agentOperator.resources | nindent 12 }}
+          {{- with .Values.agentOperator.extraVolumeMounts }}
+          volumeMounts:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      {{- with .Values.agentOperator.extraVolumes }}
+      volumes:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

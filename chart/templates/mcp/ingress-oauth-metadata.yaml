@@ -1,0 +1,37 @@
+{{- if and .Values.mcp.enabled .Values.mcp.ingress.enabled }}
+# Serves the RFC 8414 OAuth Authorization Server Metadata endpoint.
+#
+# Per RFC 8414 §3.1, when the issuer has a path component (e.g. /ainsel-dev/mcp),
+# the AS metadata URL is placed at the root of the domain:
+#   https://{host}/.well-known/oauth-authorization-server{path}
+#
+# The main MCP ingress only covers {path}/* so a separate ingress with a
+# fixed rewrite is needed. Without this, Claude Code's MCP OAuth flow
+# hits a redirect and fails with "Failed to parse JSON".
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ainsel-mcp-oauth-metadata
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: ainsel-mcp
+    app.kubernetes.io/component: mcp
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /.well-known/oauth-authorization-server
+    {{- with .Values.mcp.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.mcp.ingress.className }}
+  rules:
+    - host: {{ .Values.mcp.ingress.host }}
+      http:
+        paths:
+          - path: /.well-known/oauth-authorization-server{{ .Values.mcp.ingress.path }}
+            pathType: Exact
+            backend:
+              service:
+                name: ainsel-mcp
+                port:
+                  name: http
+{{- end }}

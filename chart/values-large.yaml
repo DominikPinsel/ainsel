@@ -1,0 +1,70 @@
+# Large tier overlay — estimated for ~100 active agents
+# NOT yet load-tested; adjust based on your workload observations.
+#
+# Usage:
+#   helm install ainsel . -n ainsel -f chart/values-large.yaml
+#   helm upgrade ainsel . -n ainsel -f chart/values-large.yaml
+
+
+agentOperator:
+  resources:
+    requests:
+      cpu: 300m
+      memory: 512Mi
+    limits:
+      cpu: 1
+      memory: 2Gi
+
+connectorOperator:
+  resources:
+    requests:
+      cpu: 300m
+      memory: 512Mi
+    limits:
+      cpu: 1
+      memory: 2Gi
+
+hub:
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2
+      memory: 4Gi
+
+ui:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+qdrant:
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2
+      memory: 4Gi
+
+postgres:
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2
+      memory: 4Gi
+
+mcp:
+  resources:
+    requests:
+      cpu: 300m
+      memory: 256Mi
+    limits:
+      cpu: 1
+      memory: 1Gi

@@ -1,0 +1,21 @@
+.dashboard-page {
+  padding: 28px 32px 48px;
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr;
+  gap: 24px;
+  margin-top: 32px;
+}
+
+.dashboard-grid-right {
+  display: grid;
+  gap: 24px;
+}
+
+@media (max-width: 1100px) {
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+}

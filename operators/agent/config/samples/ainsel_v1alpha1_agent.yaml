@@ -1,0 +1,59 @@
+apiVersion: ainsel.dev/v1alpha1
+kind: Agent
+metadata:
+  labels:
+    app.kubernetes.io/name: repo
+    app.kubernetes.io/managed-by: kustomize
+  name: agent-sample
+spec:
+  displayName: Sample Agent
+  imageRef:
+    name: agent-image-sample
+  runtime:
+    imagePullPolicy: IfNotPresent
+  llm:
+    model: llama3.1
+    provider: ollama-cloud
+    # The ollamaCloud provider requires an apiKeySecretRef; add one if you use this provider.
+    maxTurns: 10
+  persona:
+    id: 01HV8J3K2M4N5P6Q7R8S9T0UV
+---
+apiVersion: ainsel.dev/v1alpha1
+kind: Agent
+metadata:
+  labels:
+    app.kubernetes.io/name: repo
+    app.kubernetes.io/managed-by: kustomize
+  name: agent-sample-full
+spec:
+  displayName: Full Sample Agent
+  description: An example Agent with all common fields populated.
+  imageRef:
+    name: agent-image-sample
+  runtime:
+    imagePullPolicy: IfNotPresent
+    resources:
+      limits:
+        cpu: "1"
+        memory: "512Mi"
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+  llm:
+    model: gpt-4o
+    provider: opencode
+    maxTurns: 20
+    temperature: 0.7
+  persona:
+    id: 01HV8J3K2M4N5P6Q7R8S9T0UV
+  enabledTools:
+    - web-search
+    - code-interpreter
+  enabledMCPs:
+    - hub-mcp
+  scaling:
+    replicas: 2
+  memory:
+    enabled: true
+    provider: redis

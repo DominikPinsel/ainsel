@@ -1,0 +1,13 @@
+# .trivyignore — Documented suppressions for HIGH/CRITICAL CVEs
+#
+# Trivy automatically reads this file when scanning images.
+# Each entry must include the CVE ID and a justification comment.
+#
+# Format:
+#   # Justification for suppression
+#   CVE-XXXX-XXXXX
+#
+# No suppressions yet. Add entries here only when a CVE is:
+#   - Not fixable upstream (no patched version available)
+#   - A false positive for our usage
+#   - Mitigated by other controls (network policy, runtime restrictions)

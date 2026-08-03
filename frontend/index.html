@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,700&family=JetBrains+Mono:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <script>
+      (function () {
+        try {
+          var theme = localStorage.getItem('ainsel-theme')
+          var isDark = theme === 'dark' || (!theme && window.matchMedia('(prefers-color-scheme: dark)').matches)
+          document.documentElement.dataset.theme = isDark ? 'dark' : 'light'
+          document.documentElement.style.colorScheme = isDark ? 'dark' : 'light'
+        } catch (e) {}
+      })()
+    </script>
+    <title>AInsel Hub</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <!-- /__BASE_PATH__/ is a build-time placeholder. At container startup,
+         /docker-entrypoint.d/15-inject-base-path.sh rewrites it to the real
+         prefix (e.g. /ainsel-dev/ or /). Using the absolute placeholder
+         instead of `./` means this resolves correctly whether the user lands
+         on /ainsel-dev/ or /ainsel-dev (no trailing slash); a relative `./`
+         would otherwise hit the apex on the latter and land on the wrong
+         ingress. -->
+    <script src="/__BASE_PATH__/runtime-config.js"></script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

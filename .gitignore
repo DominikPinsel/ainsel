@@ -1,0 +1,23 @@
+node_modules/
+dist/
+.vite/
+.DS_Store
+*.log
+.env
+.env.local
+.env.*.local
+coverage/
+.eslintcache
+.pnpm-store/
+
+# TypeScript composite project outputs
+*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
+frontend/vitest.config.js
+frontend/vitest.config.d.ts
+.worktrees
+.claude/
+.superpowers/
+docs/superpowers/
+package-lock.json

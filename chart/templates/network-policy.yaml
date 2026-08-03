@@ -1,0 +1,230 @@
+{{- if .Values.networkPolicy.enabled }}
+# Default deny all ingress to the namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "ainsel.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+# Allow hub-backend ingress from frontend, mcp, and agents
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: hub-backend
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "ainsel.labels" . | nindent 4 }}
+    app.kubernetes.io/component: hub-backend
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: hub-backend
+  policyTypes:
+    - Ingress
+  ingress:
+    # From frontend
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: hub-frontend
+      ports:
+        - port: {{ .Values.hub.port }}
+    # From MCP server
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: mcp
+      ports:
+        - port: {{ .Values.hub.port }}
+    # From agent pods
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: agents
+      ports:
+        - port: {{ .Values.hub.port }}
+    # Allow metrics scraping
+    - ports:
+        - port: {{ .Values.hub.metricsPort }}
+---
+# Allow NATS ingress from hub-backend, operators, and agents
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: nats
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "ainsel.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nats
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: nats
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: hub-backend
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: k8s-ai-agent-operator
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: k8s-event-source-gateway-operator
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: agents
+      ports:
+        - port: 4222
+    # Monitor port for Prometheus
+    - ports:
+        - port: 8222
+---
+# Allow Postgres ingress from hub only
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "ainsel.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: hub-backend
+      ports:
+        - port: 5432
+---
+# Allow frontend ingress (from ingress controller / external)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: hub-frontend
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "ainsel.labels" . | nindent 4 }}
+    app.kubernetes.io/component: hub-frontend
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: hub-frontend
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - port: 80
+---
+# Allow MCP ingress (from ingress controller / external)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mcp
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "ainsel.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mcp
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: mcp
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - port: 8080
+---
+# Allow Qdrant ingress from agents and hub
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: qdrant
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "ainsel.labels" . | nindent 4 }}
+    app.kubernetes.io/component: qdrant
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: qdrant
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: agents
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: hub-backend
+      ports:
+        - port: 6333
+        - port: 6334
+---
+# Agent egress: allow traffic to known cluster services, DNS, and HTTPS (443/TCP).
+# TODO(#652): Replace broad 443/TCP egress with FQDN-scoped filtering via the
+# sidecar proxy approach tracked in the parent Epic. Standard NetworkPolicy
+# cannot express FQDN-based rules; CIDR-pinning is unstable for SaaS LLM APIs.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agent-egress
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "ainsel.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agents
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: agents
+  policyTypes:
+    - Egress
+  egress:
+    # NATS
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: nats
+      ports:
+        - port: 4222
+    # Qdrant
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: qdrant
+      ports:
+        - port: 6333
+    # Hub backend
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: hub-backend
+      ports:
+        - port: 8080
+    # DNS
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # HTTPS egress for LLM APIs (ollama.com, opencode.ai, aliyuncs.com, custom providers).
+    # TODO(#652): Replace with FQDN-scoped egress via sidecar proxy.
+    - ports:
+        - port: 443
+          protocol: TCP
+{{- end }}

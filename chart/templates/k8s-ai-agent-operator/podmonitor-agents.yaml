@@ -1,0 +1,21 @@
+{{- if .Values.observability.podMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: ainsel-agents
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "ainsel.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agents
+    {{- with .Values.observability.podMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/managed-by: agent-operator
+  podMetricsEndpoints:
+    - port: metrics
+      interval: {{ .Values.observability.podMonitor.interval | default "30s" }}
+      path: /metrics
+{{- end }}

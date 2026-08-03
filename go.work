@@ -1,0 +1,12 @@
+go 1.26.1
+
+use (
+	./operators/agent
+	./operators/event-gateway
+	./services/chat-mcp
+	./services/hub
+	./services/mcp
+	./services/webhook-receiver
+	./shared/api
+	./shared/auth/oidc
+)

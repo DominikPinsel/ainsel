@@ -1,0 +1,20 @@
+version: "2"
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - ineffassign
+    - gosec
+  settings:
+    gosec:
+      exclude-generated: true
+      nosec: true
+      excludes:
+        - G706  # Log injection — false positive with slog structured logging
+        - G705  # XSS — false positive with JSON API responses
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
