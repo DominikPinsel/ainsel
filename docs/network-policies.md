@@ -72,12 +72,21 @@ These are the flows that break most often when a policy is missing:
 | **hub-backend → MCP servers** | "Refresh MCP Tools" on AgentImages calls every configured MCP server directly from hub-backend to discover tools; the mcp gateway proxies MCP traffic | **not covered by the chart** for in-cluster servers outside the release — see below |
 | agent → MCP servers | tools declared in the AgentImage | chart `agent-egress` covers 443/TCP; in-cluster servers on other ports need extension policies |
 
-### Rule: hub-backend and agents must be allowed into every in-cluster MCP server
+## Adding an MCP Server (Checklist)
 
 MCP servers referenced by AgentImages (the `mcpServers` list) are reached from two consumers:
 
 1. **hub-backend** — during tool discovery ("Refresh MCP Tools") and when the hub MCP registry proxies a server.
 2. **agent pods** — at runtime, when agents call the tools.
+
+What you have to configure depends on where the server runs:
+
+| MCP server location | hub-backend | agent pods |
+|---|---|---|
+| External, HTTPS (port 443) | nothing — hub egress is unrestricted | nothing — `agent-egress` allows 443/TCP |
+| External, plain HTTP | nothing | additive egress policy needed (prefer HTTPS instead) |
+| In-cluster, other namespace or out-of-band | ingress allow on the server | ingress allow on the server **+** additive egress policy (unless port 443) |
+| In-cluster, same namespace | ingress allow on the server | ingress allow on the server **+** additive egress policy (unless port 443) |
 
 If the MCP server runs **outside** the AInsel release (a separate namespace or an out-of-band deployment like a mem0 stack), the chart cannot create its ingress policy. You must add one, allowing both consumers:
 
@@ -119,6 +128,54 @@ If agents reach the server in a different namespace, also extend **agent egress*
 ### Label caveat for agent pods
 
 The chart's policies select agent pods with `app.kubernetes.io/component: agents`. Agent pods created by older operator versions only carry `app.kubernetes.io/managed-by: agent-operator`. Extension policies should match whichever label population exists in your cluster (match both in separate `from` entries if in doubt).
+
+## Integrating External Services
+
+Services that live outside the AInsel namespace but talk to the platform:
+
+| Service | Direction | What to configure |
+|---|---|---|
+| **Prometheus / metrics scraping** | external → hub-backend | Nothing for hub-backend: the chart opens `hub.metricsPort` (default 9090) to any source under the `hub-backend` policy. Scrape via the hub-backend Service. Components without such an open metrics port (operators, connectors) are unreachable under default-deny and need an additive ingress policy from the monitoring namespace. |
+| **Ingress controller** | external → hub-backend, hub-frontend, mcp | Set `networkPolicy.ingressNamespace` to the namespace of the ingress controller that serves the hub. A second controller in a different namespace needs an additive policy. |
+| **Auth proxies** (Authelia, oauth2-proxy, ...) | ingress controller or proxy → hub-backend | If the proxy runs as a pod in its own namespace rather than a sidecar of the ingress controller, add an ingress allow for its namespace/pods to the target service. |
+| **Webhook sources** (Forgejo, GitHub, ...) | external → connector webhook receivers | Connector pods are created by the event-source-gateway operator, not the chart, so default-deny blocks them. Add an ingress policy allowing the ingress controller's namespace to the connector pods (`managed-by: connector-operator`). |
+| **External MCP / LLM APIs** | hub-backend, agents → external | Nothing for HTTPS endpoints (see checklist above). |
+
+## Temporarily Relaxing Policies (Dev/Testing)
+
+To make the namespace quickly accessible while trying something out, pick the smallest relaxation that works. All options are reversible.
+
+**Option 1 — temporary allow-all (recommended).** Additive policies are a union, so a single allow-all policy overrides both default-deny and the agent egress lockdown without touching anything the chart manages. It survives `helm upgrade`; delete it when done:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tmp-allow-all
+  namespace: <ainsel namespace>
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - {}   # empty rule = all sources, all ports
+  egress:
+    - {}
+```
+
+```bash
+kubectl delete networkpolicy tmp-allow-all -n <ainsel namespace>
+```
+
+**Option 2 — remove only default-deny.** Pods that have no policy of their own become fully reachable inbound; the component allow rules and the agent egress lockdown stay in place. Useful when a new experimental service must receive traffic:
+
+```bash
+kubectl delete networkpolicy default-deny-ingress -n <ainsel namespace>
+# restore with: helm upgrade ...
+```
+
+**Option 3 — full off switch.** Set `networkPolicy.enabled: false` and run `helm upgrade`. Removes the entire chart policy set, including the agent egress lockdown. Re-enable by setting it back to `true`.
+
+> Note: on a cluster that does not enforce NetworkPolicy at all (see [Enforcement Requirements](#enforcement-requirements)), these relaxations change nothing — and neither did the original restrictions.
 
 ## Known Gaps
 
