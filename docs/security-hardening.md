@@ -40,7 +40,6 @@ When `networkPolicy.enabled: true` (the default), agent pods are restricted to e
 
 | Destination | Port | Purpose |
 |---|---|---|
-| NATS | 4222 | Message bus |
 | Qdrant | 6333 | Vector memory |
 | Hub backend | 8080 | Agent token validation, API calls |
 | DNS | 53 (UDP/TCP) | Name resolution |
