@@ -1,0 +1,61 @@
+name: CI - chart
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'chart/**'
+      - '.github/workflows/ci-chart.yml'
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'chart/**'
+      - '.github/workflows/ci-chart.yml'
+  workflow_dispatch:
+
+jobs:
+  ci:
+    name: Lint, Template, Validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Helm
+        run: curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      - name: Helm lint
+        run: helm lint chart/
+      - name: Helm template (default values)
+        run: helm template chart/ > manifest-default.yaml
+      - name: Helm template (example values)
+        run: helm template chart/ -f chart/values-example.yaml > manifest-example.yaml
+      - name: Install kubeconform
+        run: |
+          KUBECONFORM_VERSION=v0.6.7
+          curl -sL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+            | tar xz -C /tmp kubeconform
+          sudo mv /tmp/kubeconform /usr/local/bin/kubeconform
+          kubeconform -v
+      - name: Install kube-linter
+        run: |
+          KUBE_LINTER_VERSION=0.6.4
+          curl -sL "https://github.com/stackrox/kube-linter/releases/download/v${KUBE_LINTER_VERSION}/kube-linter-linux" \
+            -o /tmp/kube-linter
+          chmod +x /tmp/kube-linter
+          sudo mv /tmp/kube-linter /usr/local/bin/kube-linter
+          kube-linter version
+      - name: kubeconform (default values)
+        # Non-blocking initially — promote to blocking after triage.
+        continue-on-error: true
+        run: kubeconform -summary -ignore-missing-schemas manifest-default.yaml
+      - name: kubeconform (example values)
+        # Non-blocking initially — promote to blocking after triage.
+        continue-on-error: true
+        run: kubeconform -summary -ignore-missing-schemas manifest-example.yaml
+      - name: kube-linter (default values)
+        # Non-blocking initially — promote to blocking after triage.
+        continue-on-error: true
+        run: kube-linter lint manifest-default.yaml
+      - name: kube-linter (example values)
+        # Non-blocking initially — promote to blocking after triage.
+        continue-on-error: true
+        run: kube-linter lint manifest-example.yaml

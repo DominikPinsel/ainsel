@@ -1,0 +1,42 @@
+name: CI - services/webhook-receiver
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/webhook-receiver/**'
+      - 'shared/api/**'
+      - 'go.work'
+      - '.github/workflows/ci-services-webhook-receiver.yml'
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'services/webhook-receiver/**'
+      - 'shared/api/**'
+      - 'go.work'
+      - '.github/workflows/ci-services-webhook-receiver.yml'
+
+jobs:
+  ci:
+    name: Lint, Test, Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+          cache: false
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+      - name: Lint
+        working-directory: services/webhook-receiver
+        run: golangci-lint run ./...
+      - name: Test
+        working-directory: services/webhook-receiver
+        run: |
+          go test -v -coverprofile=coverage.out ./...
+          go tool cover -func=coverage.out
+      - name: Build
+        working-directory: services/webhook-receiver
+        run: go build ./...

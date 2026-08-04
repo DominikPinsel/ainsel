@@ -1,0 +1,35 @@
+name: CI - pi
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pi/**'
+      - '.github/workflows/ci-pi.yml'
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'pi/**'
+      - '.github/workflows/ci-pi.yml'
+
+jobs:
+  check:
+    name: node --check + sh syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: node --check JavaScript entrypoints
+        working-directory: pi
+        run: |
+          set -e
+          node --check agent-shim.js
+      - name: Shell scripts
+        working-directory: pi
+        run: |
+          set -e
+          sh -n entrypoint.sh
+          sh -n agent
