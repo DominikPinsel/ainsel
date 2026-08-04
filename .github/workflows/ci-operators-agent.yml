@@ -32,6 +32,9 @@ jobs:
       - name: Lint
         working-directory: operators/agent
         run: golangci-lint run ./...
+      - name: Set up envtest binaries
+        working-directory: operators/agent
+        run: make setup-envtest
       - name: Test
         working-directory: operators/agent
         run: |
