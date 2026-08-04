@@ -12,7 +12,7 @@ spec:
   policyTypes:
     - Ingress
 ---
-# Allow hub-backend ingress from frontend, mcp, and agents
+# Allow hub-backend ingress from frontend, mcp, agents, and the ingress controller
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -49,44 +49,16 @@ spec:
               app.kubernetes.io/component: agents
       ports:
         - port: {{ .Values.hub.port }}
+    # From the ingress controller (browser API traffic: UI -> ingress -> hub-backend)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.ingressNamespace }}
+      ports:
+        - port: {{ .Values.hub.port }}
     # Allow metrics scraping
     - ports:
         - port: {{ .Values.hub.metricsPort }}
----
-# Allow NATS ingress from hub-backend, operators, and agents
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: nats
-  namespace: {{ .Values.namespace }}
-  labels:
-    {{- include "ainsel.labels" . | nindent 4 }}
-    app.kubernetes.io/component: nats
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/component: nats
-  policyTypes:
-    - Ingress
-  ingress:
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/component: hub-backend
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/component: k8s-ai-agent-operator
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/component: k8s-event-source-gateway-operator
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/component: agents
-      ports:
-        - port: 4222
-    # Monitor port for Prometheus
-    - ports:
-        - port: 8222
 ---
 # Allow Postgres ingress from hub only
 apiVersion: networking.k8s.io/v1
@@ -195,13 +167,6 @@ spec:
   policyTypes:
     - Egress
   egress:
-    # NATS
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/component: nats
-      ports:
-        - port: 4222
     # Qdrant
     - to:
         - podSelector:

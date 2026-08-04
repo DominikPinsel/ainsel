@@ -40,6 +40,10 @@ namespace: ainsel
 # Calico, Cilium). The k3s default flannel does NOT enforce NetworkPolicy.
 networkPolicy:
   enabled: true
+  # Namespace running the ingress controller that serves the hub UI.
+  # Required so browser API traffic (ingress -> hub-backend) is allowed
+  # under the default-deny policy.
+  ingressNamespace: ingress-nginx
 agentOperator:
   image:
     repository: dpinsel/ainsel-k8s-ai-agent-operator
