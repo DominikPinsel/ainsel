@@ -1,0 +1,46 @@
+name: Dev Image - services/webhook-receiver
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/webhook-receiver/**'
+      - 'shared/api/**'
+      - 'go.work'
+      - '.github/workflows/dev-image-services-webhook-receiver.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: dev-image-services-webhook-receiver
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compute image metadata
+        id: meta
+        run: echo "short_sha=$(echo ${GITHUB_SHA} | head -c 7)" >> $GITHUB_OUTPUT
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/webhook-receiver/Dockerfile
+          push: true
+          provenance: false
+          sbom: false
+          build-args: |
+            VERSION=main-${{ steps.meta.outputs.short_sha }}
+            VCS_REF=${{ github.sha }}
+          tags: |
+            dpinsel/ainsel-webhook-receiver:dev
+            dpinsel/ainsel-webhook-receiver:${{ steps.meta.outputs.short_sha }}
