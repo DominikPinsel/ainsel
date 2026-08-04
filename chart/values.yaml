@@ -36,8 +36,10 @@
 namespace: ainsel
 # NetworkPolicy controls. When enabled, a default-deny-ingress policy is
 # applied and per-component policies allow only the required traffic.
-# NOTE: NetworkPolicy enforcement requires a CNI that supports it (e.g.
-# Calico, Cilium). The k3s default flannel does NOT enforce NetworkPolicy.
+# NOTE: NetworkPolicy enforcement requires a network stack that supports it.
+# Most CNIs do (Calico, Cilium, ...). k3s enforces policies with its built-in
+# network policy controller unless started with --disable-network-policy.
+# Plain flannel on upstream Kubernetes does NOT enforce NetworkPolicy.
 networkPolicy:
   enabled: true
   # Namespace running the ingress controller that serves the hub UI.

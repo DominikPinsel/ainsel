@@ -58,7 +58,7 @@ kubectl get ingress -n <namespace>
 curl -v <webhook-url>/healthz
 ```
 
-If the Ingress exists but requests are not arriving, check that the Ingress controller is running and that the external DNS or IP resolves to the cluster.
+If the Ingress exists but requests are not arriving, check that the Ingress controller is running and that the external DNS or IP resolves to the cluster. With `networkPolicy.enabled: true`, also confirm a NetworkPolicy allows ingress from the ingress controller's namespace to the connector's webhook-receiver pods — connector pods are created by the operator, not the chart, so the chart's default-deny posture requires an additive policy for them. See [Network Policies](network-policies.md).
 
 ---
 
@@ -146,6 +146,8 @@ kubectl exec -n <namespace> deploy/ainsel-hub -- curl -sv <mcp-server-url>/healt
 ```
 
 If the URL is not reachable, confirm the MCP server Deployment is running and that the Service name and port are correct. If the MCP server is external to the cluster, verify network policies and egress rules allow the connection.
+
+Remember that MCP servers are reached from **two** clients: hub-backend (tool discovery for AgentImages — the "Refresh MCP Tools" action — and the hub MCP registry) and agent pods at runtime. Both need ingress to the server, and agents additionally need egress if the server is in-cluster and not on 443/TCP. With `networkPolicy.enabled: true`, an in-cluster MCP server without an allow rule is silently unreachable — connections are rejected rather than timing out. See [Network Policies](network-policies.md) for the policy inventory and a verification recipe.
 
 ---
 

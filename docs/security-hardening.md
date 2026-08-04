@@ -91,7 +91,9 @@ The default (when the field is `nil` or omitted) is `true` — hardening is enab
 
 ## CNI Requirement
 
-**NetworkPolicy enforcement requires a CNI plugin that supports it.** The k3s default (flannel) does **not** enforce NetworkPolicy rules. If you are using k3s, install Calico or Cilium as your CNI:
+**NetworkPolicy enforcement requires a network stack that enforces it.** Most CNI plugins do (Cilium, Calico, Weave, kube-router with policy). On k3s the situation is better than commonly assumed: k3s ships a **built-in network policy controller that is enabled by default** and works with all flannel backends, including `wireguard-native`. It is only disabled if the server runs with `--disable-network-policy`.
+
+If your k3s cluster was installed with that flag (or you run plain flannel on upstream Kubernetes), install a policy-capable CNI instead:
 
 ```bash
 # k3s with Calico
@@ -103,7 +105,7 @@ k3s install --flannel-backend=none
 # Then install Cilium per https://docs.cilium.io/en/stable/installation/k3s/
 ```
 
-Without a supporting CNI, enabling `networkPolicy.enabled: true` creates the NetworkPolicy resources but they have no effect — giving a false sense of security.
+Without enforcement, enabling `networkPolicy.enabled: true` creates the NetworkPolicy resources but they have no effect — giving a false sense of security. See [Network Policies](network-policies.md) for the full policy inventory and how to verify enforcement.
 
 ## Sidecar Non-Root Constraint
 
