@@ -42,11 +42,13 @@ spec:
               app.kubernetes.io/component: mcp
       ports:
         - port: {{ .Values.hub.port }}
-    # From agent pods
+    # From agent pods. Agent pods are created by the agent-operator and are
+    # matched via managed-by so the rule works for pods from operator versions
+    # with and without the component label.
     - from:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/component: agents
+              app.kubernetes.io/managed-by: agent-operator
       ports:
         - port: {{ .Values.hub.port }}
     # From the ingress controller (browser API traffic: UI -> ingress -> hub-backend)
@@ -140,7 +142,7 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/component: agents
+              app.kubernetes.io/managed-by: agent-operator
         - podSelector:
             matchLabels:
               app.kubernetes.io/component: hub-backend
@@ -149,6 +151,11 @@ spec:
         - port: 6334
 ---
 # Agent egress: allow traffic to known cluster services, DNS, and HTTPS (443/TCP).
+# The podSelector matches app.kubernetes.io/managed-by: agent-operator rather
+# than component: agents so the policy applies to agent pods from all operator
+# versions — older operators do not add the component label, and a mismatched
+# selector silently leaves agent egress either unfiltered or (when an additive
+# extension policy does match) locked down to that policy's allows only.
 # TODO(#652): Replace broad 443/TCP egress with FQDN-scoped filtering via the
 # sidecar proxy approach tracked in the parent Epic. Standard NetworkPolicy
 # cannot express FQDN-based rules; CIDR-pinning is unstable for SaaS LLM APIs.
@@ -163,7 +170,7 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/component: agents
+      app.kubernetes.io/managed-by: agent-operator
   policyTypes:
     - Egress
   egress:
