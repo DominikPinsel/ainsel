@@ -13,6 +13,7 @@
 - [Event Schema](event-schema)
 - [MCP Server](mcp)
 - [Observability](observability)
+- [Network Policies](network-policies)
 - [Security Hardening](security-hardening)
 
 ## Guides
