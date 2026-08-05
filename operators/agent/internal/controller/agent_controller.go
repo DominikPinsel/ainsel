@@ -528,6 +528,18 @@ func (r *AgentReconciler) reconcileDeployment(ctx context.Context, agent *ainsel
 			return err
 		}
 
+		// The Deployment selector is immutable. Deployments created before
+		// app.kubernetes.io/component was added to the labels carry a selector
+		// without it; trying to rewrite the selector fails every reconcile
+		// with "field is immutable". Preserve the existing selector and only
+		// update the pod template — the template labels are a superset of
+		// every selector ever emitted, so the preserved selector keeps
+		// matching rolled-out pods while the pods gain the component label.
+		selector := deploy.Spec.Selector
+		if selector == nil {
+			selector = &metav1.LabelSelector{MatchLabels: labels}
+		}
+
 		deploy.Labels = labels
 
 		// Build pod securityContext based on the securityHardened flag.
@@ -582,9 +594,7 @@ func (r *AgentReconciler) reconcileDeployment(ctx context.Context, agent *ainsel
 
 		deploy.Spec = appsv1.DeploymentSpec{
 			Replicas: ptr.To(desiredReplicas(agent)),
-			Selector: &metav1.LabelSelector{
-				MatchLabels: labels,
-			},
+			Selector: selector,
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: labels,

@@ -1772,6 +1772,66 @@ var _ = Describe("Agent Controller", func() {
 			Expect(setupInit.Command[2]).NotTo(ContainSubstring("chown"))
 		})
 
+		It("should keep a legacy Deployment selector while adding the component label to the pod template", func() {
+			agentName := "agent-" + resourceName
+
+			By("Pre-creating a Deployment with the legacy selector (no component label)")
+			// envtest runs no garbage collector, so a Deployment left over from
+			// an earlier spec (owned by a since-deleted Agent) must be removed
+			// explicitly before seeding the legacy fixture.
+			leftover := &appsv1.Deployment{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: agentName, Namespace: "default"}, leftover); err == nil {
+				Expect(k8sClient.Delete(ctx, leftover)).To(Succeed())
+			}
+			legacyLabels := map[string]string{
+				"app.kubernetes.io/name":       agentName,
+				"app.kubernetes.io/managed-by": "agent-operator",
+				"ainsel.dev/agent":             resourceName,
+			}
+			legacy := &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      agentName,
+					Namespace: "default",
+				},
+				Spec: appsv1.DeploymentSpec{
+					Replicas: ptr.To(int32(1)),
+					Selector: &metav1.LabelSelector{MatchLabels: legacyLabels},
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{Labels: legacyLabels},
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{{Name: "agent", Image: testImageURL}},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, legacy)).To(Succeed())
+
+			By("Reconciling")
+			controllerReconciler := &AgentReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			// Regression: before the selector-preservation fix this failed with
+			// "spec.selector ... field is immutable" because the reconcile tried
+			// to add app.kubernetes.io/component to the existing selector.
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			deploy := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: agentName, Namespace: "default"}, deploy)).To(Succeed())
+
+			By("Verifying the legacy selector is preserved unchanged")
+			Expect(deploy.Spec.Selector.MatchLabels).To(Equal(legacyLabels))
+
+			By("Verifying the pod template carries the component label")
+			Expect(deploy.Spec.Template.Labels).To(HaveKeyWithValue("app.kubernetes.io/component", "agents"))
+
+			By("Verifying the template still satisfies the preserved selector")
+			for k, v := range deploy.Spec.Selector.MatchLabels {
+				Expect(deploy.Spec.Template.Labels).To(HaveKeyWithValue(k, v))
+			}
+		})
+
 		It("should skip security hardening when spec.runtime.securityHardened is false", func() {
 			By("Setting spec.runtime.securityHardened to false")
 			agent := &ainselv1alpha1.Agent{}
