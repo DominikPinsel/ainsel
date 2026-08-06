@@ -201,4 +201,35 @@ spec:
     - ports:
         - port: 443
           protocol: TCP
+---
+# Webhook ingress for connector receiver pods. Connectors are created
+# dynamically by the event-source-gateway operator; external webhooks reach
+# them through the ingress controller, and in-cluster producers (e.g. a
+# Forgejo running in the same cluster) may deliver to them directly. Both
+# paths must be allowed under default-deny.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: connectors-webhook-ingress
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "ainsel.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/managed-by: connector-operator
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        # External webhooks via the ingress controller.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.ingressNamespace }}
+        {{- range .Values.networkPolicy.connectorWebhookSources }}
+        # Additional webhook producer (see values: connectorWebhookSources).
+        - {{- toYaml . | nindent 10 }}
+        {{- end }}
+      ports:
+        - port: http
 {{- end }}

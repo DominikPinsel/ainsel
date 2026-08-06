@@ -46,6 +46,18 @@ networkPolicy:
   # Required so browser API traffic (ingress -> hub-backend) is allowed
   # under the default-deny policy.
   ingressNamespace: ingress-nginx
+  # Additional sources allowed to deliver webhooks to connector receiver
+  # pods, as a list of NetworkPolicy `from` peer objects. Use this when a
+  # webhook producer runs inside the cluster and delivers to connectors
+  # directly instead of through the ingress controller. Example:
+  #   connectorWebhookSources:
+  #     - namespaceSelector:
+  #         matchLabels:
+  #           kubernetes.io/metadata.name: workloads
+  #       podSelector:
+  #         matchLabels:
+  #           app.kubernetes.io/name: forgejo
+  connectorWebhookSources: []
 agentOperator:
   image:
     repository: dpinsel/ainsel-k8s-ai-agent-operator

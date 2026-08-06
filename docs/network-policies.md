@@ -48,17 +48,41 @@ All policies live in the release namespace (`.Values.namespace`).
 | Policy | Applies to (podSelector) | Direction | Allows |
 |---|---|---|---|
 | `default-deny-ingress` | all pods | Ingress | nothing (baseline deny) |
-| `hub-backend` | `component: hub-backend` | Ingress | `hub-frontend` pods, `mcp` pods, `agents` pods, webhook connector pods (`managed-by: connector-operator`), pods in `networkPolicy.ingressNamespace` (browser API traffic) — all on `hub.port`; metrics port open for scraping |
+| `hub-backend` | `component: hub-backend` | Ingress | `hub-frontend` pods, `mcp` pods, agent pods (`component: agents`), webhook connector pods (`managed-by: connector-operator`), pods in `networkPolicy.ingressNamespace` (browser API traffic) — all on `hub.port`; metrics port open for scraping |
 | `hub-frontend` | `component: hub-frontend` | Ingress | any source, port 80 (served through the ingress controller) |
 | `mcp` | `component: mcp` | Ingress | any source, port 8080 |
 | `postgres` | `component: postgres` | Ingress | `hub-backend` only, port 5432 |
-| `qdrant` | `component: qdrant` | Ingress | `agents` and `hub-backend` pods, ports 6333/6334 |
+| `qdrant` | `component: qdrant` | Ingress | agent pods (`component: agents`) and `hub-backend` pods, ports 6333/6334 |
 | `agent-egress` | `component: agents` | Egress | qdrant (6333), hub-backend (8080), DNS (53), any destination on 443/TCP (LLM APIs; FQDN scoping tracked in #652) |
+| `connectors-webhook-ingress` | `managed-by: connector-operator` | Ingress | ingress controller's namespace (external webhooks) plus any peers listed in `networkPolicy.connectorWebhookSources`, port `http` |
 
 Notes:
 
 - `networkPolicy.ingressNamespace` must match the namespace of the ingress controller that serves the hub UI, otherwise browser API traffic is denied under default-deny.
 - Policies are **additive**: an allow rule from *any* NetworkPolicy selecting a pod permits the traffic. Extensions never need to modify chart-managed policies.
+
+### Agent pod selectors
+
+Chart-managed policies select agent pods with
+`app.kubernetes.io/component: agents` — the semantic identity label ("this pod
+*is* an agent"). It stays precise even if the agent-operator later manages
+other workload types, which would carry their own `component` value; selecting
+by provenance (`managed-by: agent-operator`) instead would grant agent
+privileges to any future operator-managed pod.
+
+**Migration prerequisite:** every agent pod must carry the label. Deployments
+created by operator versions before the label existed are reconciled by the
+operator's preserve-selector fix, which keeps their immutable selector but
+updates the pod template so rolled-out pods gain `component: agents`. Deploy
+this chart only after that operator version has reconciled all agents —
+otherwise pods without the label are isolated (ingress) or lose their egress
+lockdown. Verify with:
+
+```bash
+kubectl get pods -n <ns> -l app.kubernetes.io/managed-by=agent-operator \
+  -o json | jq -r '.items[] | select((.metadata.labels["app.kubernetes.io/component"]//"") != "agents") | .metadata.name'
+# must print nothing
+```
 
 ## Traffic Flows That Cross Policy Boundaries
 
@@ -69,6 +93,8 @@ These are the flows that break most often when a policy is missing:
 | browser → ingress → hub-backend | UI API calls | chart `hub-backend` policy (ingressNamespace) |
 | agent → hub-backend | token validation, API | chart `hub-backend` + `agent-egress` |
 | connector → hub-backend | webhook receivers publish accepted webhooks (`POST /api/internal/events`) | chart `hub-backend` policy (connector pods); connectors have no egress restriction |
+| external → connector | webhook delivery through the ingress controller | chart `connectors-webhook-ingress` (ingressNamespace) |
+| in-cluster producer → connector | e.g. a Forgejo in the cluster delivering directly via the `*-webhook` service | chart `connectors-webhook-ingress` (`connectorWebhookSources`) |
 | agent → qdrant | vector memory | chart `qdrant` + `agent-egress` |
 | **hub-backend → MCP servers** | "Refresh MCP Tools" on AgentImages calls every configured MCP server directly from hub-backend to discover tools; the mcp gateway proxies MCP traffic | **not covered by the chart** for in-cluster servers outside the release — see below |
 | agent → MCP servers | tools declared in the AgentImage | chart `agent-egress` covers 443/TCP; in-cluster servers on other ports need extension policies |
@@ -124,11 +150,15 @@ spec:
 
 Cross-namespace rules need both `namespaceSelector` and `podSelector` in the same `from` entry — a `namespaceSelector` alone would allow every pod in that namespace.
 
-If agents reach the server in a different namespace, also extend **agent egress**: `agent-egress` only permits 443/TCP outbound, so a plain-HTTP in-cluster server needs an additive egress policy selecting `component: agents` (or `managed-by: agent-operator`, see below).
+If agents reach the server in a different namespace, also extend **agent egress**: `agent-egress` only permits 443/TCP outbound, so a plain-HTTP in-cluster server needs an additive egress policy selecting `component: agents`.
 
 ### Label caveat for agent pods
 
-The chart's policies select agent pods with `app.kubernetes.io/component: agents`. Agent pods created by older operator versions only carry `app.kubernetes.io/managed-by: agent-operator`. Extension policies should match whichever label population exists in your cluster (match both in separate `from` entries if in doubt).
+The chart selects agent pods by `app.kubernetes.io/component: agents` (see
+[Agent pod selectors](#agent-pod-selectors)). Extension policies that target
+agent pods should use the same label. Pods only lack it while a pre-label
+Deployment has not yet been reconciled/rolled by an operator that adds it —
+see the migration prerequisite above.
 
 ## Integrating External Services
 
@@ -139,7 +169,7 @@ Services that live outside the AInsel namespace but talk to the platform:
 | **Prometheus / metrics scraping** | external → hub-backend | Nothing for hub-backend: the chart opens `hub.metricsPort` (default 9090) to any source under the `hub-backend` policy. Scrape via the hub-backend Service. Components without such an open metrics port (operators, connectors) are unreachable under default-deny and need an additive ingress policy from the monitoring namespace. |
 | **Ingress controller** | external → hub-backend, hub-frontend, mcp | Set `networkPolicy.ingressNamespace` to the namespace of the ingress controller that serves the hub. A second controller in a different namespace needs an additive policy. |
 | **Auth proxies** (Authelia, oauth2-proxy, ...) | ingress controller or proxy → hub-backend | If the proxy runs as a pod in its own namespace rather than a sidecar of the ingress controller, add an ingress allow for its namespace/pods to the target service. |
-| **Webhook sources** (Forgejo, GitHub, ...) | external → connector webhook receivers | Connector pods are created by the event-source-gateway operator, not the chart, so default-deny blocks them. Add an ingress policy allowing the ingress controller's namespace to the connector pods (`managed-by: connector-operator`). The reverse direction (connector → hub-backend publish) is covered by the chart's `hub-backend` policy. |
+| **Webhook sources** (Forgejo, GitHub, ...) | external → connector webhook receivers | Covered by the chart's `connectors-webhook-ingress` policy, which allows `networkPolicy.ingressNamespace` to reach connector pods (`managed-by: connector-operator`). For an in-cluster producer that delivers webhooks directly (bypassing the ingress controller), add its namespace/pods to `networkPolicy.connectorWebhookSources`. The reverse direction (connector → hub-backend publish) is covered by the chart's `hub-backend` policy. |
 | **External MCP / LLM APIs** | hub-backend, agents → external | Nothing for HTTPS endpoints (see checklist above). |
 
 ## Temporarily Relaxing Policies (Dev/Testing)
@@ -208,7 +238,9 @@ Symptoms of a missing allow rule:
 - **Refresh MCP Tools** in the UI shows warnings for in-cluster servers, or newly added servers never populate tools.
 - Agents fail to call an MCP tool that works from other clients.
 - Webhook connectors receive no events (ingress controller → connector denied).
+- In-cluster webhook deliveries fail with `connect: connection refused` to a `*-webhook` service (producer → connector denied; add the producer to `networkPolicy.connectorWebhookSources`).
 - Webhook deliveries are answered `500 publish failed` although signatures validate (connector → hub-backend publish denied).
 - UI requests fail with 502/504 at the ingress while hub-backend is up (`ingressNamespace` mismatch).
+- Agents stop claiming tasks and their poll loop logs `connection refused` against hub-backend (agent pods not matched by the chart policies; verify the pods carry `component: agents` — see [Agent pod selectors](#agent-pod-selectors)).
 
 Fix: identify the client pod's labels and the target pod's labels, then add an additive NetworkPolicy granting ingress to the target (and egress on the client side if the client is an agent).
