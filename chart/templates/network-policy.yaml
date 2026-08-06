@@ -12,7 +12,8 @@ spec:
   policyTypes:
     - Ingress
 ---
-# Allow hub-backend ingress from frontend, mcp, agents, and the ingress controller
+# Allow hub-backend ingress from frontend, mcp, agents, webhook connectors,
+# and the ingress controller
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -47,6 +48,14 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/component: agents
+      ports:
+        - port: {{ .Values.hub.port }}
+    # From webhook connector pods (created by the event-source-gateway
+    # operator; they publish accepted webhooks to /api/internal/events)
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/managed-by: connector-operator
       ports:
         - port: {{ .Values.hub.port }}
     # From the ingress controller (browser API traffic: UI -> ingress -> hub-backend)

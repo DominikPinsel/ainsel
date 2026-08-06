@@ -48,7 +48,7 @@ All policies live in the release namespace (`.Values.namespace`).
 | Policy | Applies to (podSelector) | Direction | Allows |
 |---|---|---|---|
 | `default-deny-ingress` | all pods | Ingress | nothing (baseline deny) |
-| `hub-backend` | `component: hub-backend` | Ingress | `hub-frontend` pods, `mcp` pods, `agents` pods, pods in `networkPolicy.ingressNamespace` (browser API traffic) — all on `hub.port`; metrics port open for scraping |
+| `hub-backend` | `component: hub-backend` | Ingress | `hub-frontend` pods, `mcp` pods, `agents` pods, webhook connector pods (`managed-by: connector-operator`), pods in `networkPolicy.ingressNamespace` (browser API traffic) — all on `hub.port`; metrics port open for scraping |
 | `hub-frontend` | `component: hub-frontend` | Ingress | any source, port 80 (served through the ingress controller) |
 | `mcp` | `component: mcp` | Ingress | any source, port 8080 |
 | `postgres` | `component: postgres` | Ingress | `hub-backend` only, port 5432 |
@@ -68,6 +68,7 @@ These are the flows that break most often when a policy is missing:
 |---|---|---|
 | browser → ingress → hub-backend | UI API calls | chart `hub-backend` policy (ingressNamespace) |
 | agent → hub-backend | token validation, API | chart `hub-backend` + `agent-egress` |
+| connector → hub-backend | webhook receivers publish accepted webhooks (`POST /api/internal/events`) | chart `hub-backend` policy (connector pods); connectors have no egress restriction |
 | agent → qdrant | vector memory | chart `qdrant` + `agent-egress` |
 | **hub-backend → MCP servers** | "Refresh MCP Tools" on AgentImages calls every configured MCP server directly from hub-backend to discover tools; the mcp gateway proxies MCP traffic | **not covered by the chart** for in-cluster servers outside the release — see below |
 | agent → MCP servers | tools declared in the AgentImage | chart `agent-egress` covers 443/TCP; in-cluster servers on other ports need extension policies |
@@ -138,7 +139,7 @@ Services that live outside the AInsel namespace but talk to the platform:
 | **Prometheus / metrics scraping** | external → hub-backend | Nothing for hub-backend: the chart opens `hub.metricsPort` (default 9090) to any source under the `hub-backend` policy. Scrape via the hub-backend Service. Components without such an open metrics port (operators, connectors) are unreachable under default-deny and need an additive ingress policy from the monitoring namespace. |
 | **Ingress controller** | external → hub-backend, hub-frontend, mcp | Set `networkPolicy.ingressNamespace` to the namespace of the ingress controller that serves the hub. A second controller in a different namespace needs an additive policy. |
 | **Auth proxies** (Authelia, oauth2-proxy, ...) | ingress controller or proxy → hub-backend | If the proxy runs as a pod in its own namespace rather than a sidecar of the ingress controller, add an ingress allow for its namespace/pods to the target service. |
-| **Webhook sources** (Forgejo, GitHub, ...) | external → connector webhook receivers | Connector pods are created by the event-source-gateway operator, not the chart, so default-deny blocks them. Add an ingress policy allowing the ingress controller's namespace to the connector pods (`managed-by: connector-operator`). |
+| **Webhook sources** (Forgejo, GitHub, ...) | external → connector webhook receivers | Connector pods are created by the event-source-gateway operator, not the chart, so default-deny blocks them. Add an ingress policy allowing the ingress controller's namespace to the connector pods (`managed-by: connector-operator`). The reverse direction (connector → hub-backend publish) is covered by the chart's `hub-backend` policy. |
 | **External MCP / LLM APIs** | hub-backend, agents → external | Nothing for HTTPS endpoints (see checklist above). |
 
 ## Temporarily Relaxing Policies (Dev/Testing)
@@ -207,6 +208,7 @@ Symptoms of a missing allow rule:
 - **Refresh MCP Tools** in the UI shows warnings for in-cluster servers, or newly added servers never populate tools.
 - Agents fail to call an MCP tool that works from other clients.
 - Webhook connectors receive no events (ingress controller → connector denied).
+- Webhook deliveries are answered `500 publish failed` although signatures validate (connector → hub-backend publish denied).
 - UI requests fail with 502/504 at the ingress while hub-backend is up (`ingressNamespace` mismatch).
 
 Fix: identify the client pod's labels and the target pod's labels, then add an additive NetworkPolicy granting ingress to the target (and egress on the client side if the client is an agent).
