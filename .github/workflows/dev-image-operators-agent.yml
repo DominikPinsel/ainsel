@@ -8,15 +8,23 @@ on:
       - 'shared/api/**'
       - 'go.work'
       - '.github/workflows/dev-image-operators-agent.yml'
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'operators/agent/**'
+      - 'shared/api/**'
+      - 'go.work'
+      - '.github/workflows/dev-image-operators-agent.yml'
   workflow_dispatch:
 
 concurrency:
-  group: dev-image-operators-agent
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
-    name: Build and push
+    name: Build and push image
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,6 +32,7 @@ jobs:
         id: meta
         run: echo "short_sha=$(echo ${GITHUB_SHA} | head -c 7)" >> $GITHUB_OUTPUT
       - name: Login to Docker Hub
+        if: github.event_name == 'push'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -35,11 +44,12 @@ jobs:
         with:
           context: .
           file: operators/agent/Dockerfile
-          push: true
+          push: ${{ github.event_name == 'push' }}
+          load: ${{ github.event_name == 'pull_request' }}
           provenance: false
           sbom: false
           build-args: |
-            VERSION=main-${{ steps.meta.outputs.short_sha }}
+            VERSION=${{ github.event_name == 'pull_request' && format('pr-{0}-{1}', github.event.pull_request.number, steps.meta.outputs.short_sha) || format('main-{0}', steps.meta.outputs.short_sha) }}
             VCS_REF=${{ github.sha }}
           tags: |
             dpinsel/ainsel-k8s-ai-agent-operator:dev
