@@ -38,7 +38,7 @@ jobs:
 
       # ---------- Base image (ainsel-pi) -----------------------------------
       - name: Build and push base image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: pi
           file: pi/Dockerfile
@@ -54,7 +54,7 @@ jobs:
 
       # ---------- Go variant (ainsel-pi-go:1.24) ---------------------------
       - name: Build and push Go variant
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: pi
           file: pi/Dockerfile.go
@@ -70,7 +70,7 @@ jobs:
 
       # ---------- .NET MAUI variant (ainsel-pi-maui:8.0) -------------------
       - name: Build and push .NET MAUI variant
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: pi
           file: pi/Dockerfile.maui
