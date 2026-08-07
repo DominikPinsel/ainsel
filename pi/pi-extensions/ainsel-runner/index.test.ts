@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { extractEventContext, createTurnTracker, beginTurn, endTurn, recordAssistantEnd, captureMessage, markSettled, waitForSettle, toConversationPayloads, postTaskMessages, reportConversation, redactSecrets, resetRedactionCache, capToolResultContent, truncateWithMarker, resolveToolResultMaxChars } from "./index.ts";
+import { extractEventContext, createTurnTracker, beginTurn, endTurn, recordAssistantEnd, captureMessage, markSettled, waitForSettle, toConversationPayloads, postTaskMessages, reportConversation, redactSecrets, resetRedactionCache, capToolResultContent, truncateWithMarker, resolveToolResultMaxChars, resolveInternalToken } from "./index.ts";
 import type { HubEvent, TurnTracker, ConversationPayload } from "./index.ts";
 
 describe("extractEventContext", () => {
@@ -1213,5 +1213,32 @@ describe("toConversationPayloads — toolResult capping", () => {
 			if (saved === undefined) delete process.env.TOOL_RESULT_MAX_CHARS;
 			else process.env.TOOL_RESULT_MAX_CHARS = saved;
 		}
+	});
+});
+
+describe("resolveInternalToken", () => {
+	it("prefers the platform-managed HUB_INTERNAL_VALIDATE_SECRET", () => {
+		const token = resolveInternalToken({
+			HUB_INTERNAL_VALIDATE_SECRET: "platform-token",
+			AGENT_TOKEN: "per-agent-token",
+		});
+		assert.equal(token, "platform-token");
+	});
+
+	it("falls back to AGENT_TOKEN when the platform secret is absent", () => {
+		const token = resolveInternalToken({ AGENT_TOKEN: "legacy-token" });
+		assert.equal(token, "legacy-token");
+	});
+
+	it("treats an empty platform secret as absent", () => {
+		const token = resolveInternalToken({
+			HUB_INTERNAL_VALIDATE_SECRET: "",
+			AGENT_TOKEN: "legacy-token",
+		});
+		assert.equal(token, "legacy-token");
+	});
+
+	it("throws when neither source is set", () => {
+		assert.throws(() => resolveInternalToken({}), /neither HUB_INTERNAL_VALIDATE_SECRET nor AGENT_TOKEN/);
 	});
 });
