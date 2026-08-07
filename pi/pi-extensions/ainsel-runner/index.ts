@@ -13,7 +13,9 @@
  *        d. ACKs or NACKs the task via the hub REST API.
  *
  * Required env (operator already sets all of these):
- *   HUB_URL, AGENT_NAME, AGENT_TOKEN, OLLAMA_CLOUD_MODEL (all required).
+ *   HUB_URL, AGENT_NAME, OLLAMA_CLOUD_MODEL (all required).
+ *   Internal-endpoint token: HUB_INTERNAL_VALIDATE_SECRET (platform-managed,
+ *   preferred) with AGENT_TOKEN as legacy fallback — see resolveInternalToken.
  *
  * Optional env:
  *   NAK_DELAY_MS           default 60000 — NACK backoff (ms) before retry
@@ -451,6 +453,27 @@ function required(name: string): string {
 		throw new Error(`${name} is required`);
 	}
 	return v;
+}
+
+/**
+ * resolveInternalToken picks the token sent as X-Internal-Token to the hub's
+ * internal endpoints (poll, ack, nack). The platform-managed
+ * HUB_INTERNAL_VALIDATE_SECRET — injected by the agent-operator from the
+ * chart's shared auth.internalValidateSecret — always wins, so a mis-set
+ * AGENT_TOKEN on an AgentImage can never break the claim path. AGENT_TOKEN
+ * remains as a fallback for images deployed before the platform injection
+ * existed.
+ */
+export function resolveInternalToken(env: NodeJS.ProcessEnv = process.env): string {
+	const platform = env.HUB_INTERNAL_VALIDATE_SECRET;
+	if (platform) {
+		return platform;
+	}
+	const agent = env.AGENT_TOKEN;
+	if (!agent) {
+		throw new Error("neither HUB_INTERNAL_VALIDATE_SECRET nor AGENT_TOKEN is set");
+	}
+	return agent;
 }
 
 function repoFullName(ctx: EventContext): string {
@@ -1169,7 +1192,7 @@ export default function ainselRunnerExtension(pi: ExtensionAPI) {
 		try {
 			agentName = required("AGENT_NAME");
 			hubUrl = required("HUB_URL");
-			token = required("AGENT_TOKEN");
+			token = resolveInternalToken();
 			model = required("OLLAMA_CLOUD_MODEL");
 		} catch {
 			return;
