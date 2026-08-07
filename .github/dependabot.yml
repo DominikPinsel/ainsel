@@ -1,0 +1,47 @@
+# Dependabot version updates. PRs opened by Dependabot trigger the
+# ci-* and dev-image-* workflows via their pull_request triggers.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directories:
+      - /operators/agent
+      - /operators/event-gateway
+      - /services/chat-mcp
+      - /services/hub
+      - /services/mcp
+      - /services/webhook-receiver
+      - /shared/api
+      - /shared/auth/oidc
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore(deps)
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore(deps)
+
+  - package-ecosystem: docker
+    directories:
+      - /frontend
+      - /operators/agent
+      - /operators/event-gateway
+      - /pi
+      - /services/chat-mcp
+      - /services/hub
+      - /services/mcp
+      - /services/webhook-receiver
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore(deps)
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci(deps)
