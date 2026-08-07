@@ -144,6 +144,13 @@ hub:
   port: 8080
   metricsPort: 9090
   namespace: ainsel
+  # Postgres connection pool sizing for hub-backend. The event-queue
+  # long-poll holds one dedicated connection per idle agent (LISTEN), so
+  # maxConns must exceed the number of concurrently idle agent replicas
+  # plus headroom for API/ingest traffic (rule of thumb: agents + 5).
+  db:
+    maxConns: 10
+    minConns: 1
   ingress:
     enabled: true
     host: ainsel.example.com

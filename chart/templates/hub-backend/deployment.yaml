@@ -120,6 +120,10 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.postgres.auth.existingSecret | default "ainsel-hub-db" }}
                   key: dsn
+            - name: HUB_DB_MAX_CONNS
+              value: "{{ .Values.hub.db.maxConns }}"
+            - name: HUB_DB_MIN_CONNS
+              value: "{{ .Values.hub.db.minConns }}"
             {{- if .Values.auth.oidcIssuer }}
             - name: ZITADEL_ISSUER
               value: {{ .Values.auth.oidcIssuer | quote }}
