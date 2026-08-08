@@ -9,7 +9,7 @@
 # NATS consume loop, hub publishing, and per-event lifecycle.
 
 # ---------- runtime image ------------------------------------------------
-FROM node:22-bookworm-slim
+FROM node:25-bookworm-slim
 
 # OCI metadata
 LABEL org.opencontainers.image.title="ainsel-pi" \
