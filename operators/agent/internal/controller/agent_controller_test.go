@@ -875,12 +875,11 @@ var _ = Describe("Agent Controller", func() {
 				return os.Setenv("HUB_INTERNAL_VALIDATE_SECRET", originalToken)
 			})
 
-			By("Declaring mis-set values for the platform-owned env names on the AgentImage")
+			By("Declaring a mis-set value for the platform-owned env name on the AgentImage")
 			img := &ainselv1alpha1.AgentImage{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testImageName, Namespace: "default"}, img)).To(Succeed())
 			img.Spec.Env = []ainselv1alpha1.AgentImageEnvVar{
 				{Name: "CUSTOM_VAR", Value: "custom-value"},
-				{Name: "AGENT_TOKEN", Value: "per-agent-token-123"},
 				{Name: "HUB_INTERNAL_VALIDATE_SECRET", Value: "wrong-token"},
 			}
 			Expect(k8sClient.Update(ctx, img)).To(Succeed())
@@ -903,7 +902,6 @@ var _ = Describe("Agent Controller", func() {
 				Namespace: "default",
 			}, secret)).To(Succeed())
 			Expect(secret.Data).To(HaveKeyWithValue("CUSTOM_VAR", []byte("custom-value")))
-			Expect(secret.Data).To(HaveKeyWithValue("AGENT_TOKEN", []byte(platformToken)))
 			Expect(secret.Data).To(HaveKeyWithValue("HUB_INTERNAL_VALIDATE_SECRET", []byte(platformToken)))
 
 			By("Verifying the agent container gets exactly one platform-owned entry each, as literals")
@@ -914,21 +912,14 @@ var _ = Describe("Agent Controller", func() {
 			}, deploy)).To(Succeed())
 
 			container := deploy.Spec.Template.Spec.Containers[0]
-			count := 0
-			var agentToken, internalToken *corev1.EnvVar
+			var internalToken *corev1.EnvVar
 			for i := range container.Env {
-				switch container.Env[i].Name {
-				case "AGENT_TOKEN":
-					count++
-					agentToken = &container.Env[i]
-				case "HUB_INTERNAL_VALIDATE_SECRET":
-					count++
+				if container.Env[i].Name == "HUB_INTERNAL_VALIDATE_SECRET" {
+					Expect(internalToken).To(BeNil(), "expected exactly one HUB_INTERNAL_VALIDATE_SECRET entry")
 					internalToken = &container.Env[i]
 				}
 			}
-			Expect(count).To(Equal(2), "expected exactly one AGENT_TOKEN and one HUB_INTERNAL_VALIDATE_SECRET entry")
-			Expect(agentToken.Value).To(Equal(platformToken))
-			Expect(agentToken.ValueFrom).To(BeNil())
+			Expect(internalToken).NotTo(BeNil())
 			Expect(internalToken.Value).To(Equal(platformToken))
 			Expect(internalToken.ValueFrom).To(BeNil())
 

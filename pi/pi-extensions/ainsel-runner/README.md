@@ -9,7 +9,7 @@ drives it.
 
 On `session_start`:
 
-1. Reads `AGENT_NAME`, `HUB_URL`, and `AGENT_TOKEN` from the environment.
+1. Reads `AGENT_NAME`, `HUB_URL`, and `HUB_INTERNAL_VALIDATE_SECRET` from the environment.
 2. Starts a Prometheus metrics server on `:9090/metrics`.
 3. Starts a background HTTP long-poll loop against the hub.
 
@@ -65,7 +65,9 @@ field from the webhook payload to produce a compound event type:
 ## Authentication
 
 The runner authenticates all hub API calls with the `X-Internal-Token`
-header, using the value from the `AGENT_TOKEN` environment variable.
+header, using the value from the `HUB_INTERNAL_VALIDATE_SECRET`
+environment variable (platform-managed: the agent-operator injects it
+from the chart's shared `auth.internalValidateSecret`).
 
 ## Environment
 
@@ -73,7 +75,7 @@ header, using the value from the `AGENT_TOKEN` environment variable.
 | --- | --- | --- |
 | `AGENT_NAME` | yes | Logical agent name (used in hub API paths) |
 | `HUB_URL` | yes | Hub backend base URL (e.g. `http://ainsel-hub:8080`) |
-| `AGENT_TOKEN` | yes | Shared secret for `X-Internal-Token` header |
+| `HUB_INTERNAL_VALIDATE_SECRET` | yes | Shared secret for `X-Internal-Token` header |
 | `OLLAMA_CLOUD_MODEL` | yes | Model identifier; reported in token metrics |
 | `NAK_DELAY_MS` | no | NACK backoff in ms before the hub re-delivers a failed task (default `60000`) |
 | `TURN_TIMEOUT_MS` | no | Maximum time in ms to wait for a single LLM turn before aborting and nacking (default `600000`, i.e. 10 minutes) |
