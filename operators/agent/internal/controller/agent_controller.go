@@ -329,6 +329,24 @@ func resolveHubInternalToken() string {
 	return os.Getenv("HUB_INTERNAL_VALIDATE_SECRET")
 }
 
+// platformManagedAgentEnv returns env names the platform owns for the agent
+// container, mapped to their canonical values. When the operator knows the
+// hub internal token, AgentImage env declarations for these names are
+// ignored (container env) and overridden (image-env Secret): a mis-set value
+// on an image silently breaks auth on the hub internal endpoints and thus
+// the whole task claim path (incident 2026-08-07, back then via the legacy
+// AGENT_TOKEN name, which has since been removed). Returns nil when the
+// platform token is unknown so legacy setups keep working unchanged.
+func platformManagedAgentEnv() map[string]string {
+	token := resolveHubInternalToken()
+	if token == "" {
+		return nil
+	}
+	return map[string]string{
+		"HUB_INTERNAL_VALIDATE_SECRET": token,
+	}
+}
+
 // resolveChatMCPImage returns the container image for the chat-mcp sidecar.
 // The operator reads CHAT_MCP_IMAGE from its own environment; the chart
 // injects it on the operator Deployment. When unset the sidecar is not
@@ -621,7 +639,12 @@ func (r *AgentReconciler) reconcileDeployment(ctx context.Context, agent *ainsel
 									{Name: "OLLAMA_CLOUD_MODEL", Value: agent.Spec.LLM.Model},
 									{Name: "AGENT_PERSONA_PATH", Value: "/etc/agent/persona.md"},
 									{Name: "HUB_URL", Value: resolveHubURL()},
-									{Name: "AGENT_TOKEN", Value: resolveHubInternalToken()},
+									// HUB_INTERNAL_VALIDATE_SECRET authenticates the runner
+									// against the hub's internal endpoints (X-Internal-Token).
+									// It is platform-owned: AgentImage declarations are dropped
+									// below so image config can never override it (see
+									// platformManagedAgentEnv).
+									{Name: "HUB_INTERNAL_VALIDATE_SECRET", Value: resolveHubInternalToken()},
 									{Name: "HUB_ENABLED", Value: "true"},
 								}
 								// OLLAMA_API_KEY is required by the pi/Ollama-Cloud runtime.
@@ -720,7 +743,14 @@ func (r *AgentReconciler) reconcileDeployment(ctx context.Context, agent *ainsel
 								// operator-managed <agent>-image-env Secret built by
 								// reconcileImageEnvSecret.
 								imageEnvNames := make(map[string]bool, len(img.Spec.Env))
+								managedEnv := platformManagedAgentEnv()
 								for _, e := range img.Spec.Env {
+									if _, reserved := managedEnv[e.Name]; reserved {
+										// Platform-owned name: the canonical value is already
+										// injected above. Skipping it here prevents the image
+										// entry (added later, wins in k8s) from overriding it.
+										continue
+									}
 									envs = append(envs, corev1.EnvVar{
 										Name: e.Name,
 										ValueFrom: &corev1.EnvVarSource{
@@ -1024,7 +1054,15 @@ func (r *AgentReconciler) reconcileImageEnvSecret(ctx context.Context, agent *ai
 	}
 
 	secretData := make(map[string][]byte, len(img.Spec.Env))
+	managedEnv := platformManagedAgentEnv()
 	for _, e := range img.Spec.Env {
+		if v, reserved := managedEnv[e.Name]; reserved {
+			// Platform-owned names always carry the canonical platform value
+			// so sidecars and $(VAR) substitutions referencing the secret
+			// can never pick up a mis-set image value.
+			secretData[e.Name] = []byte(v)
+			continue
+		}
 		secretData[e.Name] = []byte(e.Value)
 	}
 

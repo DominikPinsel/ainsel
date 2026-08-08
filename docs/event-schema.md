@@ -165,8 +165,10 @@ MCP servers) is authenticated with a shared-secret header:
 | `X-Internal-Token` | Shared secret for internal API calls (task polling, ack/nack, task logs, event ingestion) |
 
 The hub validates this header on all `/api/v1/agents/:name/*` and
-`/api/internal/*` endpoints. The token is provisioned per-agent by the
-operator and set as the `AGENT_TOKEN` environment variable in the agent pod.
+`/api/internal/*` endpoints. The token is a single shared secret
+(`auth.internalValidateSecret` in the chart): the operator injects it as
+the `HUB_INTERNAL_VALIDATE_SECRET` environment variable into every agent
+pod.
 
 ## Chat Events
 
