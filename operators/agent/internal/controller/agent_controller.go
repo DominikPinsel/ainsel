@@ -333,17 +333,16 @@ func resolveHubInternalToken() string {
 // container, mapped to their canonical values. When the operator knows the
 // hub internal token, AgentImage env declarations for these names are
 // ignored (container env) and overridden (image-env Secret): a mis-set value
-// on an image — e.g. a per-agent API token in AGENT_TOKEN — silently breaks
-// auth on the hub internal endpoints and thus the whole task claim path
-// (incident 2026-08-07). Returns nil when the platform token is unknown so
-// legacy setups keep working unchanged.
+// on an image silently breaks auth on the hub internal endpoints and thus
+// the whole task claim path (incident 2026-08-07, back then via the legacy
+// AGENT_TOKEN name, which has since been removed). Returns nil when the
+// platform token is unknown so legacy setups keep working unchanged.
 func platformManagedAgentEnv() map[string]string {
 	token := resolveHubInternalToken()
 	if token == "" {
 		return nil
 	}
 	return map[string]string{
-		"AGENT_TOKEN":                  token,
 		"HUB_INTERNAL_VALIDATE_SECRET": token,
 	}
 }
@@ -640,12 +639,11 @@ func (r *AgentReconciler) reconcileDeployment(ctx context.Context, agent *ainsel
 									{Name: "OLLAMA_CLOUD_MODEL", Value: agent.Spec.LLM.Model},
 									{Name: "AGENT_PERSONA_PATH", Value: "/etc/agent/persona.md"},
 									{Name: "HUB_URL", Value: resolveHubURL()},
-									// AGENT_TOKEN authenticates the runner against the hub's
-									// internal endpoints (X-Internal-Token). It is platform-
-									// owned: AgentImage declarations of AGENT_TOKEN /
-									// HUB_INTERNAL_VALIDATE_SECRET are dropped below so image
-									// config can never override it (see platformManagedAgentEnv).
-									{Name: "AGENT_TOKEN", Value: resolveHubInternalToken()},
+									// HUB_INTERNAL_VALIDATE_SECRET authenticates the runner
+									// against the hub's internal endpoints (X-Internal-Token).
+									// It is platform-owned: AgentImage declarations are dropped
+									// below so image config can never override it (see
+									// platformManagedAgentEnv).
 									{Name: "HUB_INTERNAL_VALIDATE_SECRET", Value: resolveHubInternalToken()},
 									{Name: "HUB_ENABLED", Value: "true"},
 								}

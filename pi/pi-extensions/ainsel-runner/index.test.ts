@@ -1217,7 +1217,14 @@ describe("toConversationPayloads — toolResult capping", () => {
 });
 
 describe("resolveInternalToken", () => {
-	it("prefers the platform-managed HUB_INTERNAL_VALIDATE_SECRET", () => {
+	it("returns the platform-managed HUB_INTERNAL_VALIDATE_SECRET", () => {
+		const token = resolveInternalToken({
+			HUB_INTERNAL_VALIDATE_SECRET: "platform-token",
+		});
+		assert.equal(token, "platform-token");
+	});
+
+	it("ignores a legacy AGENT_TOKEN value", () => {
 		const token = resolveInternalToken({
 			HUB_INTERNAL_VALIDATE_SECRET: "platform-token",
 			AGENT_TOKEN: "per-agent-token",
@@ -1225,20 +1232,8 @@ describe("resolveInternalToken", () => {
 		assert.equal(token, "platform-token");
 	});
 
-	it("falls back to AGENT_TOKEN when the platform secret is absent", () => {
-		const token = resolveInternalToken({ AGENT_TOKEN: "legacy-token" });
-		assert.equal(token, "legacy-token");
-	});
-
-	it("treats an empty platform secret as absent", () => {
-		const token = resolveInternalToken({
-			HUB_INTERNAL_VALIDATE_SECRET: "",
-			AGENT_TOKEN: "legacy-token",
-		});
-		assert.equal(token, "legacy-token");
-	});
-
-	it("throws when neither source is set", () => {
-		assert.throws(() => resolveInternalToken({}), /neither HUB_INTERNAL_VALIDATE_SECRET nor AGENT_TOKEN/);
+	it("throws when the platform secret is missing or empty", () => {
+		assert.throws(() => resolveInternalToken({}), /HUB_INTERNAL_VALIDATE_SECRET is not set/);
+		assert.throws(() => resolveInternalToken({ HUB_INTERNAL_VALIDATE_SECRET: "" }), /HUB_INTERNAL_VALIDATE_SECRET is not set/);
 	});
 });
