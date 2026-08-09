@@ -324,3 +324,61 @@ func (s *Server) addChatMessage(w http.ResponseWriter, r *http.Request, sessionI
 
 	writeJSON(w, http.StatusCreated, msg)
 }
+
+// --- Internal (agent-sidecar) chat endpoints ---
+//
+// The chat sidecar running in each agent pod talks to the hub using the
+// shared X-Internal-Token secret. Because it is not an OIDC user it cannot
+// authenticate against /api/v1/chat/*, which the OIDC auth middleware
+// protects. The routes below expose the subset of the chat API the sidecar
+// needs under /api/internal/, bypassing OIDC and authenticating via
+// X-Internal-Token at the handler level — the same pattern used by the
+// event-queue and task endpoints.
+
+const internalChatSessionsPrefix = "/api/internal/chat/sessions/"
+
+// handleInternalChatSessions handles /api/internal/chat/sessions.
+// Only GET (list sessions) is exposed to the sidecar.
+func (s *Server) handleInternalChatSessions(w http.ResponseWriter, r *http.Request) {
+	if !s.requireInternalToken(w, r) {
+		return
+	}
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	s.listChatSessions(w, r)
+}
+
+// handleInternalChatSession handles /api/internal/chat/sessions/{id} and
+// /api/internal/chat/sessions/{id}/messages. Only GET (session + history)
+// and POST messages (send reply/status) are exposed to the sidecar.
+func (s *Server) handleInternalChatSession(w http.ResponseWriter, r *http.Request) {
+	if !s.requireInternalToken(w, r) {
+		return
+	}
+	id := strings.TrimPrefix(r.URL.Path, internalChatSessionsPrefix)
+	// Strip any trailing path segments (e.g. /messages).
+	if slashIdx := strings.Index(id, "/"); slashIdx >= 0 {
+		id = id[:slashIdx]
+	}
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing session id")
+		return
+	}
+
+	if strings.Contains(r.URL.Path, "/messages") {
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		s.addChatMessage(w, r, id)
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	s.getChatSession(w, r, id)
+}

@@ -49,7 +49,7 @@ func TestListSessions(t *testing.T) {
 	if result.IsError {
 		t.Fatalf("expected success, got error: %v", result.Content)
 	}
-	if *lastPath != "/api/v1/chat/sessions?agent=developer" {
+	if *lastPath != "/api/internal/chat/sessions?agent=developer" {
 		t.Fatalf("unexpected path: %s", *lastPath)
 	}
 }
@@ -71,7 +71,7 @@ func TestGetHistory(t *testing.T) {
 	if result.IsError {
 		t.Fatalf("expected success, got error: %v", result.Content)
 	}
-	if *lastPath != "/api/v1/chat/sessions/sess-1" {
+	if *lastPath != "/api/internal/chat/sessions/sess-1" {
 		t.Fatalf("unexpected path: %s", *lastPath)
 	}
 }
@@ -88,7 +88,7 @@ func TestGetHistoryWithLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if *lastPath != "/api/v1/chat/sessions/sess-1?limit=10" {
+	if *lastPath != "/api/internal/chat/sessions/sess-1?limit=10" {
 		t.Fatalf("unexpected path: %s", *lastPath)
 	}
 }
@@ -126,7 +126,7 @@ func TestSendReply(t *testing.T) {
 	if result.IsError {
 		t.Fatalf("expected success, got error: %v", result.Content)
 	}
-	if *lastPath != "/api/v1/chat/sessions/sess-1/messages" {
+	if *lastPath != "/api/internal/chat/sessions/sess-1/messages" {
 		t.Fatalf("unexpected path: %s", *lastPath)
 	}
 }
@@ -164,7 +164,7 @@ func TestSendStatus(t *testing.T) {
 	if result.IsError {
 		t.Fatalf("expected success, got error: %v", result.Content)
 	}
-	if *lastPath != "/api/v1/chat/sessions/sess-1/messages" {
+	if *lastPath != "/api/internal/chat/sessions/sess-1/messages" {
 		t.Fatalf("unexpected path: %s", *lastPath)
 	}
 }

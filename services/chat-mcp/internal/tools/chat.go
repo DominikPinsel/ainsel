@@ -116,7 +116,7 @@ func (t *ChatTools) SendStatusTool() mcp.Tool {
 
 // ListSessions handles chat.list_sessions calls.
 func (t *ChatTools) ListSessions(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	path := fmt.Sprintf("/api/v1/chat/sessions?agent=%s", t.AgentName)
+	path := fmt.Sprintf("/api/internal/chat/sessions?agent=%s", t.AgentName)
 	body, err := t.hubGet(ctx, path)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to list chat sessions: %v", err)), nil
@@ -132,7 +132,7 @@ func (t *ChatTools) GetHistory(ctx context.Context, req mcp.CallToolRequest) (*m
 		return mcp.NewToolResultError("session_id is required"), nil
 	}
 
-	p := fmt.Sprintf("/api/v1/chat/sessions/%s", sessionID)
+	p := fmt.Sprintf("/api/internal/chat/sessions/%s", sessionID)
 	if limit, ok := args["limit"].(float64); ok && limit > 0 {
 		p += fmt.Sprintf("?limit=%d", int(limit))
 	}
@@ -164,7 +164,7 @@ func (t *ChatTools) SendReply(ctx context.Context, req mcp.CallToolRequest) (*mc
 		return mcp.NewToolResultError(fmt.Sprintf("failed to encode reply: %v", err)), nil
 	}
 
-	p := fmt.Sprintf("/api/v1/chat/sessions/%s/messages", sessionID)
+	p := fmt.Sprintf("/api/internal/chat/sessions/%s/messages", sessionID)
 	body, err := t.hubPost(ctx, p, payload)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to send reply: %v", err)), nil
@@ -192,7 +192,7 @@ func (t *ChatTools) SendStatus(ctx context.Context, req mcp.CallToolRequest) (*m
 		return mcp.NewToolResultError(fmt.Sprintf("failed to encode status: %v", err)), nil
 	}
 
-	p := fmt.Sprintf("/api/v1/chat/sessions/%s/messages", sessionID)
+	p := fmt.Sprintf("/api/internal/chat/sessions/%s/messages", sessionID)
 	body, err := t.hubPost(ctx, p, payload)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to send status: %v", err)), nil
