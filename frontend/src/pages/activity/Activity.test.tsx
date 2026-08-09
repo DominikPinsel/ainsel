@@ -451,4 +451,148 @@ describe('Activity', () => {
       expect(screen.getByText('No events match the filter.')).toBeInTheDocument()
     })
   })
+
+  describe('outcome filter', () => {
+    // o1: single successful run; o2: single failed run; o3: mixed outcomes in
+    // one event; o4: unmatched event without any runs.
+    const outcomeEvents = [
+      {
+        id: 'o1',
+        timestamp: new Date(now - 30_000).toISOString(),
+        connector: 'c-111',
+        status: 'matched',
+        matches: [{ trigger: 't1', agent: 'doc-writer', runStatus: 'success', durationMs: 1200 }],
+      },
+      {
+        id: 'o2',
+        timestamp: new Date(now - 60_000).toISOString(),
+        connector: 'c-222',
+        status: 'error',
+        matches: [{ trigger: 't2', agent: 'infra-bot', runStatus: 'failure', error: 'boom' }],
+      },
+      {
+        id: 'o3',
+        timestamp: new Date(now - 90_000).toISOString(),
+        connector: 'c-333',
+        status: 'matched',
+        matches: [
+          { trigger: 't3', agent: 'sec-bot', runStatus: 'success' },
+          { trigger: 't4', agent: 'perf-bot', runStatus: 'failure', error: 'oom' },
+        ],
+      },
+      {
+        id: 'o4',
+        timestamp: new Date(now - 120_000).toISOString(),
+        connector: 'c-111',
+        status: 'unmatched',
+      },
+    ]
+
+    beforeEach(() => mockFetch(outcomeEvents))
+
+    it('renders an outcome filter dropdown with all run statuses', async () => {
+      renderWithProviders(<Activity />, { route: '/activity' })
+      const outcomeSelect = await screen.findByLabelText(/filter by outcome/i)
+      const options = Array.from(outcomeSelect.querySelectorAll('option'))
+      expect(options.map((o) => o.textContent)).toContain('Any outcome')
+      expect(options.map((o) => o.value).filter(Boolean).sort()).toEqual([
+        'failure',
+        'running',
+        'success',
+        'timeout',
+      ])
+    })
+
+    it('filters by success to show only events with a successful run', async () => {
+      const { container } = renderWithProviders(<Activity />, { route: '/activity' })
+      await waitFor(() => expect(container.querySelector('tbody tr')).not.toBeNull())
+      await userEvent.selectOptions(screen.getByLabelText(/filter by outcome/i), 'success')
+      await waitFor(() => {
+        const rows = container.querySelectorAll('tbody tr.activity-row')
+        expect(rows.length).toBe(2)
+        expect(rows[0].textContent).toContain('Monorepo Connector') // o1
+        expect(rows[1].textContent).toContain('Docs Public') // o3 (mixed)
+      })
+      const body = container.querySelector('tbody') as HTMLElement
+      expect(body.textContent).not.toContain('Infra Tooling') // o2
+    })
+
+    it('filters by failure to show only events with a failed run', async () => {
+      const { container } = renderWithProviders(<Activity />, { route: '/activity' })
+      await waitFor(() => expect(container.querySelector('tbody tr')).not.toBeNull())
+      await userEvent.selectOptions(screen.getByLabelText(/filter by outcome/i), 'failure')
+      await waitFor(() => {
+        const rows = container.querySelectorAll('tbody tr.activity-row')
+        expect(rows.length).toBe(2)
+        expect(rows[0].textContent).toContain('Infra Tooling') // o2
+        expect(rows[1].textContent).toContain('Docs Public') // o3 (mixed)
+      })
+      const body = container.querySelector('tbody') as HTMLElement
+      expect(body.textContent).not.toContain('Monorepo Connector') // o1
+    })
+
+    it('includes an event when any of its matches has the selected outcome', async () => {
+      const { container } = renderWithProviders(<Activity />, { route: '/activity' })
+      await waitFor(() => expect(container.querySelector('tbody tr')).not.toBeNull())
+      // o3 has one success and one failure match, so it appears for both filters
+      await userEvent.selectOptions(screen.getByLabelText(/filter by outcome/i), 'success')
+      await waitFor(() => {
+        const body = container.querySelector('tbody') as HTMLElement
+        expect(body.textContent).toContain('Docs Public')
+      })
+      await userEvent.selectOptions(screen.getByLabelText(/filter by outcome/i), 'failure')
+      await waitFor(() => {
+        const body = container.querySelector('tbody') as HTMLElement
+        expect(body.textContent).toContain('Docs Public')
+      })
+    })
+
+    it('excludes events without runs (e.g. unmatched) when an outcome is selected', async () => {
+      const { container } = renderWithProviders(<Activity />, { route: '/activity' })
+      await waitFor(() => expect(container.querySelector('tbody tr')).not.toBeNull())
+      await userEvent.selectOptions(screen.getByLabelText(/filter by outcome/i), 'success')
+      await waitFor(() => {
+        const rows = container.querySelectorAll('tbody tr.activity-row')
+        for (const row of rows) expect(row.textContent).not.toContain('SKIP')
+      })
+    })
+
+    it('selecting Any outcome resets the filter', async () => {
+      const { container } = renderWithProviders(<Activity />, { route: '/activity' })
+      await waitFor(() => expect(container.querySelector('tbody tr')).not.toBeNull())
+      await userEvent.selectOptions(screen.getByLabelText(/filter by outcome/i), 'failure')
+      await waitFor(() => {
+        expect(container.querySelectorAll('tbody tr.activity-row').length).toBe(2)
+      })
+      await userEvent.selectOptions(screen.getByLabelText(/filter by outcome/i), '')
+      await waitFor(() => {
+        expect(container.querySelectorAll('tbody tr.activity-row').length).toBe(4)
+      })
+    })
+
+    it('outcome filter combines with status filter using AND logic', async () => {
+      const { container } = renderWithProviders(<Activity />, { route: '/activity' })
+      await waitFor(() => expect(container.querySelector('tbody tr')).not.toBeNull())
+      // o2 is the only error-status event; it has a failure run but no success run
+      await userEvent.selectOptions(screen.getByLabelText(/filter by outcome/i), 'success')
+      await userEvent.selectOptions(screen.getByLabelText(/filter by status/i), 'error')
+      await waitFor(() => {
+        expect(container.querySelector('tbody tr')).toBeNull()
+        expect(screen.getByText('No events match the filter.')).toBeInTheDocument()
+      })
+    })
+
+    it('search matches run outcome terms', async () => {
+      const { container } = renderWithProviders(<Activity />, { route: '/activity' })
+      await waitFor(() => expect(container.querySelector('tbody tr')).not.toBeNull())
+      const searchInput = screen.getByLabelText(/search events/i)
+      await userEvent.type(searchInput, 'failure')
+      await waitFor(() => {
+        const rows = container.querySelectorAll('tbody tr.activity-row')
+        expect(rows.length).toBe(2)
+        expect(rows[0].textContent).toContain('Infra Tooling')
+        expect(rows[1].textContent).toContain('Docs Public')
+      })
+    })
+  })
 })

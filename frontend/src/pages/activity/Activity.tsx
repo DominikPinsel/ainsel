@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useRecentEvents } from '../../api/events'
-import type { ActivityEntry, ActivityStatus } from '../../api/events'
+import type { ActivityEntry, ActivityStatus, RunStatus } from '../../api/events'
 import { useConnectors } from '../../api/connectors'
 import { useTriggers } from '../../api/triggers'
 import { useAgents } from '../../api/agents'
@@ -18,6 +18,16 @@ const STATUS_OPTIONS = [
   { value: 'error', label: 'Error' },
 ] as const
 
+// Outcome filter values. These mirror the RunStatus union reported per
+// match (see frontend/src/api/events.ts); an event matches the filter when
+// any of its matches has the selected outcome.
+const OUTCOME_OPTIONS = [
+  { value: 'success', label: 'Success' },
+  { value: 'failure', label: 'Failure' },
+  { value: 'timeout', label: 'Timeout' },
+  { value: 'running', label: 'Running' },
+] as const
+
 const PAGE_SIZE_OPTIONS = [25, 50, 100] as const
 
 export function Activity() {
@@ -28,6 +38,7 @@ export function Activity() {
   const [filterStatus, setFilterStatus] = useState<string>('')
   const [filterConnector, setFilterConnector] = useState<string>('')
   const [filterAgent, setFilterAgent] = useState<string>('')
+  const [filterOutcome, setFilterOutcome] = useState<string>('')
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
 
   const [params, setParams] = useSearchParams()
@@ -68,6 +79,11 @@ export function Activity() {
 
   const handleFilterAgent = (v: string) => {
     setFilterAgent(v)
+    setParams((prev) => { const n = new URLSearchParams(prev); n.set('page', '1'); return n }, { replace: true })
+  }
+
+  const handleFilterOutcome = (v: string) => {
+    setFilterOutcome(v)
     setParams((prev) => { const n = new URLSearchParams(prev); n.set('page', '1'); return n }, { replace: true })
   }
 
@@ -150,6 +166,7 @@ export function Activity() {
           const an = agentNameById.get(m.agent)
           if (an) parts.push(an)
         }
+        if (m.runStatus) parts.push(m.runStatus)
       }
       if (r.payload != null) {
         try { parts.push(JSON.stringify(r.payload)) } catch { /* ignore */ }
@@ -161,13 +178,14 @@ export function Activity() {
       if (filterStatus && r.status !== (filterStatus as ActivityStatus)) return false
       if (filterConnector && r.connector !== filterConnector) return false
       if (filterAgent && !(r.matches ?? []).some((m) => m.agent === filterAgent)) return false
+      if (filterOutcome && !(r.matches ?? []).some((m) => m.runStatus === (filterOutcome as RunStatus))) return false
       if (searchTerms.length > 0) {
         const haystack = buildHaystack(r)
         if (!searchTerms.every((t) => haystack.includes(t))) return false
       }
       return true
     })
-  }, [rows, filterStatus, filterConnector, filterAgent, searchTerms, connectorNameById, triggerNameById, agentNameById])
+  }, [rows, filterStatus, filterConnector, filterAgent, filterOutcome, searchTerms, connectorNameById, triggerNameById, agentNameById])
 
   const sorted: ActivityEntry[] = useMemo(
     () =>
@@ -215,6 +233,16 @@ export function Activity() {
               onChange={handleFilterStatus}
               options={STATUS_OPTIONS}
               emptyLabel="Any status"
+            />
+          </div>
+          <div className="field">
+            <span className="label">Outcome</span>
+            <Select
+              aria-label="Filter by outcome"
+              value={filterOutcome}
+              onChange={handleFilterOutcome}
+              options={OUTCOME_OPTIONS}
+              emptyLabel="Any outcome"
             />
           </div>
           <div className="field">
