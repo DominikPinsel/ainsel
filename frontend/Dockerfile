@@ -32,7 +32,7 @@ COPY docs ./docs
 RUN pnpm --filter frontend build
 
 # ---------- runtime ------------------------------------------------------
-FROM nginx:1.27-alpine
+FROM nginx:1.31-alpine
 
 # envsubst comes from gettext.
 RUN apk add --no-cache gettext
