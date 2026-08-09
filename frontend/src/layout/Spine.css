@@ -12,6 +12,14 @@
   width: 232px;
 }
 
+/* Backdrop + close button only exist in the mobile drawer mode. */
+.spine-backdrop {
+  display: none;
+}
+.spine-close {
+  display: none;
+}
+
 .brand {
   padding: 0 20px 22px;
   border-bottom: var(--rule-w) solid var(--ink);
@@ -147,4 +155,62 @@
 }
 .spine-profile-link:hover b {
   color: var(--signal);
+}
+
+/* Mobile: the spine becomes an off-canvas drawer. */
+@media (max-width: 1000px) {
+  .spine {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(300px, 85vw);
+    height: 100vh;
+    height: 100dvh;
+    z-index: 60;
+    transform: translateX(-100%);
+    visibility: hidden;
+    transition: transform 0.18s ease, visibility 0.18s;
+  }
+  .spine.open {
+    transform: translateX(0);
+    visibility: visible;
+  }
+  .spine-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    background: rgba(20, 16, 10, 0.55);
+    cursor: pointer;
+  }
+  .spine-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: auto;
+    align-self: center;
+    width: 40px;
+    height: 40px;
+    background: transparent;
+    border: 1.5px solid var(--ink);
+    color: var(--ink);
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0;
+  }
+  .spine-close:hover {
+    background: var(--ink);
+    color: var(--paper);
+  }
+  .nav-link {
+    padding: 12px 20px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spine {
+    transition: none;
+  }
 }
