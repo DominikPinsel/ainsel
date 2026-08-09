@@ -215,6 +215,8 @@ func New(c client.Client, namespace string, connectorCfg ConnectorConfig, promCl
 	s.mux.HandleFunc("/api/v1/user-tokens", s.handleUserTokens)
 	s.mux.HandleFunc("/api/v1/user-tokens/", s.handleUserTokenDelete)
 	s.mux.HandleFunc("/api/internal/user-tokens/validate", s.handleUserTokenValidate)
+	s.mux.HandleFunc("/api/internal/chat/sessions", s.handleInternalChatSessions)
+	s.mux.HandleFunc("/api/internal/chat/sessions/", s.handleInternalChatSession)
 	s.mux.HandleFunc("/api/v1/groups", s.handleGroups)
 	s.mux.HandleFunc("/api/v1/groups/", s.handleGroup)
 	s.mux.HandleFunc("/api/v1/me/resources", s.handleMyResources)

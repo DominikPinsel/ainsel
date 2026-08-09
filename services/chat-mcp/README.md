@@ -17,8 +17,9 @@ message to the agent — goes through the hub → NATS → `ainsel-runner`
 event loop, same as any other event.
 
 The sidecar is **stateless**: every tool call proxies to the hub backend's
-chat REST API. The hub owns session storage, message history, and
-WebSocket routing to the frontend.
+internal chat REST API (`/api/internal/chat/*`, authenticated with the
+shared `X-Internal-Token`). The hub owns session storage, message history,
+and WebSocket routing to the frontend.
 
 ```
 ┌──────────────────────────────────────────────────────────┐
@@ -37,11 +38,11 @@ WebSocket routing to the frontend.
 │  └──────────────────┘     └────────┬────────────┘        │
 │                                      │                     │
 └──────────────────────────────────────┼─────────────────────┘
-                                       │ HTTPS proxy
+                                       │ HTTP proxy
                                        ▼
                               ┌──────────────────┐
                               │  Hub backend     │
-                              │  /api/v1/chat/*  │
+                              │  /api/internal/* │
                               │  (sessions,      │
                               │   messages,      │
                               │   WebSocket)     │
