@@ -19,7 +19,7 @@
     "dompurify": "^3",
     "html-to-image": "^1.11.13",
     "marked": "^15",
-    "mermaid": "^11.15.0",
+    "mermaid": "^11.16.1",
     "oidc-client-ts": "^3.3.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
