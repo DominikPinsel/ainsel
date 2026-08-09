@@ -11,6 +11,9 @@
   color: var(--ink-3);
   text-transform: uppercase;
   letter-spacing: 0.12em;
+  /* Never collapse inside the panel's flex column — the message scroll area
+     gives way instead. */
+  flex-shrink: 0;
 }
 .chat-busy-dot {
   width: 8px;

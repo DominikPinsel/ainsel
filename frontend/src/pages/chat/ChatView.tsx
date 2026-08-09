@@ -16,6 +16,7 @@ import { Panel } from '../../primitives/Panel'
 import { Titleblock } from '../../layout/Titleblock'
 import { formatRelative } from '../../utils/time'
 import './chatBusy.css'
+import './ChatView.css'
 
 export function ChatView() {
   const navigate = useNavigate()
@@ -70,10 +71,7 @@ export function ChatView() {
 
   const handleSend = () => {
     if (!input.trim() || !sessionId || sessionId === 'new') return
-    sendMutation.mutate(
-      { sessionId, content: input.trim() },
-      { onSuccess: () => setInput('') },
-    )
+    sendMutation.mutate({ sessionId, content: input.trim() }, { onSuccess: () => setInput('') })
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -99,8 +97,20 @@ export function ChatView() {
     return (
       <>
         <Titleblock
-          crumbs={<><>Operations / <b>Chat</b></></>}
-          title={<><>Starting chat with <em>{agentName}</em>…</></>}
+          crumbs={
+            <>
+              <>
+                Operations / <b>Chat</b>
+              </>
+            </>
+          }
+          title={
+            <>
+              <>
+                Starting chat with <em>{agentName}</em>…
+              </>
+            </>
+          }
         />
         <div style={{ padding: '28px 32px' }}>
           <Panel>
@@ -121,12 +131,24 @@ export function ChatView() {
     return (
       <>
         <Titleblock
-          crumbs={<><>Operations / <b>Chat</b></></>}
-          title={<><>Loading…</></>}
+          crumbs={
+            <>
+              <>
+                Operations / <b>Chat</b>
+              </>
+            </>
+          }
+          title={
+            <>
+              <>Loading…</>
+            </>
+          }
         />
         <div style={{ padding: '28px 32px' }}>
           <Panel>
-            <div className="label" style={{ padding: 14 }}>Loading chat…</div>
+            <div className="label" style={{ padding: 14 }}>
+              Loading chat…
+            </div>
           </Panel>
         </div>
       </>
@@ -137,8 +159,18 @@ export function ChatView() {
     return (
       <>
         <Titleblock
-          crumbs={<><>Operations / <b>Chat</b></></>}
-          title={<><>Chat not found</></>}
+          crumbs={
+            <>
+              <>
+                Operations / <b>Chat</b>
+              </>
+            </>
+          }
+          title={
+            <>
+              <>Chat not found</>
+            </>
+          }
         />
         <div style={{ padding: '28px 32px' }}>
           <Panel>
@@ -157,7 +189,7 @@ export function ChatView() {
   const displayName = session.name
 
   return (
-    <>
+    <div className="chat-page">
       <Titleblock
         crumbs={
           <>
@@ -191,19 +223,21 @@ export function ChatView() {
           </>
         }
       />
-      <div style={{ padding: '28px 32px', display: 'flex', flexDirection: 'column', height: 'calc(100vh - 160px)' }}>
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        {isBusy && (
-          <div className="chat-busy" role="status" aria-live="polite">
-            <span className="chat-busy-dot" />
-            {sendMutation.isPending ? 'Sending…' : 'Agent may be busy and will respond when ready…'}
-          </div>
-        )}
+      <div className="chat-body">
         <Panel className="cropped chat-panel">
+          {isBusy && (
+            <div className="chat-busy" role="status" aria-live="polite">
+              <span className="chat-busy-dot" />
+              {sendMutation.isPending
+                ? 'Sending…'
+                : 'Agent may be busy and will respond when ready…'}
+            </div>
+          )}
           <div
             ref={scrollRef}
             style={{
               flex: 1,
+              minHeight: 0,
               overflow: 'auto',
               padding: '16px 20px',
               display: 'flex',
@@ -212,7 +246,10 @@ export function ChatView() {
             }}
           >
             {messages.length === 0 ? (
-              <div className="label" style={{ textAlign: 'center', marginTop: 40, color: 'var(--ink-3)' }}>
+              <div
+                className="label"
+                style={{ textAlign: 'center', marginTop: 40, color: 'var(--ink-3)' }}
+              >
                 No messages yet. Say something to start the conversation.
               </div>
             ) : (
@@ -227,6 +264,7 @@ export function ChatView() {
               gap: '12px',
               alignItems: 'flex-end',
               background: 'var(--paper-2)',
+              flexShrink: 0,
             }}
           >
             <textarea
@@ -260,7 +298,6 @@ export function ChatView() {
             </Button>
           </div>
         </Panel>
-        </div>
       </div>
 
       <ConfirmModal
@@ -276,7 +313,7 @@ export function ChatView() {
         onConfirm={onConfirmDelete}
         onCancel={() => setShowDeleteConfirm(false)}
       />
-    </>
+    </div>
   )
 }
 
