@@ -1,0 +1,32 @@
+/* ===== Chat page layout =====
+ * The chat fills the viewport below the titleblock without hardcoded pixel
+ * offsets: the titleblock row takes its natural height (it wraps on narrow
+ * screens) and the chat panel fills whatever remains. --chrome-top accounts
+ * for chrome rendered above the canvas (e.g. the mobile top bar); it
+ * defaults to 0 when no such chrome exists.
+ */
+.chat-page {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: calc(100vh - var(--chrome-top, 0px));
+  height: calc(100dvh - var(--chrome-top, 0px));
+  overflow: hidden;
+}
+
+.chat-body {
+  padding: 28px 32px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-body > .chat-panel {
+  flex: 1;
+  min-height: 0;
+}
+
+@media (max-width: 1000px) {
+  .chat-body {
+    padding: 12px 16px;
+  }
+}

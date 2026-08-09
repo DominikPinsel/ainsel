@@ -139,4 +139,19 @@ describe('ChatView — busy notification', () => {
     expect(screen.getByRole('status')).toBeInTheDocument()
     expect(screen.getByText(/Sending/i)).toBeInTheDocument()
   })
+
+  it('renders the busy notification inside the chat panel so it cannot push the input row out of view', () => {
+    mockUseChatSession.mockReturnValue({
+      data: {
+        ...defaultSession,
+        messages: [
+          { id: 1, sessionId: 'sess-abc', role: 'user', content: 'Hello', tokens: 5, createdAt: '2026-06-22T00:00:00Z' },
+        ],
+      },
+      isLoading: false,
+    })
+    renderView()
+    const panel = document.querySelector('.chat-panel')
+    expect(panel).toContainElement(screen.getByRole('status'))
+  })
 })
