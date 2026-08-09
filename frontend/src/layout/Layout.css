@@ -3,6 +3,10 @@
   grid-template-columns: 232px 1fr;
   min-height: 100vh;
   position: relative;
+  /* Height of chrome rendered above .canvas (the mobile top bar on small
+     screens). Viewport-filling pages (e.g. chat) subtract it via
+     calc(100dvh - var(--chrome-top)). */
+  --chrome-top: 0px;
 }
 
 .skip-link {
@@ -92,6 +96,7 @@
   .shell {
     grid-template-columns: 1fr;
     grid-template-rows: auto 1fr;
+    --chrome-top: 60px;
   }
   .mobilebar {
     display: flex;
@@ -102,10 +107,12 @@
     z-index: 40;
     background: var(--paper);
     border-bottom: var(--heavy) solid var(--ink);
-    padding: 8px 16px;
+    height: 60px;
+    box-sizing: border-box;
+    padding: 0 16px;
   }
   .canvas {
-    min-height: calc(100vh - 61px);
+    min-height: calc(100vh - 60px);
   }
   .titleblock {
     padding: 14px 16px 12px;
