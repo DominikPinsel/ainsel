@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -259,6 +260,179 @@ func TestListEvents_InvalidLimit_400(t *testing.T) {
 	s := eventsTestServer(t, store)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/events?limit=abc", nil)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// setEventTime overrides received_at so tests get a deterministic order.
+func setEventTime(t *testing.T, store *eventqueue.Store, id string, ts time.Time) {
+	t.Helper()
+	if _, err := store.Pool().Exec(context.Background(),
+		`UPDATE events SET received_at = $1 WHERE id = $2`, ts, id,
+	); err != nil {
+		t.Fatalf("set event time: %v", err)
+	}
+}
+
+func TestListEvents_Pagination(t *testing.T) {
+	store, cleanup := newTestEventStore(t)
+	defer cleanup()
+	s := eventsTestServer(t, store)
+
+	base := time.Now().UTC()
+	for i := 0; i < 5; i++ {
+		id := fmt.Sprintf("evt-%d", i)
+		seedEvent(t, store, id, "github", `{"i":1}`)
+		// evt-4 is newest, evt-0 oldest.
+		setEventTime(t, store, id, base.Add(time.Duration(i)*time.Minute))
+	}
+
+	for page, wantIDs := range [][]string{
+		{"evt-4", "evt-3"},
+		{"evt-2", "evt-1"},
+		{"evt-0"},
+		{},
+	} {
+		url := fmt.Sprintf("/api/v1/events?limit=2&offset=%d", page*2)
+		req := httptest.NewRequest(http.MethodGet, url, nil)
+		rec := httptest.NewRecorder()
+		s.mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: expected 200, got %d: %s", url, rec.Code, rec.Body.String())
+		}
+		env := decodeEnvelope(t, rec)
+		if env.Total != 5 {
+			t.Fatalf("%s: expected total 5, got %d", url, env.Total)
+		}
+		if len(env.Events) != len(wantIDs) {
+			t.Fatalf("%s: expected %d events, got %d", url, len(wantIDs), len(env.Events))
+		}
+		for i, want := range wantIDs {
+			if env.Events[i].ID != want {
+				t.Errorf("%s: event %d: expected %q, got %q", url, i, want, env.Events[i].ID)
+			}
+		}
+	}
+}
+
+func TestListEvents_TotalReflectsFilters(t *testing.T) {
+	store, cleanup := newTestEventStore(t)
+	defer cleanup()
+	s := eventsTestServer(t, store)
+
+	seedEvent(t, store, "evt-gh-1", "github", `{"i":1}`)
+	seedEvent(t, store, "evt-gh-2", "github", `{"i":2}`)
+	seedEvent(t, store, "evt-sl-1", "slack", `{"i":3}`)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/events?limit=1&connector=github", nil)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+
+	env := decodeEnvelope(t, rec)
+	if len(env.Events) != 1 {
+		t.Fatalf("expected 1 event on page, got %d", len(env.Events))
+	}
+	if env.Total != 2 {
+		t.Fatalf("expected total 2 for connector=github, got %d", env.Total)
+	}
+}
+
+func TestListEvents_StatusFilter(t *testing.T) {
+	store, cleanup := newTestEventStore(t)
+	defer cleanup()
+	s := eventsTestServer(t, store)
+
+	seedEvent(t, store, "evt-unmatched", "github", `{"a":1}`)
+	seedEvent(t, store, "evt-matched", "github", `{"b":2}`)
+	seedTask(t, store, "evt-matched", "agent-a", "trig-1", "completed")
+	seedEvent(t, store, "evt-error", "github", `{"c":3}`)
+	seedTask(t, store, "evt-error", "agent-b", "trig-2", "failed")
+
+	cases := []struct {
+		status string
+		want   []string
+	}{
+		{activityStatusUnmatched, []string{"evt-unmatched"}},
+		{activityStatusMatched, []string{"evt-matched"}},
+		{activityStatusError, []string{"evt-error"}},
+	}
+	for _, tc := range cases {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/events?status="+tc.status, nil)
+		rec := httptest.NewRecorder()
+		s.mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status=%s: expected 200, got %d: %s", tc.status, rec.Code, rec.Body.String())
+		}
+		env := decodeEnvelope(t, rec)
+		if len(env.Events) != len(tc.want) || env.Total != len(tc.want) {
+			t.Fatalf("status=%s: expected %d events (total %d), got %d events (total %d)",
+				tc.status, len(tc.want), len(tc.want), len(env.Events), env.Total)
+		}
+		for i, want := range tc.want {
+			if env.Events[i].ID != want {
+				t.Errorf("status=%s: event %d: expected %q, got %q", tc.status, i, want, env.Events[i].ID)
+			}
+		}
+	}
+}
+
+func TestListEvents_AgentFilter(t *testing.T) {
+	store, cleanup := newTestEventStore(t)
+	defer cleanup()
+	s := eventsTestServer(t, store)
+
+	seedEvent(t, store, "evt-a", "github", `{"a":1}`)
+	seedTask(t, store, "evt-a", "agent-a", "trig-1", "completed")
+	seedEvent(t, store, "evt-b", "github", `{"b":2}`)
+	seedTask(t, store, "evt-b", "agent-b", "trig-2", "completed")
+	seedEvent(t, store, "evt-ab", "github", `{"c":3}`)
+	seedTask(t, store, "evt-ab", "agent-a", "trig-3", "completed")
+	seedTask(t, store, "evt-ab", "agent-b", "trig-4", "completed")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/events?agent=agent-a", nil)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+
+	env := decodeEnvelope(t, rec)
+	if env.Total != 2 {
+		t.Fatalf("expected total 2 for agent=agent-a, got %d", env.Total)
+	}
+	got := map[string]bool{}
+	for _, e := range env.Events {
+		got[e.ID] = true
+	}
+	if !got["evt-a"] || !got["evt-ab"] || got["evt-b"] {
+		t.Fatalf("unexpected events for agent filter: %+v", got)
+	}
+}
+
+func TestListEvents_InvalidOffset_400(t *testing.T) {
+	store, cleanup := newTestEventStore(t)
+	defer cleanup()
+	s := eventsTestServer(t, store)
+
+	for _, v := range []string{"abc", "-1"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/events?offset="+v, nil)
+		rec := httptest.NewRecorder()
+		s.mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("offset=%s: expected 400, got %d", v, rec.Code)
+		}
+	}
+}
+
+func TestListEvents_InvalidStatus_400(t *testing.T) {
+	store, cleanup := newTestEventStore(t)
+	defer cleanup()
+	s := eventsTestServer(t, store)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/events?status=bogus", nil)
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, req)
 
