@@ -188,6 +188,80 @@ func TestCreateTrigger_MissingRequired(t *testing.T) {
 	}
 }
 
+func TestCreateTrigger_GroupIDForwarded(t *testing.T) {
+	var captured map[string]any
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&captured)
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "t-new"})
+	}))
+	defer hub.Close()
+
+	tt := &TriggerTools{HubURL: hub.URL, HTTPClient: hub.Client()}
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"name":         "my-trigger",
+		"agentRef":     "agent-1",
+		"connectorRef": "connector-1",
+		"groupId":      "team-a",
+	}
+	result, err := tt.CreateTrigger(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("tool returned error: %s", result.Content[0].(mcp.TextContent).Text)
+	}
+	if captured["groupId"] != "team-a" {
+		t.Errorf("expected groupId team-a in payload; got %v", captured["groupId"])
+	}
+
+	// Without groupId the field must be omitted entirely so hubs without
+	// access control keep working.
+	captured = nil
+	req.Params.Arguments = map[string]any{
+		"name":         "my-trigger",
+		"agentRef":     "agent-1",
+		"connectorRef": "connector-1",
+	}
+	if _, err := tt.CreateTrigger(context.Background(), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := captured["groupId"]; ok {
+		t.Errorf("expected no groupId in payload when omitted; got %v", captured["groupId"])
+	}
+}
+
+func TestCreateTrigger_GroupIDRequiredHint(t *testing.T) {
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"groupId is required"}`))
+	}))
+	defer hub.Close()
+
+	tt := &TriggerTools{HubURL: hub.URL, HTTPClient: hub.Client()}
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"name":         "my-trigger",
+		"agentRef":     "agent-1",
+		"connectorRef": "connector-1",
+	}
+	result, err := tt.CreateTrigger(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error result")
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+	if !strings.Contains(text, "groupId is required") {
+		t.Errorf("expected original hub error in message; got %s", text)
+	}
+	if !strings.Contains(text, "retry with a groupId") {
+		t.Errorf("expected groupId hint in message; got %s", text)
+	}
+}
+
 func TestUpdateTrigger(t *testing.T) {
 	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPut {
