@@ -20,12 +20,16 @@ func generateWebhookSecret() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-func (s *Server) createSecret(ctx context.Context, name string, data map[string][]byte) error {
+func (s *Server) createSecret(ctx context.Context, name string, data map[string][]byte, labels map[string]string) error {
+	merged := map[string]string{"app.kubernetes.io/managed-by": "ainsel-hub"}
+	for k, v := range labels {
+		merged[k] = v
+	}
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: s.ns,
-			Labels:    map[string]string{"app.kubernetes.io/managed-by": "ainsel-hub"},
+			Labels:    merged,
 		},
 		Data: data,
 	}
@@ -45,3 +49,7 @@ func webhookSecretName(connectorName string) string {
 	return fmt.Sprintf("connector-%s-webhook-hmac", connectorName)
 }
 
+// webhookConnectorLabel links a webhook HMAC secret back to its
+// WebhookConnector. The event-gateway operator uses it to map secret events
+// (e.g. rotations) to the owning connector so the deployment can roll.
+const webhookConnectorLabel = "ainsel.dev/connector"
