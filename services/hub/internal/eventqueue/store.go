@@ -328,16 +328,102 @@ func (s *Store) GetStreamInfo(ctx context.Context) (*StreamInfo, error) {
 	return &info, nil
 }
 
-// RecentEvents returns the most recent events, optionally filtered by connector
-// and/or restricted to events received at or after since (a zero since means
-// no lower bound).
-func (s *Store) RecentEvents(ctx context.Context, count int, connector string, since time.Time) ([]Event, error) {
+// SubjectFilter constrains RecentEvents to events whose derived subject —
+// "<connector>.<eventType>", where the event type comes from the webhook
+// event-type header (any header ending in "-Event", falling back to a
+// generic "type" header) — matches a pattern. The zero value matches all
+// events.
+type SubjectFilter struct {
+	// Connector, if non-empty, restricts matches to this connector (case-insensitive).
+	Connector string
+	// EventType, if non-empty, restricts matches to this event type (case-insensitive).
+	EventType string
+	// None marks a pattern that can never match; queries can short-circuit.
+	None bool
+}
+
+// ParseSubjectFilter parses a subject pattern such as "forgejo.push",
+// "forgejo.*", "*.push" or "forgejo.>". Tokens are split on "."; "*"
+// matches any single token and a trailing ">" matches any remainder.
+// Subjects have exactly two levels (connector and event type), so patterns
+// with extra non-wildcard tokens never match. An empty pattern matches
+// everything.
+func ParseSubjectFilter(pattern string) SubjectFilter {
+	pattern = strings.ToLower(strings.TrimSpace(pattern))
+	if pattern == "" || pattern == ">" || pattern == "*" {
+		return SubjectFilter{}
+	}
+	tokens := strings.Split(pattern, ".")
+	var sf SubjectFilter
+	for _, tok := range tokens {
+		if tok == "" {
+			return SubjectFilter{None: true}
+		}
+	}
+	switch tokens[0] {
+	case ">", "*":
+	default:
+		sf.Connector = tokens[0]
+	}
+	if len(tokens) == 1 {
+		return sf
+	}
+	switch tokens[1] {
+	case ">", "*":
+	default:
+		sf.EventType = tokens[1]
+	}
+	// Deeper subjects do not exist; extra tokens only match as wildcards.
+	for _, tok := range tokens[2:] {
+		if tok != ">" && tok != "*" {
+			return SubjectFilter{None: true}
+		}
+	}
+	return sf
+}
+
+// Matches reports whether an event with the given connector and derived
+// event type satisfies the filter.
+func (sf SubjectFilter) Matches(connector, eventType string) bool {
+	if sf.None {
+		return false
+	}
+	if sf.Connector != "" && !strings.EqualFold(sf.Connector, connector) {
+		return false
+	}
+	if sf.EventType != "" && !strings.EqualFold(sf.EventType, eventType) {
+		return false
+	}
+	return true
+}
+
+// RecentEvents returns the most recent events, optionally filtered by
+// connector and/or a subject pattern (see ParseSubjectFilter), and/or
+// restricted to events received at or after since (a zero since means no
+// lower bound).
+func (s *Store) RecentEvents(ctx context.Context, count int, connector, subjectFilter string, since time.Time) ([]Event, error) {
+	sf := ParseSubjectFilter(subjectFilter)
+	if sf.None {
+		return []Event{}, nil
+	}
 	query := `SELECT id, connector, headers, data, raw, received_at FROM events`
 	args := []any{}
 	conds := []string{}
 	if connector != "" {
 		args = append(args, connector)
 		conds = append(conds, fmt.Sprintf("connector = $%d", len(args)))
+	}
+	if sf.Connector != "" {
+		args = append(args, sf.Connector)
+		conds = append(conds, fmt.Sprintf("lower(connector) = $%d", len(args)))
+	}
+	if sf.EventType != "" {
+		// Mirrors trigger.CanonicalEventType: any header ending in "-Event",
+		// falling back to a generic "type" entry.
+		args = append(args, sf.EventType)
+		conds = append(conds, fmt.Sprintf(
+			`(EXISTS (SELECT 1 FROM jsonb_each_text(headers) kv WHERE kv.key ILIKE '%%-event' AND lower(kv.value) = $%d) OR lower(coalesce(headers->>'type', '')) = $%d)`,
+			len(args), len(args)))
 	}
 	if !since.IsZero() {
 		args = append(args, since)

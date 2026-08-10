@@ -132,7 +132,7 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
 		since = t
 	}
 
-	events, err := s.eventQueue.RecentEvents(r.Context(), limit, connector, since)
+	events, err := s.eventQueue.RecentEvents(r.Context(), limit, connector, "", since)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list events")
 		return
