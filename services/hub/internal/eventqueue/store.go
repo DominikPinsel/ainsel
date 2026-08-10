@@ -328,30 +328,67 @@ func (s *Store) GetStreamInfo(ctx context.Context) (*StreamInfo, error) {
 	return &info, nil
 }
 
-// RecentEvents returns the most recent events, optionally filtered by connector
-// and/or restricted to events received at or after since (a zero since means
-// no lower bound).
-func (s *Store) RecentEvents(ctx context.Context, count int, connector string, since time.Time) ([]Event, error) {
-	query := `SELECT id, connector, headers, data, raw, received_at FROM events`
-	args := []any{}
-	conds := []string{}
-	if connector != "" {
-		args = append(args, connector)
-		conds = append(conds, fmt.Sprintf("connector = $%d", len(args)))
+// EventFilter constrains QueryEvents/CountEvents queries. Zero values mean
+// "no filter".
+type EventFilter struct {
+	// Connector limits results to events from this connector.
+	Connector string
+	// Since limits results to events received at or after this time.
+	Since time.Time
+	// Status filters by derived activity status: "matched", "unmatched" or
+	// "error". Any other value applies no filter; callers are expected to
+	// validate.
+	Status string
+	// Agent limits results to events routed to this agent.
+	Agent string
+}
+
+// conditions renders the filter as SQL conditions with positional parameters.
+// The events table is aliased as e.
+func (f EventFilter) conditions() (conds []string, args []any) {
+	if f.Connector != "" {
+		args = append(args, f.Connector)
+		conds = append(conds, fmt.Sprintf("e.connector = $%d", len(args)))
 	}
-	if !since.IsZero() {
-		args = append(args, since)
-		conds = append(conds, fmt.Sprintf("received_at >= $%d", len(args)))
+	if !f.Since.IsZero() {
+		args = append(args, f.Since)
+		conds = append(conds, fmt.Sprintf("e.received_at >= $%d", len(args)))
 	}
+	if f.Agent != "" {
+		args = append(args, f.Agent)
+		conds = append(conds, fmt.Sprintf(
+			"EXISTS (SELECT 1 FROM agent_tasks t WHERE t.event_id = e.id AND t.agent_name = $%d)", len(args)))
+	}
+	switch f.Status {
+	case "unmatched":
+		conds = append(conds,
+			"NOT EXISTS (SELECT 1 FROM agent_tasks t WHERE t.event_id = e.id)")
+	case "matched":
+		conds = append(conds,
+			"EXISTS (SELECT 1 FROM agent_tasks t WHERE t.event_id = e.id)",
+			"NOT EXISTS (SELECT 1 FROM agent_tasks t WHERE t.event_id = e.id AND t.status = 'failed')")
+	case "error":
+		conds = append(conds,
+			"EXISTS (SELECT 1 FROM agent_tasks t WHERE t.event_id = e.id AND t.status = 'failed')")
+	}
+	return conds, args
+}
+
+// QueryEvents returns a page of events matching the filter, newest first.
+// Limit/offset pagination uses (received_at DESC, id DESC) ordering so pages
+// are stable even for events sharing a timestamp.
+func (s *Store) QueryEvents(ctx context.Context, f EventFilter, limit, offset int) ([]Event, error) {
+	conds, args := f.conditions()
+	query := `SELECT id, connector, headers, data, raw, received_at FROM events e`
 	if len(conds) > 0 {
 		query += ` WHERE ` + strings.Join(conds, " AND ")
 	}
-	args = append(args, count)
-	query += fmt.Sprintf(` ORDER BY received_at DESC LIMIT $%d`, len(args))
+	args = append(args, limit, offset)
+	query += fmt.Sprintf(` ORDER BY e.received_at DESC, e.id DESC LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
 
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("eventqueue: recent events: %w", err)
+		return nil, fmt.Errorf("eventqueue: query events: %w", err)
 	}
 	defer rows.Close()
 
@@ -359,11 +396,32 @@ func (s *Store) RecentEvents(ctx context.Context, count int, connector string, s
 	for rows.Next() {
 		var e Event
 		if err := rows.Scan(&e.ID, &e.Connector, &e.Headers, &e.Data, &e.Raw, &e.ReceivedAt); err != nil {
-			return nil, fmt.Errorf("eventqueue: scan recent event: %w", err)
+			return nil, fmt.Errorf("eventqueue: scan event: %w", err)
 		}
 		events = append(events, e)
 	}
 	return events, rows.Err()
+}
+
+// CountEvents returns the number of events matching the filter.
+func (s *Store) CountEvents(ctx context.Context, f EventFilter) (int, error) {
+	conds, args := f.conditions()
+	query := `SELECT count(*) FROM events e`
+	if len(conds) > 0 {
+		query += ` WHERE ` + strings.Join(conds, " AND ")
+	}
+	var total int
+	if err := s.pool.QueryRow(ctx, query, args...).Scan(&total); err != nil {
+		return 0, fmt.Errorf("eventqueue: count events: %w", err)
+	}
+	return total, nil
+}
+
+// RecentEvents returns the most recent events, optionally filtered by connector
+// and/or restricted to events received at or after since (a zero since means
+// no lower bound).
+func (s *Store) RecentEvents(ctx context.Context, count int, connector string, since time.Time) ([]Event, error) {
+	return s.QueryEvents(ctx, EventFilter{Connector: connector, Since: since}, count, 0)
 }
 
 // GetEvent returns a single event by ID, or nil if it does not exist.
