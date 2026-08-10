@@ -22,7 +22,7 @@ importers:
     dependencies:
       '@hookform/resolvers':
         specifier: ^3.9.0
-        version: 3.10.0(react-hook-form@7.76.0(react@18.3.1))
+        version: 3.10.0(react-hook-form@7.84.0(react@18.3.1))
       '@tanstack/react-query':
         specifier: ^5.51.0
         version: 5.100.11(react@18.3.1)
@@ -48,8 +48,8 @@ importers:
         specifier: ^18.3.1
         version: 18.3.1(react@18.3.1)
       react-hook-form:
-        specifier: ^7.52.0
-        version: 7.76.0(react@18.3.1)
+        specifier: ^7.84.0
+        version: 7.84.0(react@18.3.1)
       react-oidc-context:
         specifier: ^3.3.0
         version: 3.3.1(oidc-client-ts@3.5.0)(react@18.3.1)
@@ -1914,8 +1914,8 @@ packages:
     peerDependencies:
       react: ^18.3.1
 
-  react-hook-form@7.76.0:
-    resolution: {integrity: sha512-eKtLGgFeSgkHqQD8J59AMZ9a4uD1D83iSIzt4YlTGD7liDen5rrjcUO1rVIGd9yC1gofryjtHbv+4ny4hkLWlw==}
+  react-hook-form@7.84.0:
+    resolution: {integrity: sha512-+hWvQP6GLco56mDwrbU4XnHix8t1z90ltZsDIrREl+jnQFQxYLX8oAzqe/Xn8nHpmoXTY5M6oEXrAhbP1qevNQ==}
     engines: {node: '>=18.0.0'}
     peerDependencies:
       react: ^16.8.0 || ^17 || ^18 || ^19
@@ -2591,9 +2591,9 @@ snapshots:
 
   '@eslint/js@8.57.1': {}
 
-  '@hookform/resolvers@3.10.0(react-hook-form@7.76.0(react@18.3.1))':
+  '@hookform/resolvers@3.10.0(react-hook-form@7.84.0(react@18.3.1))':
     dependencies:
-      react-hook-form: 7.76.0(react@18.3.1)
+      react-hook-form: 7.84.0(react@18.3.1)
 
   '@humanwhocodes/config-array@0.13.0':
     dependencies:
@@ -4140,7 +4140,7 @@ snapshots:
       react: 18.3.1
       scheduler: 0.23.2
 
-  react-hook-form@7.76.0(react@18.3.1):
+  react-hook-form@7.84.0(react@18.3.1):
     dependencies:
       react: 18.3.1
 

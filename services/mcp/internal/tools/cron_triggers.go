@@ -48,6 +48,7 @@ func (t *CronTriggerTools) CreateCronTriggerTool() mcp.Tool {
 		mcp.WithString("schedule", mcp.Required(), mcp.Description("5-field cron expression, e.g. \"0 9 * * 1-5\" for weekdays at 9am, \"30 2 * * 0\" for Sundays at 2:30am")),
 		mcp.WithString("prompt", mcp.Required(), mcp.Description("Prompt text delivered to the agent as the user message on each fire. Sent verbatim — no event template wrapping.")),
 		mcp.WithBoolean("enabled", mcp.Description("Whether the schedule is active. Defaults to true if omitted.")),
+		mcp.WithString("groupId", mcp.Description("Group to assign the cron trigger to; must be a group the caller has write access to. Required on hubs with access control enabled.")),
 	)
 }
 
@@ -89,6 +90,9 @@ func (t *CronTriggerTools) CreateCronTrigger(ctx context.Context, req mcp.CallTo
 	if enabled, ok := args["enabled"].(bool); ok {
 		payload["enabled"] = enabled
 	}
+	if groupID, ok := args["groupId"].(string); ok && groupID != "" {
+		payload["groupId"] = groupID
+	}
 
 	bodyData, err := json.Marshal(payload)
 	if err != nil {
@@ -97,7 +101,7 @@ func (t *CronTriggerTools) CreateCronTrigger(ctx context.Context, req mcp.CallTo
 
 	body, err := hubPost(ctx, t.HTTPClient, t.HubURL, "/api/v1/cron-triggers", bytes.NewReader(bodyData))
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("failed to create cron trigger: %v", err)), nil
+		return mcp.NewToolResultError(fmt.Sprintf("failed to create cron trigger: %v", appendGroupIDHint(err))), nil
 	}
 	return mcp.NewToolResultText(string(body)), nil
 }

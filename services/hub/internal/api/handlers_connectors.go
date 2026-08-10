@@ -64,6 +64,9 @@ func (s *Server) handleConnector(w http.ResponseWriter, r *http.Request) {
 	if parts := strings.SplitN(path, "/", 2); len(parts) == 2 {
 		name, action := parts[0], parts[1]
 		if action == "rotate-secret" && r.Method == http.MethodPost {
+			if !s.requireWrite(w, r, "connector", name) {
+				return
+			}
 			s.rotateConnectorSecret(ctx, w, name)
 			return
 		}
@@ -183,7 +186,10 @@ func (s *Server) createConnector(ctx context.Context, w http.ResponseWriter, r *
 
 	id := generateID("c")
 	secretName := webhookSecretName(id)
-	if err := s.createSecret(ctx, secretName, map[string][]byte{"secret": []byte(webhookHMAC)}); err != nil {
+	if err := s.createSecret(ctx, secretName,
+		map[string][]byte{"secret": []byte(webhookHMAC)},
+		map[string]string{webhookConnectorLabel: id},
+	); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create webhook secret: "+err.Error())
 		return
 	}

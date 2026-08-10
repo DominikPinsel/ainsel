@@ -136,6 +136,14 @@ type ListOptions struct {
 // The returned slice contains copies of the stored records; callers may
 // safely mutate them without affecting the store.
 func (s *Store) List(opts ListOptions) []Invocation {
+	items, _ := s.ListWithTotal(opts)
+	return items
+}
+
+// ListWithTotal behaves like List but additionally returns the number of
+// invocations matching the filters before opts.Limit is applied. This lets
+// callers report a truthful total even when the result set is capped.
+func (s *Store) ListWithTotal(opts ListOptions) ([]Invocation, int) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -171,10 +179,11 @@ func (s *Store) List(opts ListOptions) []Invocation {
 		return out[i].StartTime.After(out[j].StartTime)
 	})
 
+	total := len(out)
 	if opts.Limit > 0 && len(out) > opts.Limit {
 		out = out[:opts.Limit]
 	}
-	return out
+	return out, total
 }
 
 // Len returns the number of invocations currently stored.
