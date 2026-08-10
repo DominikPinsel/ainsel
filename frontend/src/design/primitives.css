@@ -517,6 +517,13 @@ table.reg td.num { text-align: right; }
   background: var(--ink);
   color: var(--paper);
 }
+.pager .pager-gap {
+  padding: 4px 4px;
+  font-size: 10px;
+  font-family: var(--mono);
+  color: var(--ink);
+  opacity: 0.6;
+}
 
 /* ===== Tabs ===== */
 .tabs {

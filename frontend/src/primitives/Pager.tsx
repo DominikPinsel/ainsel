@@ -1,5 +1,22 @@
 import { Select } from './Select'
 
+// pageItems computes the page buttons to render. For short page ranges all
+// pages are shown; for long ranges the list collapses to first, a window
+// around the current page, and last, separated by gap markers.
+function pageItems(page: number, totalPages: number): (number | 'gap-left' | 'gap-right')[] {
+  if (totalPages <= 9) {
+    return Array.from({ length: totalPages }, (_, i) => i + 1)
+  }
+  const items: (number | 'gap-left' | 'gap-right')[] = [1]
+  const start = Math.max(2, page - 1)
+  const end = Math.min(totalPages - 1, page + 1)
+  if (start > 2) items.push('gap-left')
+  for (let p = start; p <= end; p++) items.push(p)
+  if (end < totalPages - 1) items.push('gap-right')
+  items.push(totalPages)
+  return items
+}
+
 type PagerProps = {
   page: number
   pageSize: number
@@ -43,16 +60,22 @@ export function Pager({
       >
         ◀
       </button>
-      {Array.from({ length: Math.max(totalPages, 1) }, (_, i) => i + 1).map((p) => (
-        <button
-          key={p}
-          className={p === page ? 'pager-step active' : 'pager-step'}
-          aria-label={`Page ${p}`}
-          onClick={() => onPageChange(p)}
-        >
-          {p}
-        </button>
-      ))}
+      {pageItems(page, totalPages).map((item) =>
+        item === 'gap-left' || item === 'gap-right' ? (
+          <span key={item} className="pager-gap" aria-hidden="true">
+            …
+          </span>
+        ) : (
+          <button
+            key={item}
+            className={item === page ? 'pager-step active' : 'pager-step'}
+            aria-label={`Page ${item}`}
+            onClick={() => onPageChange(item)}
+          >
+            {item}
+          </button>
+        ),
+      )}
       <button
         className="pager-step"
         aria-label="Next page"

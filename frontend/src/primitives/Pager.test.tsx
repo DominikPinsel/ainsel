@@ -91,4 +91,41 @@ describe('Pager', () => {
     const three = screen.getByRole('button', { name: 'Page 3' })
     expect(three).toHaveClass('active')
   })
+
+  it('collapses long page ranges to a window around the current page', () => {
+    render(
+      <Pager
+        page={50}
+        pageSize={25}
+        total={2500}
+        pageSizeOptions={[25, 50, 100]}
+        onPageChange={() => {}}
+        onPageSizeChange={() => {}}
+      />,
+    )
+    // 100 pages total: only first, window around 50, and last are rendered.
+    expect(screen.getByRole('button', { name: 'Page 1' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Page 49' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Page 50' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Page 51' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Page 100' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Page 25' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Page 75' })).not.toBeInTheDocument()
+  })
+
+  it('keeps first and last pages reachable when windowed', async () => {
+    const onPageChange = vi.fn()
+    render(
+      <Pager
+        page={50}
+        pageSize={25}
+        total={2500}
+        pageSizeOptions={[25, 50, 100]}
+        onPageChange={onPageChange}
+        onPageSizeChange={() => {}}
+      />,
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Page 100' }))
+    expect(onPageChange).toHaveBeenCalledWith(100)
+  })
 })

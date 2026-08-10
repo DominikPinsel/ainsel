@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { useRecentEvents } from '../../api/events'
+import { useEventsPage } from '../../api/events'
 import type { ActivityEntry, ActivityStatus, RunStatus } from '../../api/events'
 import { useConnectors } from '../../api/connectors'
 import { useTriggers } from '../../api/triggers'
@@ -31,10 +31,6 @@ const OUTCOME_OPTIONS = [
 const PAGE_SIZE_OPTIONS = [25, 50, 100] as const
 
 export function Activity() {
-  const { data, isLoading, error } = useRecentEvents(100)
-  const { data: connectorData } = useConnectors({ pageSize: 200 })
-  const { data: triggerData } = useTriggers({ pageSize: 200 })
-  const { data: agentData } = useAgents({ pageSize: 200 })
   const [filterStatus, setFilterStatus] = useState<string>('')
   const [filterConnector, setFilterConnector] = useState<string>('')
   const [filterAgent, setFilterAgent] = useState<string>('')
@@ -48,6 +44,24 @@ export function Activity() {
   const pageSize = (PAGE_SIZE_OPTIONS as readonly number[]).includes(pageSizeParam)
     ? pageSizeParam
     : 25
+
+  // Pagination and the status/connector/agent filters are server-side so
+  // the full event history is queryable, not just the most recent window.
+  // Outcome and free-text search (which rely on invocation state and
+  // resolved display names) still apply client-side to the loaded page.
+  const { data, isLoading, error } = useEventsPage({
+    limit: pageSize,
+    offset: (page - 1) * pageSize,
+    status: filterStatus ? (filterStatus as ActivityStatus) : undefined,
+    connector: filterConnector || undefined,
+    agent: filterAgent || undefined,
+  })
+  const { data: connectorData } = useConnectors({ pageSize: 200 })
+  const { data: triggerData } = useTriggers({ pageSize: 200 })
+  const { data: agentData } = useAgents({ pageSize: 200 })
+
+  const rows = useMemo(() => data?.events ?? [], [data])
+  const total = data?.total ?? 0
 
   const setPage = (p: number) => {
     setParams((prev) => { const n = new URLSearchParams(prev); n.set('page', String(p)); return n }, { replace: true })
@@ -95,8 +109,6 @@ export function Activity() {
       return next
     })
 
-  const rows = useMemo(() => data ?? [], [data])
-
   const connectorNameById = useMemo(() => {
     const map = new Map<string, string>()
     for (const c of connectorData?.items ?? []) {
@@ -123,22 +135,18 @@ export function Activity() {
 
   const connectorOptions = useMemo(
     () =>
-      Array.from(new Set(rows.map((r) => r.connector).filter((v): v is string => !!v)))
-        .sort()
-        .map((v) => ({ value: v, label: connectorNameById.get(v) ?? v })),
-    [rows, connectorNameById],
+      (connectorData?.items ?? [])
+        .map((c) => ({ value: c.id, label: c.name }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    [connectorData],
   )
 
   const agentOptions = useMemo(
     () =>
-      Array.from(
-        new Set(
-          rows.flatMap((r) => (r.matches ?? []).map((m) => m.agent).filter((v): v is string => !!v)),
-        ),
-      )
-        .sort()
-        .map((v) => ({ value: v, label: agentNameById.get(v) ?? v })),
-    [rows, agentNameById],
+      (agentData?.items ?? [])
+        .map((a) => ({ value: a.id, label: a.name }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    [agentData],
   )
 
   const searchTerms = useMemo(
@@ -175,9 +183,6 @@ export function Activity() {
     }
 
     return rows.filter((r) => {
-      if (filterStatus && r.status !== (filterStatus as ActivityStatus)) return false
-      if (filterConnector && r.connector !== filterConnector) return false
-      if (filterAgent && !(r.matches ?? []).some((m) => m.agent === filterAgent)) return false
       if (filterOutcome && !(r.matches ?? []).some((m) => m.runStatus === (filterOutcome as RunStatus))) return false
       if (searchTerms.length > 0) {
         const haystack = buildHaystack(r)
@@ -185,7 +190,7 @@ export function Activity() {
       }
       return true
     })
-  }, [rows, filterStatus, filterConnector, filterAgent, filterOutcome, searchTerms, connectorNameById, triggerNameById, agentNameById])
+  }, [rows, filterOutcome, searchTerms, connectorNameById, triggerNameById, agentNameById])
 
   const sorted: ActivityEntry[] = useMemo(
     () =>
@@ -195,10 +200,12 @@ export function Activity() {
     [filtered],
   )
 
-  const paginated: ActivityEntry[] = useMemo(() => {
-    const start = (page - 1) * pageSize
-    return sorted.slice(start, start + pageSize)
-  }, [sorted, page, pageSize])
+  const localFilterActive = filterOutcome !== '' || searchTerms.length > 0
+  const anyFilterActive =
+    localFilterActive || filterStatus !== '' || filterConnector !== '' || filterAgent !== ''
+  const panelTitle = localFilterActive
+    ? `Activity · ${sorted.length} of ${rows.length} on page · ${total} total`
+    : `Activity · ${total} total`
 
   return (
     <>
@@ -268,7 +275,7 @@ export function Activity() {
         </div>
 
         <Panel
-          title={`Activity · ${filtered.length} of ${rows.length}`}
+          title={panelTitle}
           className="cropped"
         >
           {isLoading ? (
@@ -279,10 +286,14 @@ export function Activity() {
             <div className="label" style={{ padding: 14, color: 'var(--signal)' }}>
               Failed to load activity.
             </div>
-          ) : filtered.length === 0 ? (
+          ) : sorted.length === 0 ? (
             <div className="label" style={{ padding: 14 }}>
               {rows.length === 0
-                ? 'No recent events.'
+                ? anyFilterActive
+                  ? 'No events match the filter.'
+                  : total === 0
+                    ? 'No recent events.'
+                    : 'No events on this page.'
                 : 'No events match the filter.'}
             </div>
           ) : (
@@ -299,7 +310,7 @@ export function Activity() {
                     </tr>
                   </thead>
                   <tbody>
-                    {paginated.map((e) => (
+                    {sorted.map((e) => (
                       <ActivityRow
                         key={e.id}
                         entry={e}
@@ -316,7 +327,7 @@ export function Activity() {
               <Pager
                 page={page}
                 pageSize={pageSize}
-                total={sorted.length}
+                total={total}
                 pageSizeOptions={PAGE_SIZE_OPTIONS}
                 onPageChange={setPage}
                 onPageSizeChange={setPageSize}

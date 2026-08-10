@@ -24,21 +24,34 @@ export type ActivityEntry = {
 
 export type ListEventsParams = {
   limit?: number
+  offset?: number
   status?: ActivityStatus
   connector?: string
+  agent?: string
   since?: string
 }
 
-// Backend wraps the list in `{ events, total }`; unwrap so consumers can
-// keep treating the result as an array.
+// Backend wraps the list in `{ events, total }`; total is the number of all
+// events matching the filters (not just the returned page), which the
+// Activity page uses to drive its pager.
 type EventsEnvelope = {
   events: ActivityEntry[]
   total: number
 }
 
-export async function listEvents(params: ListEventsParams = {}): Promise<ActivityEntry[]> {
+export type EventsPage = {
+  events: ActivityEntry[]
+  total: number
+}
+
+export async function listEventsPage(params: ListEventsParams = {}): Promise<EventsPage> {
   const env = await request<EventsEnvelope>('/events', { query: params })
-  return env.events ?? []
+  return { events: env.events ?? [], total: env.total ?? 0 }
+}
+
+export async function listEvents(params: ListEventsParams = {}): Promise<ActivityEntry[]> {
+  const env = await listEventsPage(params)
+  return env.events
 }
 
 export async function getEvent(id: string): Promise<ActivityEntry> {
@@ -57,5 +70,21 @@ export function useRecentEvents(limit: number) {
   return useQuery({
     queryKey: ['events', 'recent', limit],
     queryFn: () => listEvents({ limit }),
+  })
+}
+
+export function useEventsPage(params: ListEventsParams) {
+  return useQuery({
+    queryKey: [
+      'events',
+      'page',
+      params.limit ?? null,
+      params.offset ?? null,
+      params.status ?? null,
+      params.connector ?? null,
+      params.agent ?? null,
+      params.since ?? null,
+    ],
+    queryFn: () => listEventsPage(params),
   })
 }

@@ -10,6 +10,18 @@ const sampleConnectors = [
   { id: 'c-333', name: 'Docs Public' },
 ]
 
+const sampleAgents = [
+  { id: 'doc-writer', name: 'Doc Writer' },
+  { id: 'infra-bot', name: 'Infra Bot' },
+  { id: 'sec-bot', name: 'Sec Bot' },
+]
+
+const sampleTriggers = [
+  { id: 't1', name: 'On doc issue' },
+  { id: 't2', name: 'On infra issue' },
+  { id: 't3', name: 'On sec issue' },
+]
+
 const now = Date.now()
 
 // sampleEvents are intentionally out of order so we can verify sort behaviour
@@ -38,14 +50,41 @@ const sampleEvents = [
   },
 ]
 
+// mockFetch simulates the hub /events API: it applies the status, connector
+// and agent filters server-side, sorts newest-first, and paginates via
+// limit/offset. total reflects all filtered events, not just the page.
 function mockFetch(events: Record<string, unknown>[] = sampleEvents) {
   vi.stubGlobal(
     'fetch',
     vi.fn((url: string) => {
       if (url.includes('/events')) {
+        const q = new URL(url, 'http://localhost').searchParams
+        const status = q.get('status') ?? ''
+        const connector = q.get('connector') ?? ''
+        const agent = q.get('agent') ?? ''
+        const limit = Number(q.get('limit') ?? '100')
+        const offset = Number(q.get('offset') ?? '0')
+
+        const filtered = events
+          .filter((e) => {
+            if (status && e.status !== status) return false
+            if (connector && e.connector !== connector) return false
+            if (agent) {
+              const matches = (e.matches ?? []) as { agent: string }[]
+              if (!matches.some((m) => m.agent === agent)) return false
+            }
+            return true
+          })
+          .sort(
+            (a, b) =>
+              new Date(b.timestamp as string).getTime() -
+              new Date(a.timestamp as string).getTime(),
+          )
+        const page = filtered.slice(offset, offset + limit)
+
         return Promise.resolve(
           new Response(
-            JSON.stringify({ events, total: events.length }),
+            JSON.stringify({ events: page, total: filtered.length }),
             { status: 200 },
           ),
         )
@@ -57,6 +96,22 @@ function mockFetch(events: Record<string, unknown>[] = sampleEvents) {
               items: sampleConnectors,
               total: sampleConnectors.length,
             }),
+            { status: 200 },
+          ),
+        )
+      }
+      if (url.includes('/triggers')) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ items: sampleTriggers, total: sampleTriggers.length }),
+            { status: 200 },
+          ),
+        )
+      }
+      if (url.includes('/agents')) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ items: sampleAgents, total: sampleAgents.length }),
             { status: 200 },
           ),
         )
@@ -102,10 +157,12 @@ describe('Activity', () => {
     const details = container.querySelector('.activity-details')
     expect(details).not.toBeNull()
     const matchRow = container.querySelector('.activity-matches .match')!
-    expect(matchRow.textContent).toMatch(/doc-writer/)
+    // The default mock provides the trigger/agent registries, so ids resolve
+    // to display names.
+    expect(matchRow.textContent).toMatch(/Doc Writer/)
   })
 
-  it('filters by status client-side', async () => {
+  it('filters by status via the events API', async () => {
     const { container } = renderWithProviders(<Activity />, { route: '/activity' })
     await waitFor(() => expect(container.querySelector('tbody tr')).not.toBeNull())
     await userEvent.selectOptions(screen.getByLabelText(/filter by status/i), 'error')
@@ -153,12 +210,12 @@ describe('Activity', () => {
       expect(container.querySelector('tbody tr')).not.toBeNull(),
     )
     const rows = container.querySelectorAll('tbody tr.activity-row')
-    // e1: single match
-    expect(rows[0].textContent).toContain('t1')
-    expect(rows[0].textContent).toContain('doc-writer')
+    // e1: single match, resolved to registry names
+    expect(rows[0].textContent).toContain('On doc issue')
+    expect(rows[0].textContent).toContain('Doc Writer')
     // e3: multiple matches, comma-separated
-    expect(rows[1].textContent).toContain('t2, t3')
-    expect(rows[1].textContent).toContain('infra-bot, sec-bot')
+    expect(rows[1].textContent).toContain('On infra issue, On sec issue')
+    expect(rows[1].textContent).toContain('Infra Bot, Sec Bot')
     // e2: no matches → dash
     expect(rows[2].textContent).toContain('—')
   })
@@ -257,6 +314,30 @@ describe('Activity', () => {
     expect(screen.getByLabelText('Next page')).toBeInTheDocument()
     expect(screen.getByLabelText('Previous page')).toBeDisabled()
     expect(screen.getByLabelText('Next page')).not.toBeDisabled()
+  })
+
+  it('fetches the next page via offset when navigating', async () => {
+    const manyEvents = Array.from({ length: 30 }, (_, i) => ({
+      id: `e${i}`,
+      timestamp: new Date(now - i * 10_000).toISOString(),
+      connector: 'c-111',
+      status: 'matched' as const,
+    }))
+    mockFetch(manyEvents)
+
+    const { container } = renderWithProviders(<Activity />, {
+      route: '/activity?pageSize=25',
+    })
+    await waitFor(() => expect(container.querySelector('tbody tr')).not.toBeNull())
+    expect(container.querySelectorAll('tbody tr.activity-row').length).toBe(25)
+
+    await userEvent.click(screen.getByLabelText('Next page'))
+    await waitFor(() => {
+      // Page 2 holds the remaining 5 events (total 30).
+      expect(container.querySelectorAll('tbody tr.activity-row').length).toBe(5)
+    })
+    expect(screen.getByLabelText('Previous page')).not.toBeDisabled()
+    expect(screen.getByLabelText('Next page')).toBeDisabled()
   })
 
   it('filters events by search query matching payload content', async () => {
@@ -364,7 +445,7 @@ describe('Activity', () => {
     expect(searchInput.value).toBe('pull_request')
   })
 
-  it('renders agent filter dropdown with options from event matches', async () => {
+  it('renders agent filter dropdown with options from the agent registry', async () => {
     const { container } = renderWithProviders(<Activity />, { route: '/activity' })
     await waitFor(() => expect(container.querySelector('tbody tr')).not.toBeNull())
 
@@ -372,7 +453,7 @@ describe('Activity', () => {
     expect(agentSelect).toBeInTheDocument()
     const options = Array.from(agentSelect.querySelectorAll('option'))
     const values = options.map((o) => o.value).filter(Boolean)
-    // Should contain agent IDs from matches across all events
+    // Should contain agent IDs from the agent registry
     expect(values).toContain('doc-writer')
     expect(values).toContain('infra-bot')
     expect(values).toContain('sec-bot')
