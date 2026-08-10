@@ -63,6 +63,29 @@ func EnvValue(entries []string) string {
 	return strings.Join(entries, ",")
 }
 
+// DedupeEntries removes duplicate "name=url" entries, keeping the first
+// occurrence of each server name. The controller builds MCP_SERVERS from
+// several sources (Agent.spec.enabledMCPs discovery, AgentImage MCP
+// servers, sidecar declarations, and the injected chat sidecar); an MCP
+// declared on both the Agent and its AgentImage would otherwise reach the
+// runtime twice and be connected/registered twice.
+func DedupeEntries(entries []string) []string {
+	seen := make(map[string]bool, len(entries))
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		name := e
+		if i := strings.Index(e, "="); i > 0 {
+			name = e[:i]
+		}
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, e)
+	}
+	return out
+}
+
 // TokenEnvValue builds the MCP_SERVER_TOKENS env-var value as a
 // comma-separated "name=$(VAR)" string. Each server whose TokenFromEnv is
 // set yields an entry that Kubernetes resolves at container start by

@@ -4,6 +4,9 @@ import type { ServerRef } from "./parse.js";
 
 const PREFIX = "mcp__";
 
+const sleep = (ms: number): Promise<void> =>
+	new Promise((resolve) => setTimeout(resolve, ms));
+
 export interface PrefixedTool {
 	name: string; // mcp__<server>__<tool>
 	description: string;
@@ -16,6 +19,8 @@ export interface PrefixedTool {
 export interface CatalogOptions {
 	agentName?: string;
 	startupTimeoutMs?: number; // default 10000
+	connectRetries?: number; // default 4 retries per server
+	retryBaseDelayMs?: number; // default 250, doubled after each attempt
 	logger?: (msg: string, meta?: Record<string, unknown>) => void;
 }
 
@@ -33,6 +38,8 @@ export class Catalog {
 		this.opts = {
 			agentName: opts.agentName ?? "",
 			startupTimeoutMs: opts.startupTimeoutMs ?? 10_000,
+			connectRetries: opts.connectRetries ?? 4,
+			retryBaseDelayMs: opts.retryBaseDelayMs ?? 250,
 			logger:
 				opts.logger ??
 				((msg, meta) =>
@@ -42,54 +49,81 @@ export class Catalog {
 
 	/**
 	 * Connect to each server, fetch tools, build the prefixed catalog.
-	 * Servers that fail to respond within the startup budget are logged
-	 * and skipped -- never throws.
+	 * Each server is retried with exponential backoff: in an agent pod the
+	 * sidecar containers may not be listening yet when the runner starts.
+	 * Servers that still fail within the startup budget are logged and
+	 * skipped -- never throws.
 	 */
 	async connect(refs: ServerRef[]): Promise<void> {
 		const deadline = AbortSignal.timeout(this.opts.startupTimeoutMs);
+		const { connectRetries, retryBaseDelayMs } = this.opts;
 		await Promise.allSettled(
 			refs.map(async (ref) => {
-				try {
-					const client = new Client(
-						{ name: "pi-ainsel-mcp", version: "0.1.0" },
-						{ capabilities: {} },
-					);
-					const transport = new StreamableHTTPClientTransport(
-						new URL(ref.url),
-						ref.token
-							? { requestInit: { headers: { Authorization: `Bearer ${ref.token}` } } }
-							: undefined,
-					);
-					await client.connect(transport);
-					const { tools } = await client.listTools(undefined, {
-						signal: deadline,
-					});
-					this.servers.set(ref.name, { name: ref.name, client });
-					for (const t of tools) {
-						const schema = (t.inputSchema ?? {
-							type: "object",
-						}) as Record<string, unknown>;
-						this.tools.push({
-							name: `${PREFIX}${ref.name}__${t.name}`,
-							description: t.description ?? "",
-							inputSchema: schema,
+				for (let attempt = 0; ; attempt++) {
+					try {
+						await this.connectServer(ref, deadline);
+						return;
+					} catch (err) {
+						const errMsg =
+							err instanceof Error ? err.message : String(err);
+						if (attempt >= connectRetries || deadline.aborted) {
+							this.opts.logger("server unreachable; skipping", {
+								server: ref.name,
+								attempts: attempt + 1,
+								err: errMsg,
+							});
+							return;
+						}
+						const delayMs = retryBaseDelayMs * 2 ** attempt;
+						this.opts.logger("connect failed; retrying", {
 							server: ref.name,
-							upstreamName: t.name,
-							schemaHasUserId: schemaHasUserId(schema),
+							attempt: attempt + 1,
+							delayMs,
+							err: errMsg,
 						});
+						await sleep(delayMs);
 					}
-					this.opts.logger("connected", {
-						server: ref.name,
-						tools: tools.length,
-					});
-				} catch (err) {
-					this.opts.logger("server unreachable; skipping", {
-						server: ref.name,
-						err: err instanceof Error ? err.message : String(err),
-					});
 				}
 			}),
 		);
+	}
+
+	private async connectServer(
+		ref: ServerRef,
+		deadline: AbortSignal,
+	): Promise<void> {
+		const client = new Client(
+			{ name: "pi-ainsel-mcp", version: "0.1.0" },
+			{ capabilities: {} },
+		);
+		const transport = new StreamableHTTPClientTransport(
+			new URL(ref.url),
+			ref.token
+				? { requestInit: { headers: { Authorization: `Bearer ${ref.token}` } } }
+				: undefined,
+		);
+		await client.connect(transport);
+		const { tools } = await client.listTools(undefined, {
+			signal: deadline,
+		});
+		this.servers.set(ref.name, { name: ref.name, client });
+		for (const t of tools) {
+			const schema = (t.inputSchema ?? {
+				type: "object",
+			}) as Record<string, unknown>;
+			this.tools.push({
+				name: `${PREFIX}${ref.name}__${t.name}`,
+				description: t.description ?? "",
+				inputSchema: schema,
+				server: ref.name,
+				upstreamName: t.name,
+				schemaHasUserId: schemaHasUserId(schema),
+			});
+		}
+		this.opts.logger("connected", {
+			server: ref.name,
+			tools: tools.length,
+		});
 	}
 
 	async call(

@@ -7,13 +7,16 @@ export interface ServerRef {
 /**
  * Parse the MCP_SERVERS env value: comma-separated "name=url" pairs.
  * Whitespace around entries is tolerated. Empty input returns []. Throws
- * on malformed input.
+ * on malformed input. Duplicate server names are dropped; the first
+ * occurrence wins (the controller assembles MCP_SERVERS from multiple
+ * sources and may emit the same server twice).
  */
 export function parseServers(env: string | undefined): ServerRef[] {
 	const trimmed = (env ?? "").trim();
 	if (trimmed === "") return [];
 	const parts = trimmed.split(",");
 	const out: ServerRef[] = [];
+	const seen = new Set<string>();
 	for (const raw of parts) {
 		const p = raw.trim();
 		const eq = p.indexOf("=");
@@ -29,6 +32,8 @@ export function parseServers(env: string | undefined): ServerRef[] {
 				`malformed MCP_SERVERS entry ${JSON.stringify(p)} (want name=url)`,
 			);
 		}
+		if (seen.has(name)) continue;
+		seen.add(name);
 		out.push({ name, url });
 	}
 	return out;
