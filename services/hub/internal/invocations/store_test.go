@@ -172,6 +172,39 @@ func TestStore_ListFiltersAndLimit(t *testing.T) {
 	_ = a
 }
 
+func TestStore_ListWithTotalReportsPreLimitCount(t *testing.T) {
+	s := NewStore(10)
+	now := time.Now().UTC()
+	for i := 0; i < 5; i++ {
+		s.Record(Invocation{AgentName: "agent-a", StartTime: now.Add(time.Duration(-i) * time.Minute)})
+	}
+	s.Record(Invocation{AgentName: "agent-b", StartTime: now})
+
+	// Without a limit, items and total agree.
+	items, total := s.ListWithTotal(ListOptions{})
+	if len(items) != 6 || total != 6 {
+		t.Errorf("expected 6/6 without limit, got %d/%d", len(items), total)
+	}
+
+	// With a limit, items are capped but total still reflects all matches.
+	items, total = s.ListWithTotal(ListOptions{Limit: 2})
+	if len(items) != 2 {
+		t.Errorf("expected 2 items with limit=2, got %d", len(items))
+	}
+	if total != 6 {
+		t.Errorf("expected total 6 with limit=2, got %d", total)
+	}
+
+	// Filters are applied before the limit: only agent-a matches.
+	items, total = s.ListWithTotal(ListOptions{AgentName: "agent-a", Limit: 2})
+	if len(items) != 2 {
+		t.Errorf("expected 2 items for agent-a with limit=2, got %d", len(items))
+	}
+	if total != 5 {
+		t.Errorf("expected total 5 for agent-a, got %d", total)
+	}
+}
+
 func TestStore_ListFilterByTriggerName(t *testing.T) {
 	s := NewStore(10)
 	now := time.Now().UTC()
