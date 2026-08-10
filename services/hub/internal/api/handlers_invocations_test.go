@@ -228,11 +228,11 @@ func TestInvocations_ListFilterByLimit(t *testing.T) {
 		Total       int                      `json:"total"`
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
-	if resp.Total != 2 {
-		t.Errorf("expected total 2 with limit, got %d", resp.Total)
+	if resp.Total != 3 {
+		t.Errorf("expected total 3 (pre-limit match count), got %d", resp.Total)
 	}
-	if len(resp.Invocations) > 2 {
-		t.Errorf("expected at most 2 invocations, got %d", len(resp.Invocations))
+	if len(resp.Invocations) != 2 {
+		t.Errorf("expected exactly 2 invocations with limit=2, got %d", len(resp.Invocations))
 	}
 }
 

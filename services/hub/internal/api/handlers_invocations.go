@@ -69,9 +69,11 @@ func (s *Server) listInvocations(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	list := s.invocations.List(opts)
-	total := len(list)
-	lo, hi := page.Slice(total)
+	// total is the number of invocations matching the filters before
+	// opts.Limit is applied, so clients can detect truncation even when the
+	// result set is capped.
+	list, total := s.invocations.ListWithTotal(opts)
+	lo, hi := page.Slice(len(list))
 	pageItems := list[lo:hi]
 	if pageItems == nil {
 		pageItems = []invocations.Invocation{}
@@ -82,7 +84,7 @@ func (s *Server) listInvocations(w http.ResponseWriter, r *http.Request) {
 		"capacity":    s.invocations.Capacity(),
 		"page":        page.Page,
 		"pageSize":    page.PageSize,
-		"totalPages":  page.TotalPages(total),
+		"totalPages":  page.TotalPages(len(list)),
 	})
 }
 
