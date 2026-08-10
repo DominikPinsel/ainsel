@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -60,6 +61,7 @@ func (t *TriggerTools) CreateTriggerTool() mcp.Tool {
 		mcp.WithString("agentRef", mcp.Required(), mcp.Description("Agent reference")),
 		mcp.WithString("connectorRef", mcp.Required(), mcp.Description("Connector reference")),
 		mcp.WithString("filters", mcp.Description("Optional JSON array of filter objects with field, op, and value")),
+		mcp.WithString("groupId", mcp.Description("Group to assign the trigger to; must be a group the caller has write access to. Required on hubs with access control enabled.")),
 	)
 }
 
@@ -95,6 +97,9 @@ func (t *TriggerTools) CreateTrigger(ctx context.Context, req mcp.CallToolReques
 		}
 		payload["filters"] = filters
 	}
+	if groupID, ok := args["groupId"].(string); ok && groupID != "" {
+		payload["groupId"] = groupID
+	}
 
 	bodyData, err := json.Marshal(payload)
 	if err != nil {
@@ -103,9 +108,19 @@ func (t *TriggerTools) CreateTrigger(ctx context.Context, req mcp.CallToolReques
 
 	body, err := hubPost(ctx, t.HTTPClient, t.HubURL, "/api/v1/triggers", bytes.NewReader(bodyData))
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("failed to create trigger: %v", err)), nil
+		return mcp.NewToolResultError(fmt.Sprintf("failed to create trigger: %v", appendGroupIDHint(err))), nil
 	}
 	return mcp.NewToolResultText(string(body)), nil
+}
+
+// appendGroupIDHint returns the error message plus a follow-up hint when the
+// hub rejected the request because access control is enabled and no groupId
+// was supplied.
+func appendGroupIDHint(err error) string {
+	if strings.Contains(err.Error(), "groupId is required") {
+		return err.Error() + " — this hub has access control enabled; retry with a groupId your user has write access to"
+	}
+	return err.Error()
 }
 
 func (t *TriggerTools) UpdateTrigger(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

@@ -140,6 +140,79 @@ func TestCreateCronTrigger(t *testing.T) {
 	}
 }
 
+func TestCreateCronTrigger_GroupIDForwarded(t *testing.T) {
+	var capturedBody string
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		capturedBody = string(b)
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "c-1"})
+	}))
+	defer hub.Close()
+
+	st := &CronTriggerTools{HubURL: hub.URL, HTTPClient: hub.Client()}
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"name":     "Nightly Build",
+		"agentRef": "builder-agent",
+		"schedule": "0 2 * * *",
+		"prompt":   "Run the nightly build",
+		"groupId":  "team-a",
+	}
+	result, err := st.CreateCronTrigger(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("tool returned error: %s", result.Content[0].(mcp.TextContent).Text)
+	}
+	if !strings.Contains(capturedBody, `"groupId":"team-a"`) {
+		t.Errorf("expected groupId in request body; got: %s", capturedBody)
+	}
+
+	// Without groupId the field must be omitted entirely so hubs without
+	// access control keep working.
+	capturedBody = ""
+	delete(req.Params.Arguments.(map[string]any), "groupId")
+	if _, err := st.CreateCronTrigger(context.Background(), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(capturedBody, "groupId") {
+		t.Errorf("expected no groupId in request body when omitted; got: %s", capturedBody)
+	}
+}
+
+func TestCreateCronTrigger_GroupIDRequiredHint(t *testing.T) {
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"groupId is required"}`))
+	}))
+	defer hub.Close()
+
+	st := &CronTriggerTools{HubURL: hub.URL, HTTPClient: hub.Client()}
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"name":     "Nightly Build",
+		"agentRef": "builder-agent",
+		"schedule": "0 2 * * *",
+		"prompt":   "Run the nightly build",
+	}
+	result, err := st.CreateCronTrigger(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error result")
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+	if !strings.Contains(text, "groupId is required") {
+		t.Errorf("expected original hub error in message; got %s", text)
+	}
+	if !strings.Contains(text, "retry with a groupId") {
+		t.Errorf("expected groupId hint in message; got %s", text)
+	}
+}
+
 func TestCreateCronTriggerMissingFields(t *testing.T) {
 	st := &CronTriggerTools{HubURL: "http://nope", HTTPClient: http.DefaultClient}
 
