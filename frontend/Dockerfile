@@ -12,7 +12,7 @@
 # Build context = monorepo root: `docker build -f frontend/Dockerfile .`
 
 # ---------- builder ------------------------------------------------------
-FROM node:22-bookworm AS builder
+FROM node:26-bookworm AS builder
 WORKDIR /workspace
 
 # Layer caching: install deps before copying source.
