@@ -2,8 +2,11 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/url"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -11,13 +14,31 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	commonv1alpha1 "github.com/DominikPinsel/ainsel/shared/api/api/v1alpha1"
+)
+
+const (
+	// webhookSecretHashAnnotation is set on the connector deployment's pod
+	// template. Its value changes whenever the webhook HMAC secret changes,
+	// which forces a rolling restart of the webhook-receiver pod. This is
+	// required because the secret is injected as an environment variable,
+	// and env vars from secrets are only resolved at pod startup — without
+	// the restart, a rotated secret would never take effect.
+	webhookSecretHashAnnotation = "ainsel.dev/webhook-secret-hash" // #nosec G101 -- annotation key name, not a credential
+
+	// webhookConnectorLabel links a webhook HMAC secret back to its
+	// WebhookConnector. It is used to map secret events to reconcile
+	// requests.
+	webhookConnectorLabel = "ainsel.dev/connector"
 )
 
 // WebhookConnectorReconciler reconciles a WebhookConnector object.
@@ -97,6 +118,11 @@ func (r *WebhookConnectorReconciler) reconcileWebhookDeployment(ctx context.Cont
 		replicas = 0
 	}
 
+	secretHash, err := r.webhookSecretHash(ctx, cr)
+	if err != nil {
+		return err
+	}
+
 	hubURL := r.HubURL
 
 	dep := &appsv1.Deployment{
@@ -106,7 +132,7 @@ func (r *WebhookConnectorReconciler) reconcileWebhookDeployment(ctx context.Cont
 		},
 	}
 
-	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, dep, func() error {
+	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, dep, func() error {
 		if err := ctrl.SetControllerReference(cr, dep, r.Scheme); err != nil {
 			return err
 		}
@@ -116,7 +142,14 @@ func (r *WebhookConnectorReconciler) reconcileWebhookDeployment(ctx context.Cont
 			Replicas: &replicas,
 			Selector: &metav1.LabelSelector{MatchLabels: labels},
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: labels},
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: labels,
+					// Changing the annotation forces a rolling restart so
+					// the pod picks up the (possibly rotated) secret.
+					Annotations: map[string]string{
+						webhookSecretHashAnnotation: secretHash,
+					},
+				},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
 						{
@@ -185,6 +218,24 @@ func (r *WebhookConnectorReconciler) reconcileWebhookService(ctx context.Context
 		return nil
 	})
 	return err
+}
+
+// webhookSecretHash returns the hex-encoded SHA-256 hash of the webhook HMAC
+// secret referenced by the connector. The hash (rather than the secret
+// itself) is stored in the pod template annotation so deployments do not leak
+// the credential. A missing secret yields an empty hash: the pod cannot start
+// without the secret anyway, and reconciles will retry once it exists.
+func (r *WebhookConnectorReconciler) webhookSecretHash(ctx context.Context, cr *commonv1alpha1.WebhookConnector) (string, error) {
+	ref := cr.Spec.WebhookSecret.SecretRef
+	var sec corev1.Secret
+	if err := r.Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: cr.Namespace}, &sec); err != nil {
+		if apierrors.IsNotFound(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("fetching webhook secret %s: %w", ref.Name, err)
+	}
+	sum := sha256.Sum256(sec.Data[ref.Key])
+	return hex.EncodeToString(sum[:]), nil
 }
 
 // reconcileWebhookIngress creates/updates the Ingress for this WebhookConnector.
@@ -302,6 +353,34 @@ func (r *WebhookConnectorReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
 		Owns(&networkingv1.Ingress{}).
+		// Watch webhook HMAC secrets so that a secret rotation triggers a
+		// reconcile and the deployment rolls to pick up the new value.
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.mapWebhookSecretToConnector)).
 		Named("webhookconnector").
 		Complete(r)
+}
+
+// mapWebhookSecretToConnector maps a webhook HMAC secret event to a reconcile
+// request for its WebhookConnector. The connector is identified via the
+// ainsel.dev/connector label; secrets created before the label existed are
+// matched by their naming convention (connector-<id>-webhook-hmac).
+func (r *WebhookConnectorReconciler) mapWebhookSecretToConnector(_ context.Context, obj client.Object) []reconcile.Request {
+	if id := obj.GetLabels()[webhookConnectorLabel]; id != "" {
+		return []reconcile.Request{{
+			NamespacedName: types.NamespacedName{Name: id, Namespace: obj.GetNamespace()},
+		}}
+	}
+
+	const prefix, suffix = "connector-", "-webhook-hmac"
+	name := obj.GetName()
+	if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, suffix) ||
+		len(name) <= len(prefix)+len(suffix) {
+		return nil
+	}
+	return []reconcile.Request{{
+		NamespacedName: types.NamespacedName{
+			Name:      strings.TrimSuffix(strings.TrimPrefix(name, prefix), suffix),
+			Namespace: obj.GetNamespace(),
+		},
+	}}
 }

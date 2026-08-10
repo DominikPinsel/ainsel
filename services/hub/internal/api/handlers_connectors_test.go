@@ -182,6 +182,12 @@ func TestCreateWebhookConnector_CreatesWebhookSecret(t *testing.T) {
 		t.Errorf("secret in K8s (%q) does not match webhookSecretValue in response (%q)",
 			string(sec.Data["secret"]), created.WebhookSecretValue)
 	}
+
+	// The secret must be labeled with its connector so the operator can map
+	// secret events (rotations) back to the connector.
+	if got := sec.Labels[webhookConnectorLabel]; got != created.ID {
+		t.Errorf("secret label %q = %q, want %q", webhookConnectorLabel, got, created.ID)
+	}
 }
 
 func TestUpdateWebhookConnector_DisableAndRename(t *testing.T) {
