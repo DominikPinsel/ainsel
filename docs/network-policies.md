@@ -54,6 +54,7 @@ All policies live in the release namespace (`.Values.namespace`).
 | `postgres` | `component: postgres` | Ingress | `hub-backend` only, port 5432 |
 | `qdrant` | `component: qdrant` | Ingress | agent pods (`component: agents`) and `hub-backend` pods, ports 6333/6334 |
 | `agent-egress` | `component: agents` | Egress | qdrant (6333), hub-backend (8080), DNS (53), any destination on 443/TCP (LLM APIs; FQDN scoping tracked in #652) |
+| `agent-metrics` | `managed-by: agent-operator` | Ingress | any source, named port `metrics` (Prometheus scrapes of `agent_tokens_used_total` etc.; selector matches the `ainsel-agents` PodMonitor) |
 | `connectors-webhook-ingress` | `managed-by: connector-operator` | Ingress | ingress controller's namespace (external webhooks) plus any peers listed in `networkPolicy.connectorWebhookSources`, port `http` |
 
 Notes:
@@ -96,6 +97,7 @@ These are the flows that break most often when a policy is missing:
 | external → connector | webhook delivery through the ingress controller | chart `connectors-webhook-ingress` (ingressNamespace) |
 | in-cluster producer → connector | e.g. a Forgejo in the cluster delivering directly via the `*-webhook` service | chart `connectors-webhook-ingress` (`connectorWebhookSources`) |
 | agent → qdrant | vector memory | chart `qdrant` + `agent-egress` |
+| Prometheus → agent pods | scraping `agent_tokens_used_total` and other runner metrics | chart `agent-metrics` policy (named port `metrics`) |
 | **hub-backend → MCP servers** | "Refresh MCP Tools" on AgentImages calls every configured MCP server directly from hub-backend to discover tools; the mcp gateway proxies MCP traffic | **not covered by the chart** for in-cluster servers outside the release — see below |
 | agent → MCP servers | tools declared in the AgentImage | chart `agent-egress` covers 443/TCP; in-cluster servers on other ports need extension policies |
 
