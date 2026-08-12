@@ -21,6 +21,8 @@
  *   NAK_DELAY_MS           default 60000 — NACK backoff (ms) before retry
  *   TOOL_RESULT_MAX_CHARS  default 16000 — per-text-block cap for toolResult
  *                          transcript content (chars, UTF-16 code units)
+ *   EVENT_DATA_MAX_CHARS   default 16000 — cap for the raw event payload
+ *                          inlined into the prompt as <event-data>
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -51,6 +53,7 @@ const REDACTION_DENYLIST = new Set([
 	"PWD",
 	"NAK_DELAY_MS",
 	"TOOL_RESULT_MAX_CHARS",
+	"EVENT_DATA_MAX_CHARS",
 	"POST_TIMEOUT_MS",
 	"TURN_TIMEOUT_MS",
 	"TURN_SETTLE_TIMEOUT_MS",
@@ -121,6 +124,21 @@ export function resetRedactionCache(): void {
 
 /** Default per-text-block cap for toolResult content (chars). */
 const TOOL_RESULT_MAX_CHARS_DEFAULT = 16_000;
+
+const EVENT_DATA_MAX_CHARS_DEFAULT = 16_000;
+
+/**
+ * Resolve the raw-event-payload cap from the `EVENT_DATA_MAX_CHARS` env var,
+ * falling back to EVENT_DATA_MAX_CHARS_DEFAULT for unset/invalid values.
+ */
+export function resolveEventDataMaxChars(): number {
+	const env = process.env.EVENT_DATA_MAX_CHARS;
+	if (env) {
+		const n = parseInt(env, 10);
+		if (!Number.isNaN(n) && n > 0) return n;
+	}
+	return EVENT_DATA_MAX_CHARS_DEFAULT;
+}
 
 /**
  * Resolve the per-text-block cap from the `TOOL_RESULT_MAX_CHARS` env var,
@@ -525,7 +543,7 @@ function startMetricsServer() {
 	});
 }
 
-function buildUserMessage(ctx: EventContext): string {
+export function buildUserMessage(ctx: EventContext, payload?: unknown): string {
 	if (ctx.type === "chat.message") {
 		const lines = [
 			"<event>",
@@ -580,6 +598,14 @@ function buildUserMessage(ctx: EventContext): string {
 	lines.push("</event>");
 	lines.push("");
 	lines.push(`Handle the ${ctx.type ?? "event"} on ${ref}.`);
+	if (payload !== undefined && payload !== null) {
+		lines.push("");
+		lines.push("The full raw event payload:");
+		lines.push("");
+		lines.push("<event-data>");
+		lines.push(truncateWithMarker(JSON.stringify(payload, null, 2), resolveEventDataMaxChars()));
+		lines.push("</event-data>");
+	}
 	return lines.join("\n");
 }
 
@@ -924,7 +950,7 @@ async function processTask(
 	const thisGeneration = tracker.activeGeneration;
 
 	try {
-		await pi.sendUserMessage(buildUserMessage(evCtx));
+		await pi.sendUserMessage(buildUserMessage(evCtx, task.payload));
 
 		// Wait for the turn to end, with a timeout to prevent hanging forever.
 		let turnTimer: ReturnType<typeof setTimeout> | undefined;
