@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -306,6 +307,10 @@ func (s *Server) getMetricsSummary(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadGateway, fmt.Sprintf("failed to query %s: %s", m.Name, err.Error()))
 			return
 		}
+		// These metrics are event counts. increase() extrapolates fractional
+		// values (e.g. 64.7826), which surfaced on the dashboard KPI cards as
+		// long decimals; round to the nearest whole count before returning.
+		val = math.Round(val)
 		switch m.Name {
 		case "events_consumed":
 			summary.EventsConsumed = val
