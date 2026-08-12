@@ -1,15 +1,16 @@
+/* Fjord spine — always-dark contrast sidebar with pill navigation. */
+
 .spine {
-  border-right: var(--heavy) solid var(--ink);
-  background:
-    linear-gradient(to right, transparent 0, transparent calc(100% - 8px), var(--paper-deep) 100%),
-    var(--paper-2);
-  padding: 28px 0 24px;
   position: sticky;
   top: 0;
   height: 100vh;
+  width: 236px;
   display: flex;
   flex-direction: column;
-  width: 232px;
+  padding: 20px 12px 16px;
+  background: var(--spine);
+  color: var(--spine-ink);
+  border-right: none;
 }
 
 /* Backdrop + close button only exist in the mobile drawer mode. */
@@ -21,131 +22,138 @@
 }
 
 .brand {
-  padding: 0 20px 22px;
-  border-bottom: var(--rule-w) solid var(--ink);
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 10px;
+  padding: 4px 10px 18px;
 }
 .brand-mark {
   width: 22px;
   height: 22px;
-  border: 2px solid var(--ink);
+  border-radius: 7px;
+  background: var(--signal);
   position: relative;
-  transform: translateY(4px);
+  flex-shrink: 0;
 }
 .brand-mark::before,
 .brand-mark::after {
   content: '';
   position: absolute;
-  background: var(--ink);
+  background: #fff;
 }
 .brand-mark::before {
-  left: 0;
-  right: 0;
+  left: 5px;
+  right: 5px;
   top: 50%;
   height: 2px;
+  transform: translateY(-1px);
 }
 .brand-mark::after {
-  top: 0;
-  bottom: 0;
+  top: 5px;
+  bottom: 5px;
   left: 50%;
   width: 2px;
+  transform: translateX(-1px);
 }
 .brand-mark span {
   position: absolute;
-  inset: 4px;
-  background: var(--signal);
-  width: 6px;
-  height: 6px;
+  inset: 8px;
+  background: #fff;
+  border-radius: 2px;
 }
 .brand h1 {
   margin: 0;
   font-family: var(--display);
   font-weight: 700;
-  font-size: 22px;
-  letter-spacing: -0.01em;
+  font-size: 19px;
+  letter-spacing: -0.02em;
   line-height: 1;
 }
 .brand h1 em {
-  font-style: italic;
+  font-style: normal;
   font-weight: 400;
-  color: var(--ink-3);
+  color: var(--spine-ink-3);
 }
 
 .nav {
-  padding: 18px 0 0;
+  padding: 4px 0 0;
   flex: 1;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 .nav-section {
-  padding: 14px 20px 6px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  padding: 14px 10px 6px;
+  font-family: var(--mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: var(--spine-ink-3);
+  font-weight: 600;
 }
 .nav-section .label {
-  color: var(--ink-4);
-}
-.nav-section::after {
-  content: '';
-  flex: 1;
-  height: 1px;
-  background: var(--rule-soft);
+  color: inherit;
+  font-size: inherit;
+  letter-spacing: inherit;
 }
 
 .nav-link {
-  display: grid;
-  grid-template-columns: 24px 1fr auto;
+  display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 20px;
-  color: var(--ink-2);
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: var(--spine-ink-2);
   text-decoration: none;
-  font-size: 12px;
-  border-left: 3px solid transparent;
+  font-family: var(--ui);
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: 0;
   cursor: pointer;
-  transition: background 0.12s, border-color 0.12s;
+  transition: background 0.12s, color 0.12s;
 }
 .nav-link .idx {
   font-family: var(--mono);
   font-size: 9px;
-  color: var(--ink-4);
+  color: var(--spine-ink-3);
   letter-spacing: 0.06em;
+  width: 16px;
+  text-align: center;
+  flex-shrink: 0;
 }
 .nav-link .name {
-  font-family: var(--mono);
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  font-size: 11px;
-  font-weight: 500;
+  font: inherit;
+  text-transform: none;
 }
 .nav-link:hover {
-  background: var(--hover);
+  background: var(--spine-hover);
+  color: var(--spine-ink);
 }
 .nav-link.active {
-  background: var(--ink);
-  color: var(--paper);
-  border-left-color: var(--signal);
+  background: var(--signal);
+  color: #fff;
+  border-radius: 8px;
 }
 .nav-link.active .idx {
-  color: var(--paper-2);
+  color: rgba(255, 255, 255, 0.75);
 }
 
 .spine-footer {
-  border-top: var(--rule-w) solid var(--ink);
-  padding: 14px 20px;
+  border-top: 1px solid var(--spine-line);
+  padding: 12px 10px 0;
+  font-family: var(--mono);
   font-size: 10px;
   display: grid;
-  gap: 10px;
-  color: var(--ink-3);
+  gap: 6px;
+  color: var(--spine-ink-3);
 }
 .spine-footer .row {
   display: flex;
   justify-content: space-between;
 }
 .spine-footer b {
-  color: var(--ink);
+  color: var(--spine-ink);
   font-weight: 600;
 }
 .spine-profile-link {
@@ -181,7 +189,7 @@
     position: fixed;
     inset: 0;
     z-index: 50;
-    background: rgba(20, 16, 10, 0.55);
+    background: rgba(5, 10, 16, 0.6);
     cursor: pointer;
   }
   .spine-close {
@@ -193,19 +201,19 @@
     width: 40px;
     height: 40px;
     background: transparent;
-    border: 1.5px solid var(--ink);
-    color: var(--ink);
+    border: 1px solid var(--spine-line);
+    border-radius: 8px;
+    color: var(--spine-ink);
     font-size: 20px;
     line-height: 1;
     cursor: pointer;
     padding: 0;
   }
   .spine-close:hover {
-    background: var(--ink);
-    color: var(--paper);
+    background: var(--spine-hover);
   }
   .nav-link {
-    padding: 12px 20px;
+    padding: 11px 10px;
   }
 }
 

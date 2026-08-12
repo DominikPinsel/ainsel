@@ -40,7 +40,7 @@ export function ThroughputChart() {
       ) : null}
       {!isLoading && !error ? (
         <>
-          <div style={{ padding: 14, borderBottom: 'var(--rule-w) solid var(--ink)' }}>
+          <div style={{ padding: 14, borderBottom: '1px solid var(--rule-soft)' }}>
             <svg
               viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
               preserveAspectRatio="none"
