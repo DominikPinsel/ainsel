@@ -48,7 +48,7 @@
   font-size: 11px;
   background: var(--paper);
   color: var(--ink);
-  border: var(--rule-w) solid var(--ink);
+  border: 1px solid var(--rule-soft); border-radius: var(--radius); box-shadow: var(--shadow-sm);
   padding: 6px 8px;
   outline: none;
   margin-bottom: 0.75rem;
