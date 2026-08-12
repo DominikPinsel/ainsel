@@ -797,7 +797,7 @@ func (r *AgentReconciler) reconcileDeployment(ctx context.Context, agent *ainsel
 								}
 								envs = append(envs, corev1.EnvVar{
 									Name:  "MCP_SERVERS",
-									Value: mcpservers.EnvValue(mcpEntries),
+									Value: mcpservers.EnvValue(mcpservers.DedupeEntries(mcpEntries)),
 								})
 								// Build MCP_SERVER_TOKENS using $(VAR) references that
 								// Kubernetes substitutes from the image env entries
