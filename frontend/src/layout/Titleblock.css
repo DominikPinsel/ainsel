@@ -1,36 +1,39 @@
 .titleblock {
-  border-bottom: var(--heavy) solid var(--ink);
-  padding: 18px 32px 14px;
+  border-bottom: 1px solid var(--rule-soft);
+  padding: 20px 32px 16px;
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 24px;
   align-items: end;
-  background: var(--paper);
+  background: color-mix(in srgb, var(--paper) 82%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   position: sticky;
   top: 0;
   z-index: 10;
 }
 .titleblock .crumbs {
+  font-family: var(--mono);
   font-size: 10px;
-  letter-spacing: 0.18em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--ink-3);
+  color: var(--ink-4);
   margin-bottom: 6px;
 }
 .titleblock .crumbs b {
-  color: var(--ink);
+  color: var(--ink-3);
   font-weight: 600;
 }
 .titleblock h2 {
   margin: 0;
   font-family: var(--display);
-  font-weight: 500;
-  font-size: 32px;
-  letter-spacing: -0.015em;
-  line-height: 1;
+  font-weight: 700;
+  font-size: 24px;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
 }
 .titleblock h2 em {
-  font-style: italic;
+  font-style: normal;
   color: var(--ink-3);
   font-weight: 400;
 }

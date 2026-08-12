@@ -100,6 +100,43 @@ func TestEnvValueJoinsWithCommas(t *testing.T) {
 	}
 }
 
+func TestDedupeEntriesKeepsFirstOccurrence(t *testing.T) {
+	in := []string{
+		"mem0=http://mcp-mem0.ainsel.svc.cluster.local:8080/mcp",
+		"forgejo=http://forgejo.workloads.svc.cluster.local:8080/mcp",
+		"mem0=http://mcp-mem0.ainsel.svc.cluster.local:8080/mcp",
+		"chat=http://localhost:8081/mcp",
+	}
+	got := mcpservers.DedupeEntries(in)
+	want := []string{
+		"mem0=http://mcp-mem0.ainsel.svc.cluster.local:8080/mcp",
+		"forgejo=http://forgejo.workloads.svc.cluster.local:8080/mcp",
+		"chat=http://localhost:8081/mcp",
+	}
+	if len(got) != 3 {
+		t.Fatalf("got %d entries: %+v", len(got), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("entry %d: got %q want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestDedupeEmptyEntries(t *testing.T) {
+	if got := mcpservers.DedupeEntries(nil); len(got) != 0 {
+		t.Errorf("expected empty result, got %+v", got)
+	}
+}
+
+func TestDedupeEntriesWithoutEquals(t *testing.T) {
+	// Entries without '=' are deduped on the whole string.
+	got := mcpservers.DedupeEntries([]string{"weird", "weird", "a=u"})
+	if len(got) != 2 || got[0] != "weird" || got[1] != "a=u" {
+		t.Errorf("got %+v", got)
+	}
+}
+
 func TestTokenEnvValueEmitsKubernetesVarRefs(t *testing.T) {
 	servers := []ainselv1alpha1.AgentImageMCPServer{
 		{Name: "forgejo-mcp-server", URL: "http://x", TokenFromEnv: "FORGEJO_PAT"},

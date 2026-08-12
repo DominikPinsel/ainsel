@@ -1,6 +1,6 @@
 .shell {
   display: grid;
-  grid-template-columns: 232px 1fr;
+  grid-template-columns: 236px 1fr;
   min-height: 100vh;
   position: relative;
   /* Height of chrome rendered above .canvas (the mobile top bar on small
@@ -46,16 +46,16 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: var(--paper);
-  border: 1.5px solid var(--ink);
+  background: var(--paper-2);
+  border: 1px solid var(--rule-soft);
+  border-radius: var(--radius-sm);
   color: var(--ink);
   cursor: pointer;
   padding: 0;
-  transition: background 0.12s, color 0.12s;
+  transition: border-color 0.12s;
 }
 .menu-btn:hover {
-  background: var(--ink);
-  color: var(--paper);
+  border-color: var(--ink-4);
 }
 .menu-icon {
   position: relative;
@@ -82,12 +82,12 @@
 .mobilebar-title {
   font-family: var(--display);
   font-weight: 700;
-  font-size: 18px;
-  letter-spacing: -0.01em;
+  font-size: 17px;
+  letter-spacing: -0.02em;
   color: var(--ink);
 }
 .mobilebar-title em {
-  font-style: italic;
+  font-style: normal;
   font-weight: 400;
   color: var(--ink-3);
 }
@@ -106,7 +106,7 @@
     top: 0;
     z-index: 40;
     background: var(--paper);
-    border-bottom: var(--heavy) solid var(--ink);
+    border-bottom: 1px solid var(--rule-soft);
     height: 60px;
     box-sizing: border-box;
     padding: 0 16px;

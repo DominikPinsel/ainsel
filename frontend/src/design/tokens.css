@@ -1,100 +1,129 @@
+/* FJORD — cool slate paper, teal signal, soft rounded geometry.
+   Dark themes (dark / peat / tallow) override the palette below. */
+
 :root {
   /* PAPER & INK */
-  --paper:        #efe9dc;
-  --paper-2:      #e6dfce;
-  --paper-deep:   #d8cfb8;
-  --ink:          #14110d;
-  --ink-2:        #2a251c;
-  --ink-3:        #51493a;
-  --ink-4:        #8a8268;
-  --rule-soft:    rgba(20, 17, 13, 0.18);
-  --rule-ghost:   rgba(20, 17, 13, 0.08);
+  --paper:        #eef1f4;
+  --paper-2:      #ffffff;
+  --paper-deep:   #e2e7ec;
+  --ink:          #101820;
+  --ink-2:        #26333f;
+  --ink-3:        #51606f;
+  --ink-4:        #8b99a8;
+  --rule-soft:    rgba(16, 24, 32, 0.1);
+  --rule-ghost:   rgba(16, 24, 32, 0.05);
 
   /* SURFACES */
-  --hover:        rgba(20, 17, 13, 0.04);
-  --hover-subtle: rgba(20, 17, 13, 0.035);
-  --backdrop:     rgba(20, 17, 13, 0.4);
+  --hover:        rgba(16, 24, 32, 0.04);
+  --hover-subtle: rgba(16, 24, 32, 0.03);
+  --backdrop:     rgba(16, 24, 32, 0.45);
 
   /* SIGNAL */
-  --signal:       #d8421b;
-  --signal-deep:  #b03413;
-  --signal-haze:  rgba(216, 66, 27, 0.08);
-  --signal-glow:  rgba(216, 66, 27, 0.6);
+  --signal:       #0c8a8f;
+  --signal-deep:  #0a6f73;
+  --signal-haze:  rgba(12, 138, 143, 0.1);
+  --signal-glow:  rgba(12, 138, 143, 0.55);
 
   /* STATES */
   --ok:           var(--ink);
-  --warn:         #c08a14;
-  --err:          var(--signal);
+  --warn:         #b07d10;
+  --err:          #d24545;
   --stale:        var(--ink-4);
 
   /* SCALE */
   --u: 4px;
   --grid: 24px;
   --hair: 1px;
-  --rule-w: 1.5px;
-  --heavy: 2.5px;
-  --radius: 0;
+  --rule-w: 1px;
+  --heavy: 1px;
+  --radius: 10px;
+  --radius-sm: 7px;
+  --radius-pill: 999px;
+
+  /* SHADOWS (color-mixed from ink so every theme inherits them) */
+  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--ink) 6%, transparent),
+    0 2px 8px color-mix(in srgb, var(--ink) 6%, transparent);
+  --shadow: 0 2px 6px color-mix(in srgb, var(--ink) 8%, transparent),
+    0 14px 36px color-mix(in srgb, var(--ink) 10%, transparent);
+
+  /* CHROME — the always-dark sidebar */
+  --spine:        #0d1520;
+  --spine-ink:    #e6eef4;
+  --spine-ink-2:  rgba(230, 238, 244, 0.66);
+  --spine-ink-3:  rgba(230, 238, 244, 0.42);
+  --spine-line:   rgba(230, 238, 244, 0.12);
+  --spine-hover:  rgba(230, 238, 244, 0.08);
 }
 
 html[data-theme="dark"] {
-  --paper:        #0a0907;
-  --paper-2:      #161410;
-  --paper-deep:   #1f1a14;
-  --ink:          #efe9dc;
-  --ink-2:        #dcd3c2;
-  --ink-3:        #b0a58e;
-  --ink-4:        #8a8268;
-  --rule-soft:    rgba(239, 233, 220, 0.18);
-  --rule-ghost:   rgba(239, 233, 220, 0.08);
+  --paper:        #0c1117;
+  --paper-2:      #141b23;
+  --paper-deep:   #18212b;
+  --ink:          #dde7ef;
+  --ink-2:        #c2d0dc;
+  --ink-3:        #90a3b5;
+  --ink-4:        #5f7183;
+  --rule-soft:    rgba(221, 231, 239, 0.1);
+  --rule-ghost:   rgba(221, 231, 239, 0.05);
 
-  --hover:        rgba(239, 233, 220, 0.04);
-  --hover-subtle: rgba(239, 233, 220, 0.035);
-  --backdrop:     rgba(0, 0, 0, 0.5);
+  --hover:        rgba(221, 231, 239, 0.05);
+  --hover-subtle: rgba(221, 231, 239, 0.04);
+  --backdrop:     rgba(0, 0, 0, 0.55);
 
-  --signal:       #e05a33;
-  --signal-deep:  #c04a28;
-  --signal-haze:  rgba(224, 90, 51, 0.12);
-  --signal-glow:  rgba(224, 90, 51, 0.6);
+  --signal:       #3ec7c9;
+  --signal-deep:  #2aa3a5;
+  --signal-haze:  rgba(62, 199, 201, 0.13);
+  --signal-glow:  rgba(62, 199, 201, 0.55);
+
+  --warn:         #d4a32a;
+  --err:          #e06565;
 }
 
 html[data-theme="peat"] {
-  --paper:        #5a4e3c;
-  --paper-2:      #4e4432;
-  --paper-deep:   #443a2a;
+  --paper:        #312b22;
+  --paper-2:      #3a3327;
+  --paper-deep:   #282219;
   --ink:          #f0e8d4;
   --ink-2:        #e0d4bc;
   --ink-3:        #b8a888;
   --ink-4:        #8a7e68;
-  --rule-soft:    rgba(240, 232, 212, 0.18);
-  --rule-ghost:   rgba(240, 232, 212, 0.08);
+  --rule-soft:    rgba(240, 232, 212, 0.12);
+  --rule-ghost:   rgba(240, 232, 212, 0.06);
 
   --hover:        rgba(240, 232, 212, 0.06);
   --hover-subtle: rgba(240, 232, 212, 0.04);
-  --backdrop:     rgba(0, 0, 0, 0.5);
+  --backdrop:     rgba(0, 0, 0, 0.55);
 
-  --signal:       #d4681c;
-  --signal-deep:  #b85818;
-  --signal-haze:  rgba(212, 104, 28, 0.14);
-  --signal-glow:  rgba(212, 104, 28, 0.6);
+  --signal:       #e08a34;
+  --signal-deep:  #c07127;
+  --signal-haze:  rgba(224, 138, 52, 0.14);
+  --signal-glow:  rgba(224, 138, 52, 0.55);
+
+  --warn:         #d4a32a;
+  --err:          #e06565;
 }
 
 html[data-theme="tallow"] {
-  --paper:        #2c2318;
-  --paper-2:      #382d1e;
-  --paper-deep:   #1f1810;
+  --paper:        #16110b;
+  --paper-2:      #1e1810;
+  --paper-deep:   #241d13;
   --ink:          #e8dcc4;
   --ink-2:        #d4c8a8;
   --ink-3:        #a89880;
   --ink-4:        #7a6e58;
-  --rule-soft:    rgba(232, 220, 196, 0.18);
-  --rule-ghost:   rgba(232, 220, 196, 0.08);
+  --rule-soft:    rgba(232, 220, 196, 0.12);
+  --rule-ghost:   rgba(232, 220, 196, 0.06);
 
   --hover:        rgba(232, 220, 196, 0.05);
   --hover-subtle: rgba(232, 220, 196, 0.035);
-  --backdrop:     rgba(0, 0, 0, 0.5);
+  --backdrop:     rgba(0, 0, 0, 0.55);
 
-  --signal:       #c87820;
-  --signal-deep:  #a86418;
-  --signal-haze:  rgba(200, 120, 32, 0.14);
-  --signal-glow:  rgba(200, 120, 32, 0.6);
+  --signal:       #d8912f;
+  --signal-deep:  #b8771f;
+  --signal-haze:  rgba(216, 145, 47, 0.14);
+  --signal-glow:  rgba(216, 145, 47, 0.55);
+
+  --warn:         #d4a32a;
+  --err:          #e06565;
 }
+

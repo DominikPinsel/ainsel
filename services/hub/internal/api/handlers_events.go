@@ -20,11 +20,19 @@ const (
 )
 
 // Default and maximum page sizes for the activity list endpoint. The
-// frontend requests 100; the cap prevents unbounded queries.
+// frontend requests one page at a time via limit/offset; the cap prevents
+// unbounded queries.
 const (
 	defaultEventLimit = 100
 	maxEventLimit     = 500
 )
+
+// validActivityStatuses are the status values accepted by the list filter.
+var validActivityStatuses = map[string]bool{
+	activityStatusUnmatched: true,
+	activityStatusMatched:   true,
+	activityStatusError:     true,
+}
 
 // activityMatch is a single agent/trigger that an event was routed to.
 type activityMatch struct {
@@ -45,7 +53,9 @@ type activityEntry struct {
 	Payload   json.RawMessage `json:"payload,omitempty"`
 }
 
-// eventsEnvelope wraps the activity list. The frontend unwraps `.events`.
+// eventsEnvelope wraps one page of the activity list. Events holds the
+// requested page; Total is the number of all events matching the filters,
+// which the frontend uses to render the pager.
 type eventsEnvelope struct {
 	Events []activityEntry `json:"events"`
 	Total  int             `json:"total"`
@@ -120,21 +130,44 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
 		limit = maxEventLimit
 	}
 
-	connector := q.Get("connector")
+	offset := 0
+	if v := q.Get("offset"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			writeError(w, http.StatusBadRequest, "invalid offset")
+			return
+		}
+		offset = n
+	}
 
-	var since time.Time
+	filter := eventqueue.EventFilter{Connector: q.Get("connector"), Agent: q.Get("agent")}
+
+	if v := q.Get("status"); v != "" {
+		if !validActivityStatuses[v] {
+			writeError(w, http.StatusBadRequest, "invalid status: expected matched, unmatched or error")
+			return
+		}
+		filter.Status = v
+	}
+
 	if v := q.Get("since"); v != "" {
 		t, err := time.Parse(time.RFC3339, v)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid since: expected RFC 3339 timestamp")
 			return
 		}
-		since = t
+		filter.Since = t
 	}
 
-	events, err := s.eventQueue.RecentEvents(r.Context(), limit, connector, "", since)
+	events, err := s.eventQueue.QueryEvents(r.Context(), filter, limit, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list events")
+		return
+	}
+
+	total, err := s.eventQueue.CountEvents(r.Context(), filter)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to count events")
 		return
 	}
 
@@ -158,7 +191,7 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, eventsEnvelope{Events: entries, Total: len(entries)})
+	writeJSON(w, http.StatusOK, eventsEnvelope{Events: entries, Total: total})
 }
 
 // buildActivityEntry maps a stored event and its tasks into the frontend
