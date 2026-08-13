@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"github.com/DominikPinsel/ainsel/services/mcp/internal/auth"
 	"github.com/DominikPinsel/ainsel/services/mcp/internal/config"
 	mcpserver "github.com/DominikPinsel/ainsel/services/mcp/internal/mcp"
+	"github.com/DominikPinsel/ainsel/shared/auth/oidc"
 )
 
 func main() {
@@ -23,9 +25,23 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Resolve JWKS/userinfo endpoints from the issuer's OIDC discovery
+	// document so we do not depend on provider-specific paths (Zitadel
+	// moved userinfo from /oauth/v2/userinfo to /oidc/v1/userinfo).
+	discoveryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	jwksURL, userInfoURL, derr := oidc.ResolveEndpoints(discoveryCtx, nil, cfg.OIDCIssuer)
+	cancel()
+	if derr != nil {
+		log.Warn("OIDC discovery failed, falling back to default endpoints", "issuer", cfg.OIDCIssuer, "error", derr)
+	} else {
+		log.Info("OIDC endpoints resolved via discovery", "jwks", jwksURL, "userinfo", userInfoURL)
+	}
+
 	oidcMW, err := auth.NewMiddleware(auth.Config{
-		Issuer:    cfg.OIDCIssuer,
-		ProjectID: cfg.OIDCProjectID,
+		Issuer:      cfg.OIDCIssuer,
+		ProjectID:   cfg.OIDCProjectID,
+		JWKSURL:     jwksURL,
+		UserInfoURL: userInfoURL,
 	})
 	if err != nil {
 		log.Error("auth middleware init", "error", err)
