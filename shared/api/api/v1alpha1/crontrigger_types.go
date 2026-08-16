@@ -84,6 +84,3 @@ type CronTriggerList struct {
 	Items           []CronTrigger `json:"items"`
 }
 
-func init() {
-	SchemeBuilder.Register(&CronTrigger{}, &CronTriggerList{})
-}

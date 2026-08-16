@@ -79,6 +79,3 @@ type WebhookConnectorList struct {
 	Items           []WebhookConnector `json:"items"`
 }
 
-func init() {
-	SchemeBuilder.Register(&WebhookConnector{}, &WebhookConnectorList{})
-}
