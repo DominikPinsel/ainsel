@@ -132,6 +132,3 @@ type AgentImageList struct {
 	Items           []AgentImage `json:"items"`
 }
 
-func init() {
-	SchemeBuilder.Register(&AgentImage{}, &AgentImageList{})
-}

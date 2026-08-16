@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/DominikPinsel/ainsel/services/hub/internal/api"
@@ -142,11 +141,29 @@ func wireAuthMiddleware(c *container, cfg containerConfig) error {
 		slog.Warn("OIDC auth disabled: ZITADEL_ISSUER and OIDC_PROJECT_ID must both be set")
 	} else {
 		slog.Info("OIDC auth enabled", "issuer", issuer, "projectID", projectID)
-		userInfoURL := strings.TrimRight(issuer, "/") + "/oauth/v2/userinfo"
+		// Resolve JWKS/userinfo endpoints from the issuer's OIDC discovery
+		// document. Hardcoding provider-specific paths broke username/email
+		// enrichment on Zitadel versions whose userinfo endpoint lives at
+		// /oidc/v1/userinfo instead of /oauth/v2/userinfo.
+		discoveryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		jwksURL, userInfoURL, derr := oidc.ResolveEndpoints(discoveryCtx, nil, issuer)
+		cancel()
+		if derr != nil {
+			slog.Warn("OIDC discovery failed, falling back to default endpoints", "issuer", issuer, "error", derr)
+		} else {
+			slog.Info("OIDC endpoints resolved via discovery", "jwks", jwksURL, "userinfo", userInfoURL)
+		}
+		// Escape hatches: allow operators to pin endpoints explicitly.
+		if v := os.Getenv("OIDC_JWKS_URL"); v != "" {
+			jwksURL = v
+		}
+		if v := os.Getenv("OIDC_USERINFO_URL"); v != "" {
+			userInfoURL = v
+		}
 		oidcMW, err := oidc.NewMiddleware(oidc.Config{
 			Issuer:      issuer,
 			Audience:    projectID,
-			JWKSURL:     strings.TrimRight(issuer, "/") + "/oauth/v2/keys",
+			JWKSURL:     jwksURL,
 			UserInfoURL: userInfoURL,
 		})
 		if err != nil {

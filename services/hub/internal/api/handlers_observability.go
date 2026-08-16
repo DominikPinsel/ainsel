@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	agentv1alpha1 "github.com/DominikPinsel/ainsel/shared/api/api/v1alpha1"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/prometheus"
+	"github.com/DominikPinsel/ainsel/services/hub/internal/tasklogs"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -58,6 +60,12 @@ var hubMetrics = []hubMetric{
 }
 
 // MetricsSummary holds the current values of the hub-internal counters.
+//
+// RoutingErrors is named for its original source (hub_routing_errors_total),
+// but with a range set it reports error-level task logs within the window —
+// the same entries the errors page lists. The routing-errors counter only
+// tracks router failures and was effectively always zero, which left the
+// Errors KPI card stuck at 0 even when events were failing.
 type MetricsSummary struct {
 	EventsConsumed  float64   `json:"eventsConsumed"`
 	TriggersMatched float64   `json:"triggersMatched"`
@@ -293,6 +301,19 @@ func (s *Server) getMetricsSummary(w http.ResponseWriter, r *http.Request) {
 
 	summary := MetricsSummary{UpdatedAt: time.Now().UTC()}
 	for _, m := range hubMetrics {
+		// With a range set, the Errors card counts error-level task logs in
+		// the window (what the errors page lists) instead of the
+		// hub_routing_errors_total counter. The counter remains the source on
+		// the legacy range-less path and when no log store is configured.
+		if m.Name == "routing_errors" && rng != nil && s.taskLogs != nil {
+			count, err := s.taskLogs.CountByLevelSince(r.Context(), tasklogs.LevelError, time.Now().UTC().Add(-rng.Duration))
+			if err != nil {
+				writeError(w, http.StatusBadGateway, fmt.Sprintf("failed to count error task logs: %s", err.Error()))
+				return
+			}
+			summary.RoutingErrors = float64(count)
+			continue
+		}
 		query := m.PromQL
 		if rng != nil {
 			// Use increase() over the requested range so the card shows
@@ -306,6 +327,10 @@ func (s *Server) getMetricsSummary(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadGateway, fmt.Sprintf("failed to query %s: %s", m.Name, err.Error()))
 			return
 		}
+		// These metrics are event counts. increase() extrapolates fractional
+		// values (e.g. 64.7826), which surfaced on the dashboard KPI cards as
+		// long decimals; round to the nearest whole count before returning.
+		val = math.Round(val)
 		switch m.Name {
 		case "events_consumed":
 			summary.EventsConsumed = val
