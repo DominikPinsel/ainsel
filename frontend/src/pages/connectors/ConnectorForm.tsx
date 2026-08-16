@@ -32,6 +32,9 @@ const schema = z.object({
   groupId: z.string().optional(),
 })
 
+// zod 4 tracks input/output types separately (defaults make inputs
+// optional); useForm needs both so the resolver types line up.
+type FormInput = z.input<typeof schema>
 type FormValues = z.infer<typeof schema>
 
 export function ConnectorForm() {
@@ -53,7 +56,7 @@ export function ConnectorForm() {
     setValue,
     setError,
     formState: { errors, isSubmitting },
-  } = useForm<FormValues>({
+  } = useForm<FormInput, unknown, FormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
       name: '',
@@ -63,7 +66,7 @@ export function ConnectorForm() {
     },
   })
 
-  const signatureHeaderPreset = watch('signatureHeaderPreset')
+  const signatureHeaderPreset = watch('signatureHeaderPreset') ?? 'X-Hub-Signature-256'
 
   useEffect(() => {
     if (existing.data) {
