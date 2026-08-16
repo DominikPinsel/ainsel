@@ -66,6 +66,9 @@ const schema = z
     }
   })
 
+// zod 4 tracks input/output types separately (coercions & defaults make
+// inputs wider); useForm needs both so the resolver types line up.
+type FormInput = z.input<typeof schema>
 type FormValues = z.infer<typeof schema>
 
 export function AgentForm() {
@@ -88,7 +91,7 @@ export function AgentForm() {
     watch,
     setError,
     formState: { errors, isSubmitting },
-  } = useForm<FormValues>({
+  } = useForm<FormInput, unknown, FormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
       name: '',
