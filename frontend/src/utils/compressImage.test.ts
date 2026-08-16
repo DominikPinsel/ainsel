@@ -37,7 +37,7 @@ describe('compressImage', () => {
   it('returns null when image fails to load', async () => {
     // Mock Image to always error
     const origImage = globalThis.Image
-    globalThis.Image = vi.fn(() => {
+    globalThis.Image = vi.fn(function () {
       const img = { onerror: null as (() => void) | null, onload: null as (() => void) | null, src: '' }
       Object.defineProperty(img, 'src', {
         set() {
@@ -58,7 +58,7 @@ describe('compressImage', () => {
 
     // Mock Image to load successfully
     const origImage = globalThis.Image
-    globalThis.Image = vi.fn(() => {
+    globalThis.Image = vi.fn(function () {
       const img = {
         onerror: null as (() => void) | null,
         onload: null as (() => void) | null,
