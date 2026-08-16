@@ -1062,6 +1062,10 @@ async function processTask(
 			nak_delay_ms: NAK_DELAY_MS,
 			task_id: task.id,
 		});
+		// Report the failure to the hub as an error-level task log so it
+		// appears in the observability errors feed. Console logError output
+		// never leaves the pod; without this the errors view stays empty.
+		await postTaskLog(hubUrl, token, agentName, "error", `Event failed: ${errMsg}`, correlationId, invocationId, { event_type: evCtx.type, task_id: task.id, duration_ms: durationMs });
 	}
 }
 

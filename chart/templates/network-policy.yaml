@@ -202,6 +202,32 @@ spec:
         - port: 443
           protocol: TCP
 ---
+# Agent metrics ingress: the runner extension serves Prometheus metrics on the
+# pod's named "metrics" port (see chart/templates/k8s-ai-agent-operator/
+# podmonitor-agents.yaml). Without an ingress allow, the default-deny policy
+# silently refuses Prometheus scrapes and every agent metric (notably
+# agent_tokens_used_total) disappears from the observability dashboard.
+# Selector matches the PodMonitor (managed-by, not component) so pods created
+# before the component label existed are covered too.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agent-metrics
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "ainsel.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agents
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/managed-by: agent-operator
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow metrics scraping (same open posture as the hub-backend metrics rule).
+    - ports:
+        - port: metrics
+---
 # Webhook ingress for connector receiver pods. Connectors are created
 # dynamically by the event-source-gateway operator; external webhooks reach
 # them through the ingress controller, and in-cluster producers (e.g. a

@@ -592,6 +592,45 @@ func TestObservability_SummaryWithRangeUsesIncreaseQueries(t *testing.T) {
 	}
 }
 
+func TestObservability_SummaryWithRangeRoundsFractionalCounts(t *testing.T) {
+	// increase() extrapolates fractional values (e.g. 64.7826); the summary
+	// reports event counts, so values must be rounded to whole numbers before
+	// reaching the dashboard KPI cards.
+	srv := fakePromServer(t, func(path string, params url.Values) interface{} {
+		q := params.Get("query")
+		switch {
+		case strings.Contains(q, "hub_events_consumed_total"):
+			return vectorResponse([]vectorSample{{Labels: map[string]string{}, Value: "64.7826"}})
+		case strings.Contains(q, "hub_triggers_matched_total"):
+			return vectorResponse([]vectorSample{{Labels: map[string]string{}, Value: "12.3"}})
+		case strings.Contains(q, "hub_events_routed_total"):
+			return vectorResponse([]vectorSample{{Labels: map[string]string{}, Value: "0.4"}})
+		case strings.Contains(q, "hub_routing_errors_total"):
+			return vectorResponse([]vectorSample{{Labels: map[string]string{}, Value: "1.5"}})
+		}
+		t.Fatalf("unexpected query: %s", q)
+		return nil
+	})
+	defer srv.Close()
+
+	s := newServerWithProm(t, prometheus.NewClient(srv.URL, nil))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/observability/metrics/summary?range=24h", nil)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var body MetricsSummary
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.EventsConsumed != 65 || body.TriggersMatched != 12 || body.EventsRouted != 0 || body.RoutingErrors != 2 {
+		t.Errorf("expected rounded counts, got %+v", body)
+	}
+}
+
 func TestObservability_SummaryRejectsInvalidRange(t *testing.T) {
 	srv := fakePromServer(t, func(string, url.Values) interface{} { return nil })
 	defer srv.Close()

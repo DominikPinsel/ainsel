@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -186,6 +187,13 @@ func NewMiddleware(cfg Config) (func(http.Handler) http.Handler, error) {
 				} else {
 					// Fetch from userinfo endpoint
 					enriched, err := fetchUserInfo(r.Context(), userInfoClient, userInfoURL, raw)
+					if err != nil {
+						// Surface the failure: without userinfo the user may end up
+						// with an empty username/email (the JWT alone often does not
+						// carry them). A misconfigured userinfo URL is otherwise
+						// invisible — see ResolveEndpoints for endpoint discovery.
+						warnUserInfoFailure(userInfoURL, err)
+					}
 					if err == nil && enriched != nil {
 						// Enrich user from endpoint response
 						if enriched.Username != "" {
@@ -209,6 +217,26 @@ func NewMiddleware(cfg Config) (func(http.Handler) http.Handler, error) {
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}, nil
+}
+
+// userInfo failures are logged at most once per warn interval to avoid
+// flooding the logs when the endpoint is persistently broken (e.g. wrong URL).
+const userInfoWarnInterval = 5 * time.Minute
+
+var (
+	userInfoWarnMu   sync.Mutex
+	userInfoLastWarn time.Time
+)
+
+func warnUserInfoFailure(url string, err error) {
+	userInfoWarnMu.Lock()
+	defer userInfoWarnMu.Unlock()
+	if time.Since(userInfoLastWarn) < userInfoWarnInterval {
+		return
+	}
+	userInfoLastWarn = time.Now()
+	slog.Warn("OIDC userinfo enrichment failed; username/email may be missing. Check the configured userinfo endpoint.",
+		"url", url, "error", err)
 }
 
 // UserInfoError is returned when the OIDC userinfo endpoint responds with a
