@@ -39,7 +39,11 @@ describe('clipboard.copyImage', () => {
       configurable: true,
       value: { write },
     })
-    globalThis.ClipboardItem = vi.fn((items: Record<string, Blob>) => items) as unknown as typeof ClipboardItem
+    // NOTE: use a function() here, not an arrow function — tinyspy (vitest 4)
+    // mirrors native semantics and rejects `new` on arrow functions.
+    globalThis.ClipboardItem = vi.fn(function (items: Record<string, Blob>) {
+      return items
+    }) as unknown as typeof ClipboardItem
   })
 
   afterEach(() => {

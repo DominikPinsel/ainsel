@@ -24,6 +24,9 @@ const schema = z.object({
   groupId: z.string().optional(),
 })
 
+// zod 4 tracks input/output types separately (defaults & coercions make
+// inputs optional); useForm needs both so the resolver types line up.
+type FormInput = z.input<typeof schema>
 type FormValues = z.infer<typeof schema>
 
 export function PersonaForm() {
@@ -43,7 +46,7 @@ export function PersonaForm() {
     watch,
     setValue,
     formState: { errors, isSubmitting },
-  } = useForm<FormValues>({
+  } = useForm<FormInput, unknown, FormValues>({
     resolver: zodResolver(schema),
     defaultValues: { name: '', description: '', text: '', groupId: '' },
   })

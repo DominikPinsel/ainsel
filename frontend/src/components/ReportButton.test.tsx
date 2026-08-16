@@ -30,7 +30,8 @@ describe('ReportButton', () => {
 
   beforeEach(() => {
     windowOpen = vi.fn()
-    window.open = windowOpen
+    // vitest 4's Mock type no longer structurally matches window.open
+    window.open = windowOpen as unknown as typeof window.open
 
     window.__AINSEL_CONFIG__ = {
       oidcIssuer: 'https://auth.example.com',
