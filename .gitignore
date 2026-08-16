@@ -16,6 +16,10 @@ frontend/vite.config.js
 frontend/vite.config.d.ts
 frontend/vitest.config.js
 frontend/vitest.config.d.ts
+docs-site/vite.config.js
+docs-site/vite.config.d.ts
+docs-site/vitest.config.js
+docs-site/vitest.config.d.ts
 .worktrees
 .claude/
 .superpowers/
