@@ -46,6 +46,3 @@ type TriggerList struct {
 	Items           []Trigger `json:"items"`
 }
 
-func init() {
-	SchemeBuilder.Register(&Trigger{}, &TriggerList{})
-}
