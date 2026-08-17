@@ -33,10 +33,10 @@ func (e *EventTools) GetStreamInfoTool() mcp.Tool {
 
 func (e *EventTools) ListRecentEventsTool() mcp.Tool {
 	return mcp.NewTool("list_recent_events",
-		mcp.WithDescription("List recent events. By default each event is reduced to a compact summary (id, connector, event type, action, key entity fields, payload size) to keep responses small. Pass full=true to get the complete raw webhook payload including headers and body."),
+		mcp.WithDescription("List recent events. By default each event is reduced to a compact summary (id, connector, event type, action, key entity fields, payload size) to keep responses small. Pass full=true to get the complete raw webhook payload including headers and body. The filter parameter matches a subject pattern of the form '<connector>.<eventType>', where the event type is taken from the webhook event-type header (e.g. push, issue_comment). Supports '*' for any single token and a trailing '>' for any remainder."),
 		mcp.WithString("stream", mcp.Description("Stream name (default: EVENTS)")),
 		mcp.WithNumber("count", mcp.Description("Number of recent events to retrieve (default: 20, max: 100)")),
-		mcp.WithString("filter", mcp.Description("Subject filter pattern (e.g. 'forgejo.push', 'agent.olli.>')")),
+		mcp.WithString("filter", mcp.Description("Subject filter pattern, e.g. 'forgejo.push', 'forgejo.*' (all forgejo events), '*.push' (push events from any connector)")),
 		mcp.WithBoolean("full", mcp.Description("Return the complete raw event payload (headers, full webhook body). Defaults to false, which returns a compact summary.")),
 	)
 }

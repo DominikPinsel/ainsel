@@ -258,7 +258,9 @@ func (s *Server) handleQueueInfo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, info)
 }
 
-// handleQueueRecent serves GET /api/v1/queue/recent?count=20&connector= — recent events endpoint.
+// handleQueueRecent serves GET /api/v1/queue/recent?count=20&connector=&filter= — recent events endpoint.
+// filter is a subject pattern of the form "<connector>.<eventType>" with
+// "*"/">" wildcards (see eventqueue.ParseSubjectFilter).
 func (s *Server) handleQueueRecent(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -279,8 +281,9 @@ func (s *Server) handleQueueRecent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	connector := r.URL.Query().Get("connector")
+	filter := r.URL.Query().Get("filter")
 
-	events, err := s.eventQueue.RecentEvents(r.Context(), count, connector, time.Time{})
+	events, err := s.eventQueue.RecentEvents(r.Context(), count, connector, filter, time.Time{})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to get recent events")
 		return
