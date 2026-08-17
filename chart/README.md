@@ -17,6 +17,22 @@ Helm chart that deploys the entire AInsel platform into a single namespace.
 
 For the full deployment guide, see [`docs/deployment.md`](../docs/deployment.md).
 
+### Quickstart (local, zero auth)
+
+For a first look on a local/dev cluster — nothing is exposed outside the
+cluster, the hub runs without auth (auto-detected "local mode"), and you
+access the API via port-forward:
+
+```bash
+helm install ainsel . -n ainsel --create-namespace -f values-quickstart.yaml
+kubectl -n ainsel port-forward svc/hub-backend 8080:8080
+curl http://localhost:8080/api/v1/stats
+```
+
+The frontend console is disabled in this mode because it requires OIDC; see
+`values-quickstart.yaml` for details and the production path. Note: `-n`
+must match the chart's `namespace` value (both `ainsel` above).
+
 Lint and render locally:
 
 ```bash
