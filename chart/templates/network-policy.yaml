@@ -258,4 +258,28 @@ spec:
         {{- end }}
       ports:
         - port: http
+---
+{{- if .Values.networkPolicy.allowAcmeSolver }}
+# Allow the ingress controller to reach cert-manager HTTP-01 solver pods.
+# Without this, ACME http01 challenges fail under the default-deny policy
+# (solver responds 502 to Let's Encrypt: 'wrong status code 502').
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: acme-http01-solver
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "ainsel.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      acme.cert-manager.io/http01-solver: "true"
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.ingressNamespace }}
+{{- end }}
 {{- end }}

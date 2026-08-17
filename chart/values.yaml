@@ -34,6 +34,12 @@
 # =============================================================================
 
 namespace: ainsel
+# Whether the chart should create the target namespace itself.
+# Leave false (recommended) and use `helm install --create-namespace` or
+# create the namespace beforehand. Rendering the Namespace object inside the
+# chart makes fresh installs fail ownership validation on Helm 3.x when the
+# namespace already exists.
+createNamespace: false
 # NetworkPolicy controls. When enabled, a default-deny-ingress policy is
 # applied and per-component policies allow only the required traffic.
 # NOTE: NetworkPolicy enforcement requires a network stack that supports it.
@@ -46,6 +52,11 @@ networkPolicy:
   # Required so browser API traffic (ingress -> hub-backend) is allowed
   # under the default-deny policy.
   ingressNamespace: ingress-nginx
+  # Allow ingress-controller traffic to reach cert-manager HTTP-01 solver
+  # pods. Without this, ACME http01 certificate issuance fails under the
+  # default-deny policy with 'wrong status code 502'. Disable only if you
+  # issue certificates via DNS-01 or provide pre-existing secrets.
+  allowAcmeSolver: true
   # Additional sources allowed to deliver webhooks to connector receiver
   # pods, as a list of NetworkPolicy `from` peer objects. Use this when a
   # webhook producer runs inside the cluster and delivers to connectors
@@ -59,6 +70,9 @@ networkPolicy:
   #           app.kubernetes.io/name: forgejo
   connectorWebhookSources: []
 agentOperator:
+  # Set to false to skip deploying the agent operator entirely.
+  enabled: true
+  replicas: 1
   image:
     repository: dpinsel/ainsel-k8s-ai-agent-operator
     tag: "0.1.0"
@@ -95,6 +109,17 @@ agentOperator:
   serviceAccount:
     annotations: {}
 connectorOperator:
+  # Set to false to skip deploying the event gateway operator entirely.
+  enabled: true
+  replicas: 1
+  # Install a ClusterRole + ClusterRoleBinding for the gateway operator.
+  # Required by the released operator images, which watch Deployments,
+  # Services, Ingresses etc. across all namespaces. NOTE: with cluster-wide
+  # watching, only ONE event gateway operator may run per cluster; two
+  # instances will fight over connector resources. Set to false once you run
+  # an operator image that honors POD_NAMESPACE scoping (see
+  # operators/event-gateway cmd/main.go).
+  clusterWideRbac: true
   # hubURL is passed as HUB_URL to the operator, which injects it into
   # webhook-receiver connector pods. Defaults to the chart's hub service
   # name when empty.
@@ -137,13 +162,17 @@ connectorOperator:
   serviceAccount:
     annotations: {}
 hub:
+  replicas: 1
   image:
     repository: dpinsel/ainsel-hub-backend
     tag: "0.1.0"
     pullPolicy: IfNotPresent
   port: 8080
   metricsPort: 9090
-  namespace: ainsel
+  # Namespace the hub backend operates on (agents, backfill, ownership).
+  # Defaults to the top-level `namespace` when empty. Only set this if the hub
+  # must operate on a different namespace than it is deployed to.
+  namespace: ""
   ingress:
     enabled: true
     host: ainsel.example.com
@@ -186,6 +215,9 @@ hub:
     annotations: {}
 ui:
   enabled: true
+  # Base path the frontend is served under (must match the ingress path
+  # prefix). Empty string serves from the domain root.
+  basePath: /ainsel
   image:
     repository: dpinsel/ainsel-hub-frontend
     tag: "0.2.1"
@@ -340,13 +372,19 @@ chatMCP:
   image:
     repository: "dpinsel/ainsel-chat-mcp"
     tag: "0.1.0"
-# OIDC configuration. When unset, hub-backend bypasses JWT validation
-# (acceptable for very-local dev only) and the frontend's runtime-config.js
-# falls back to its baked-in defaults from public/runtime-config.js.
+# OIDC configuration. When unset, the hub backend refuses to start unless
+# auth.allowInsecureNoAuth is true (see below); the frontend image always
+# requires a complete OIDC config, so the UI is only usable with OIDC set.
 auth:
   oidcIssuer: ""
   oidcClientId: ""
   oidcProjectId: ""
+  # Allow the hub backend to run WITHOUT auth middleware (sets
+  # HUB_ALLOW_INSECURE_NO_AUTH=true). Only effective when oidcIssuer is
+  # empty. For local/air-gapped testing ONLY: every /api/v1/* endpoint
+  # becomes open to any caller. Never enable on a reachable host without an
+  # external auth proxy in front of the ingress.
+  allowInsecureNoAuth: false
   # internalValidateSecret is a shared secret between hub-backend and the MCP
   # service used to protect the /api/internal/user-tokens/validate endpoint.
   # When unset, user token auth is disabled; OIDC remains the only MCP auth.

@@ -17,7 +17,7 @@ spec:
   tls:
     - hosts:
         - {{ .Values.ui.ingress.host }}
-      secretName: forgejo-tls
+      secretName: ui-tls
   rules:
     - host: {{ .Values.ui.ingress.host }}
       http:

@@ -1,3 +1,4 @@
+{{- if .Values.agentOperator.enabled }}
 {{- if .Values.observability.podMonitor.enabled }}
 apiVersion: monitoring.coreos.com/v1
 kind: PodMonitor
@@ -18,4 +19,5 @@ spec:
     - port: metrics
       interval: {{ .Values.observability.podMonitor.interval | default "30s" }}
       path: /metrics
+{{- end }}
 {{- end }}

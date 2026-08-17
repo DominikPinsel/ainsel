@@ -56,6 +56,7 @@ All policies live in the release namespace (`.Values.namespace`).
 | `agent-egress` | `component: agents` | Egress | qdrant (6333), hub-backend (8080), DNS (53), any destination on 443/TCP (LLM APIs; FQDN scoping tracked in #652) |
 | `agent-metrics` | `managed-by: agent-operator` | Ingress | any source, named port `metrics` (Prometheus scrapes of `agent_tokens_used_total` etc.; selector matches the `ainsel-agents` PodMonitor) |
 | `connectors-webhook-ingress` | `managed-by: connector-operator` | Ingress | ingress controller's namespace (external webhooks) plus any peers listed in `networkPolicy.connectorWebhookSources`, port `http` |
+| `acme-http01-solver` | `acme.cert-manager.io/http01-solver: true` | Ingress | ingress controller's namespace, so Let's Encrypt HTTP-01 challenges succeed under default-deny. Toggle with `networkPolicy.allowAcmeSolver` (default true). |
 
 Notes:
 
