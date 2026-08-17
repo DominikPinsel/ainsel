@@ -7,7 +7,7 @@ metadata:
     {{- include "ainsel.labels" . | nindent 4 }}
     app.kubernetes.io/component: hub-backend
 spec:
-  replicas: 1
+  replicas: {{ .Values.hub.replicas }}
   selector:
     matchLabels:
       app.kubernetes.io/name: ainsel-hub-backend
@@ -102,7 +102,7 @@ spec:
                 fieldRef:
                   fieldPath: metadata.namespace
             - name: HUB_NAMESPACE
-              value: {{ .Values.hub.namespace }}
+              value: {{ .Values.hub.namespace | default .Values.namespace | quote }}
             - name: HUB_PORT
               value: "{{ .Values.hub.port }}"
             - name: HUB_METRICS_PORT
@@ -127,6 +127,10 @@ spec:
             {{- if .Values.auth.oidcProjectId }}
             - name: OIDC_PROJECT_ID
               value: {{ .Values.auth.oidcProjectId | quote }}
+            {{- end }}
+            {{- if and .Values.auth.allowInsecureNoAuth (not .Values.auth.oidcIssuer) }}
+            - name: HUB_ALLOW_INSECURE_NO_AUTH
+              value: "true"
             {{- end }}
             {{- if .Values.auth.internalValidateSecret }}
             - name: HUB_INTERNAL_VALIDATE_SECRET

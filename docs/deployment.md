@@ -156,6 +156,10 @@ The frontend reads the same values from the chart-rendered `runtime-config.js` a
 helm install ainsel ./chart -n ainsel -f values.yaml
 ```
 
+The chart does not create the namespace itself by default (`createNamespace:
+false`), so either pre-create it as in Step 2 or install with
+`--create-namespace` instead.
+
 ## Step 5: Create a WebhookConnector and Configure the Forgejo Webhook
 
 Create a connector via the hub UI (Settings → Connectors → New) or the REST API. Once saved, the connector operator provisions an Ingress whose path is shown in the connector detail view.

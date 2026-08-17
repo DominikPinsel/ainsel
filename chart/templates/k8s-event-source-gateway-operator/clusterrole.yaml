@@ -1,9 +1,17 @@
-{{- if .Values.connectorOperator.enabled }}
+{{- if and .Values.connectorOperator.enabled .Values.connectorOperator.clusterWideRbac }}
+{{- /*
+Cluster-wide RBAC for the event gateway operator. The released operator
+images watch Deployments, Services, Ingresses etc. across ALL namespaces
+even though POD_NAMESPACE is set (namespace-scoped caching landed later).
+Without this ClusterRole the operator crash-loops with
+"cannot list deployments at the cluster scope".
+Named after the target namespace so multiple releases (in different
+clusters/namespaces) do not collide.
+*/}}
 apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
+kind: ClusterRole
 metadata:
-  name: {{ .Release.Name }}-k8s-event-source-gateway-operator
-  namespace: {{ .Values.namespace }}
+  name: {{ .Values.namespace }}-event-gateway-operator
   labels:
     {{- include "ainsel.labels" . | nindent 4 }}
     app.kubernetes.io/component: k8s-event-source-gateway-operator
@@ -23,15 +31,9 @@ rules:
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # The operator reconciles a ServiceMonitor per connector so the
-  # per-connector gateway pod can be scraped by Prometheus. Without this rule
-  # every reconcile errors at the ServiceMonitor step, leaves status empty,
-  # and never gets far enough to register the webhook in Forgejo.
   - apiGroups: ["monitoring.coreos.com"]
     resources: ["servicemonitors"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # The operator reconciles an Ingress per connector to route webhooks from
-  # Forgejo to the connector gateway.
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingresses"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
