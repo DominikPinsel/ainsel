@@ -185,6 +185,10 @@ automatically at build time.
 
 ## Where to go next
 
+All documentation is also published at
+**[dominikpinsel.github.io/ainsel](https://dominikpinsel.github.io/ainsel/)**,
+in the same style as the in-app Docs page.
+
 **For administrators:**
 
 - [`docs/administrator-guide.md`](docs/administrator-guide.md) — concepts, end-to-end journey, cookbook
