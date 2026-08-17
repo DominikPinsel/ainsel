@@ -4,7 +4,7 @@ go 1.26.1
 
 require (
 	github.com/DominikPinsel/ainsel/shared/api v1.0.1-0.20260516215820-0fc3acf325cd
-	github.com/onsi/ginkgo/v2 v2.32.0
+	github.com/onsi/ginkgo/v2 v2.32.1
 	github.com/onsi/gomega v1.42.1
 	k8s.io/api v0.36.3
 	k8s.io/apimachinery v0.36.3
