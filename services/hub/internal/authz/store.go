@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/oklog/ulid/v2"
 )
@@ -109,6 +110,78 @@ func (s *Store) ClearUsername(ctx context.Context, id string) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// LocalUserIDPrefix namespaces locally-managed accounts so their IDs can
+// never collide with OIDs subs from an external IdP.
+const LocalUserIDPrefix = "local:"
+
+// CreateLocalUser inserts a locally-managed user with password credentials.
+// Unlike UpsertUser it fails with ErrAlreadyExists when the ID is taken, so
+// a caller can never silently overwrite an existing account's credentials.
+func (s *Store) CreateLocalUser(ctx context.Context, id, email, username, passwordHash string, isAdmin bool) (*User, error) {
+	var u User
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO users (id, email, username, is_admin, password_hash, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, now(), now())
+		RETURNING id, email, username, is_admin, created_at, updated_at
+	`, id, email, username, isAdmin, passwordHash).Scan(&u.ID, &u.Email, &u.Username, &u.IsAdmin, &u.CreatedAt, &u.UpdatedAt)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return nil, ErrAlreadyExists
+		}
+		return nil, fmt.Errorf("authz.CreateLocalUser: %w", err)
+	}
+	return &u, nil
+}
+
+// UserPasswordHash returns the stored password hash for a user ('' when the
+// user has no local credentials). Kept separate from GetUser so the hash can
+// never leak into API responses that serialize User.
+func (s *Store) UserPasswordHash(ctx context.Context, id string) (string, error) {
+	var hash string
+	err := s.pool.QueryRow(ctx, `SELECT password_hash FROM users WHERE id = $1`, id).Scan(&hash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("authz.UserPasswordHash: %w", err)
+	}
+	return hash, nil
+}
+
+// SetPassword stores a new password hash for a user.
+func (s *Store) SetPassword(ctx context.Context, id, hash string) error {
+	tag, err := s.pool.Exec(ctx, `UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2`, hash, id)
+	if err != nil {
+		return fmt.Errorf("authz.SetPassword: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// DeleteUser removes a user registry row. Group memberships and user tokens
+// cascade (the only remaining FKs to users since the resource_groups
+// redesign in migration 0016). OIDC users reappear via identity persistence
+// on their next login; deleting a local user revokes it.
+func (s *Store) DeleteUser(ctx context.Context, id string) error {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("authz.DeleteUser: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// isUniqueViolation reports whether err is a PostgreSQL unique-constraint
+// violation (SQLSTATE 23505).
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
 // --- Groups ---

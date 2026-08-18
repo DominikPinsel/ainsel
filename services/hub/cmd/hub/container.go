@@ -138,7 +138,7 @@ func newContainer(ctx context.Context, cfg containerConfig, deps containerDeps) 
 	// --- API server + auth middleware ---
 	c.userTokenStore = usertokens.NewStore(pool)
 	c.apiServer = wireAPIServer(c, cfg)
-	if err := wireAuthMiddleware(c, cfg); err != nil {
+	if err := wireAuthMiddleware(ctx, c, cfg); err != nil {
 		c.Close()
 		return nil, err
 	}

@@ -2,14 +2,21 @@ package authz
 
 import "context"
 
+// CheckerStore is the subset of Store functionality required by Checker.
+// Accepted as an interface so tests can substitute in-memory fakes.
+type CheckerStore interface {
+	GetUser(ctx context.Context, id string) (*User, error)
+	GetResourceGroup(ctx context.Context, resourceType, resourceName string) (*ResourceGroup, error)
+}
+
 // Checker provides authorization checks against the store.
 type Checker struct {
-	store *Store
+	store CheckerStore
 	cache *GroupCache
 }
 
 // NewChecker creates a Checker with the given store and group cache.
-func NewChecker(store *Store, cache *GroupCache) *Checker {
+func NewChecker(store CheckerStore, cache *GroupCache) *Checker {
 	return &Checker{store: store, cache: cache}
 }
 

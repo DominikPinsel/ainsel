@@ -14,11 +14,12 @@ import (
 
 // fakeAuthzStore is a minimal in-memory store for user-sync tests.
 type fakeAuthzStore struct {
-	users map[string]authz.User
+	users     map[string]authz.User
+	passwords map[string]string
 }
 
 func newFakeAuthzStore() *fakeAuthzStore {
-	return &fakeAuthzStore{users: make(map[string]authz.User)}
+	return &fakeAuthzStore{users: make(map[string]authz.User), passwords: make(map[string]string)}
 }
 
 func (f *fakeAuthzStore) UpsertUser(_ context.Context, sub, email, username string) (*authz.User, error) {
@@ -46,8 +47,52 @@ func (f *fakeAuthzStore) GetUser(_ context.Context, id string) (*authz.User, err
 	return &u, nil
 }
 
-func (f *fakeAuthzStore) ListUsers(_ context.Context) ([]authz.User, error) { return nil, nil }
-func (f *fakeAuthzStore) SetAdmin(_ context.Context, _ string, _ bool) error     { return nil }
+func (f *fakeAuthzStore) ListUsers(_ context.Context) ([]authz.User, error) {
+	out := make([]authz.User, 0, len(f.users))
+	for _, u := range f.users {
+		out = append(out, u)
+	}
+	return out, nil
+}
+func (f *fakeAuthzStore) SetAdmin(_ context.Context, id string, isAdmin bool) error {
+	u, ok := f.users[id]
+	if !ok {
+		return authz.ErrNotFound
+	}
+	u.IsAdmin = isAdmin
+	f.users[id] = u
+	return nil
+}
+func (f *fakeAuthzStore) CreateLocalUser(_ context.Context, id, email, username, passwordHash string, isAdmin bool) (*authz.User, error) {
+	if _, ok := f.users[id]; ok {
+		return nil, authz.ErrAlreadyExists
+	}
+	u := authz.User{ID: id, Email: email, Username: username, IsAdmin: isAdmin, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	f.users[id] = u
+	f.passwords[id] = passwordHash
+	return &u, nil
+}
+func (f *fakeAuthzStore) UserPasswordHash(_ context.Context, id string) (string, error) {
+	if _, ok := f.users[id]; !ok {
+		return "", authz.ErrNotFound
+	}
+	return f.passwords[id], nil
+}
+func (f *fakeAuthzStore) SetPassword(_ context.Context, id, hash string) error {
+	if _, ok := f.users[id]; !ok {
+		return authz.ErrNotFound
+	}
+	f.passwords[id] = hash
+	return nil
+}
+func (f *fakeAuthzStore) DeleteUser(_ context.Context, id string) error {
+	if _, ok := f.users[id]; !ok {
+		return authz.ErrNotFound
+	}
+	delete(f.users, id)
+	delete(f.passwords, id)
+	return nil
+}
 func (f *fakeAuthzStore) ClearUsername(_ context.Context, id string) error {
 	u, ok := f.users[id]
 	if !ok {

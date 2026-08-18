@@ -2,16 +2,19 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/DominikPinsel/ainsel/services/hub/internal/api"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/authz"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/db"
+	"github.com/DominikPinsel/ainsel/services/hub/internal/localauth"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/mcpservers"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/personas"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/prometheus"
@@ -133,58 +136,42 @@ func wireAPIServer(c *container, cfg containerConfig) *api.Server {
 	return srv
 }
 
-// wireAuthMiddleware sets up OIDC and authz middleware on the API server.
-func wireAuthMiddleware(c *container, cfg containerConfig) error {
+// wireAuthMiddleware sets up the API auth middleware according to
+// HUB_AUTH_MODE: "oidc" (external IdP, today's default), "local" (hub
+// username/password accounts, issue #108), or "none" (no auth; requires
+// HUB_ALLOW_INSECURE_NO_AUTH=true). When HUB_AUTH_MODE is unset the mode is
+// derived for backward compatibility: OIDC when both ZITADEL_ISSUER and
+// OIDC_PROJECT_ID are set, otherwise "none".
+func wireAuthMiddleware(ctx context.Context, c *container, cfg containerConfig) error {
 	issuer := os.Getenv("ZITADEL_ISSUER")
 	projectID := os.Getenv("OIDC_PROJECT_ID")
-	if issuer == "" || projectID == "" {
-		slog.Warn("OIDC auth disabled: ZITADEL_ISSUER and OIDC_PROJECT_ID must both be set")
-	} else {
-		slog.Info("OIDC auth enabled", "issuer", issuer, "projectID", projectID)
-		// Resolve JWKS/userinfo endpoints from the issuer's OIDC discovery
-		// document. Hardcoding provider-specific paths broke username/email
-		// enrichment on Zitadel versions whose userinfo endpoint lives at
-		// /oidc/v1/userinfo instead of /oauth/v2/userinfo.
-		discoveryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		jwksURL, userInfoURL, derr := oidc.ResolveEndpoints(discoveryCtx, nil, issuer)
-		cancel()
-		if derr != nil {
-			slog.Warn("OIDC discovery failed, falling back to default endpoints", "issuer", issuer, "error", derr)
+
+	mode := strings.ToLower(strings.TrimSpace(os.Getenv("HUB_AUTH_MODE")))
+	if mode == "" {
+		if issuer != "" && projectID != "" {
+			mode = "oidc"
 		} else {
-			slog.Info("OIDC endpoints resolved via discovery", "jwks", jwksURL, "userinfo", userInfoURL)
+			mode = "none"
 		}
-		// Escape hatches: allow operators to pin endpoints explicitly.
-		if v := os.Getenv("OIDC_JWKS_URL"); v != "" {
-			jwksURL = v
+		slog.Info("HUB_AUTH_MODE not set, derived from environment", "mode", mode)
+	}
+
+	switch mode {
+	case "oidc":
+		if issuer == "" || projectID == "" {
+			return fmt.Errorf("auth mode oidc requires ZITADEL_ISSUER and OIDC_PROJECT_ID to be set")
 		}
-		if v := os.Getenv("OIDC_USERINFO_URL"); v != "" {
-			userInfoURL = v
+		if err := wireOIDCAuth(c, issuer, projectID); err != nil {
+			return err
 		}
-		oidcMW, err := oidc.NewMiddleware(oidc.Config{
-			Issuer:      issuer,
-			Audience:    projectID,
-			JWKSURL:     jwksURL,
-			UserInfoURL: userInfoURL,
-		})
-		if err != nil {
-			return fmt.Errorf("auth middleware setup: %w", err)
+	case "local":
+		if err := wireLocalAuth(ctx, c); err != nil {
+			return err
 		}
-		userTokenMW := usertokens.NewMiddleware(c.userTokenStore, func(ctx context.Context, userID string) (string, error) {
-			u, err := c.authzStore.GetUser(ctx, userID)
-			if err != nil {
-				return "", err
-			}
-			return u.Username, nil
-		})
-		// Authorization is enforced in handlers via requireRead/requireWrite/
-		// requireManage helpers. The middleware chain only handles authentication.
-		// The identity persistence middleware is the innermost handler so it
-		// runs after userTokenMW and oidcMW have populated the request context
-		// with the authenticated user's identity.
-		c.apiServer.SetAuthMiddleware(func(next http.Handler) http.Handler {
-			return userTokenMW(oidcMW(c.apiServer.IdentityPersistMiddleware(next)))
-		})
-		c.apiServer.SetUserInfoURL(userInfoURL)
+	case "none":
+		slog.Warn("auth mode none: API runs without authentication middleware")
+	default:
+		return fmt.Errorf("invalid HUB_AUTH_MODE %q (want oidc, local, or none)", mode)
 	}
 
 	if err := c.apiServer.ValidateAuthConfig(cfg.hubAllowInsecureNoAuth); err != nil {
@@ -194,7 +181,7 @@ func wireAuthMiddleware(c *container, cfg containerConfig) error {
 		slog.Error("========================================")
 		slog.Error("API IS RUNNING WITHOUT AUTHENTICATION")
 		slog.Error("All /api/v1/* endpoints are open to any caller.")
-		slog.Error("Set OIDC environment variables to enable auth.")
+		slog.Error("Set HUB_AUTH_MODE=oidc or =local to enable auth.")
 		slog.Error("This mode is intended for local development ONLY.")
 		slog.Error("========================================",
 			"override", "HUB_ALLOW_INSECURE_NO_AUTH=true",
@@ -218,6 +205,124 @@ func wireAuthMiddleware(c *container, cfg containerConfig) error {
 	c.apiServer.SetRateLimiter(rateRPS, rateBurst)
 	slog.Info("Rate limiting enabled", "rps", rateRPS, "burst", rateBurst)
 
+	return nil
+}
+
+// wireOIDCAuth builds the OIDC middleware chain (previous default behavior).
+func wireOIDCAuth(c *container, issuer, projectID string) error {
+	slog.Info("OIDC auth enabled", "issuer", issuer, "projectID", projectID)
+	// Resolve JWKS/userinfo endpoints from the issuer's OIDC discovery
+	// document. Hardcoding provider-specific paths broke username/email
+	// enrichment on Zitadel versions whose userinfo endpoint lives at
+	// /oidc/v1/userinfo instead of /oauth/v2/userinfo.
+	discoveryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	jwksURL, userInfoURL, derr := oidc.ResolveEndpoints(discoveryCtx, nil, issuer)
+	cancel()
+	if derr != nil {
+		slog.Warn("OIDC discovery failed, falling back to default endpoints", "issuer", issuer, "error", derr)
+	} else {
+		slog.Info("OIDC endpoints resolved via discovery", "jwks", jwksURL, "userinfo", userInfoURL)
+	}
+	// Escape hatches: allow operators to pin endpoints explicitly.
+	if v := os.Getenv("OIDC_JWKS_URL"); v != "" {
+		jwksURL = v
+	}
+	if v := os.Getenv("OIDC_USERINFO_URL"); v != "" {
+		userInfoURL = v
+	}
+	oidcMW, err := oidc.NewMiddleware(oidc.Config{
+		Issuer:      issuer,
+		Audience:    projectID,
+		JWKSURL:     jwksURL,
+		UserInfoURL: userInfoURL,
+	})
+	if err != nil {
+		return fmt.Errorf("auth middleware setup: %w", err)
+	}
+	userTokenMW := usertokens.NewMiddleware(c.userTokenStore, func(ctx context.Context, userID string) (string, error) {
+		u, err := c.authzStore.GetUser(ctx, userID)
+		if err != nil {
+			return "", err
+		}
+		return u.Username, nil
+	})
+	// Authorization is enforced in handlers via requireRead/requireWrite/
+	// requireManage helpers. The middleware chain only handles authentication.
+	// The identity persistence middleware is the innermost handler so it
+	// runs after userTokenMW and oidcMW have populated the request context
+	// with the authenticated user's identity.
+	c.apiServer.SetAuthMiddleware(func(next http.Handler) http.Handler {
+		return userTokenMW(oidcMW(c.apiServer.IdentityPersistMiddleware(next)))
+	})
+	c.apiServer.SetUserInfoURL(userInfoURL)
+	return nil
+}
+
+// wireLocalAuth builds the local username/password middleware chain and
+// bootstraps the admin account from the environment (issue #108).
+func wireLocalAuth(ctx context.Context, c *container) error {
+	secret := os.Getenv("HUB_LOCAL_JWT_SECRET")
+	if secret == "" {
+		return fmt.Errorf("auth mode local requires HUB_LOCAL_JWT_SECRET to be set")
+	}
+
+	if err := bootstrapLocalAdmin(ctx, c.authzStore); err != nil {
+		return fmt.Errorf("bootstrap local admin: %w", err)
+	}
+
+	localMW := localauth.NewMiddleware([]byte(secret))
+	userTokenMW := usertokens.NewMiddleware(c.userTokenStore, func(ctx context.Context, userID string) (string, error) {
+		u, err := c.authzStore.GetUser(ctx, userID)
+		if err != nil {
+			return "", err
+		}
+		return u.Username, nil
+	})
+	c.apiServer.SetAuthMiddleware(func(next http.Handler) http.Handler {
+		return userTokenMW(localMW(c.apiServer.IdentityPersistMiddleware(next)))
+	})
+	c.apiServer.SetLocalAuthSecret([]byte(secret))
+	slog.Info("local auth enabled", "loginEndpoint", "/api/v1/auth/login")
+	return nil
+}
+
+// bootstrapLocalAdmin creates the initial admin account on first start in
+// local mode. HUB_LOCAL_ADMIN_USER defaults to "admin"; the password comes
+// from HUB_LOCAL_ADMIN_PASSWORD and is only used when the account does not
+// exist yet — restarts never silently change an existing password.
+func bootstrapLocalAdmin(ctx context.Context, store *authz.Store) error {
+	adminUser := os.Getenv("HUB_LOCAL_ADMIN_USER")
+	if adminUser == "" {
+		adminUser = "admin"
+	}
+	adminPass := os.Getenv("HUB_LOCAL_ADMIN_PASSWORD")
+
+	bctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	id := authz.LocalUserIDPrefix + adminUser
+	_, err := store.GetUser(bctx, id)
+	if err == nil {
+		slog.Info("bootstrap admin already exists", "id", id)
+		return nil
+	}
+	if !errors.Is(err, authz.ErrNotFound) {
+		return err
+	}
+	if adminPass == "" {
+		return fmt.Errorf("admin user %q does not exist and HUB_LOCAL_ADMIN_PASSWORD is empty", id)
+	}
+	hash, err := localauth.HashPassword(adminPass)
+	if err != nil {
+		return err
+	}
+	if _, err := store.CreateLocalUser(bctx, id, "", adminUser, hash, true); err != nil {
+		if errors.Is(err, authz.ErrAlreadyExists) {
+			return nil
+		}
+		return err
+	}
+	slog.Info("bootstrap admin created", "id", id)
 	return nil
 }
 

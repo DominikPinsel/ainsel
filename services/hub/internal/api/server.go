@@ -32,6 +32,10 @@ type authzStore interface {
 	ListUsers(ctx context.Context) ([]authz.User, error)
 	SetAdmin(ctx context.Context, userID string, isAdmin bool) error
 	ClearUsername(ctx context.Context, id string) error
+	CreateLocalUser(ctx context.Context, id, email, username, passwordHash string, isAdmin bool) (*authz.User, error)
+	UserPasswordHash(ctx context.Context, id string) (string, error)
+	SetPassword(ctx context.Context, id, hash string) error
+	DeleteUser(ctx context.Context, id string) error
 	UserGroupIDs(ctx context.Context, userID string) ([]string, error)
 	UserGroupRoles(ctx context.Context, userID string) (map[string]authz.GroupRole, error)
 	CreateGroup(ctx context.Context, name, description string) (*authz.Group, error)
@@ -69,6 +73,13 @@ type Server struct {
 	authzChecker           *authz.Checker
 	userTokens             *usertokens.Store
 	internalValidateSecret string
+
+	// localAuthSecret is the HS256 signing key for local session JWTs.
+	// Non-empty enables /api/v1/auth/login (auth.mode=local).
+	localAuthSecret []byte
+	// loginThrottle guards /api/v1/auth/login against per-username brute
+	// force; initialized together with localAuthSecret.
+	loginThrottle *loginThrottle
 
 	// authMW, when non-nil, is applied to every /api/v1/* request before the
 	// mux dispatches to a handler. Wired from main once OIDC env is present;
@@ -212,6 +223,9 @@ func New(c client.Client, namespace string, connectorCfg ConnectorConfig, promCl
 	s.mux.HandleFunc("/api/v1/platform/health", s.handlePlatformHealth)
 	s.mux.HandleFunc("/api/v1/users", s.handleUsers)
 	s.mux.HandleFunc("/api/v1/users/", s.handleUser)
+	s.mux.HandleFunc("/api/v1/auth/login", s.handleLogin)
+	s.mux.HandleFunc("/api/v1/auth/logout", s.handleLogout)
+	s.mux.HandleFunc("/api/v1/auth/password", s.handleChangePassword)
 	s.mux.HandleFunc("/api/v1/user-tokens", s.handleUserTokens)
 	s.mux.HandleFunc("/api/v1/user-tokens/", s.handleUserTokenDelete)
 	s.mux.HandleFunc("/api/internal/user-tokens/validate", s.handleUserTokenValidate)
@@ -249,11 +263,19 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) serveHTTPInner(w http.ResponseWriter, r *http.Request) {
-	if s.authMW != nil && strings.HasPrefix(r.URL.Path, "/api/v1/") {
+	if s.authMW != nil && strings.HasPrefix(r.URL.Path, "/api/v1/") && !isAuthExempt(r.URL.Path) {
 		s.authMW(s.mux).ServeHTTP(w, r)
 		return
 	}
 	s.mux.ServeHTTP(w, r)
+}
+
+// isAuthExempt lists /api/v1/* paths that must stay reachable without a
+// session. Only the login endpoint qualifies: it validates credentials
+// itself and is still protected by the global per-IP rate limiter plus a
+// per-username throttle.
+func isAuthExempt(path string) bool {
+	return path == "/api/v1/auth/login"
 }
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
