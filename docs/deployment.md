@@ -134,19 +134,71 @@ ui:
 
 ## Authentication
 
-By default, when `auth.oidcIssuer` and `auth.oidcClientId` are left empty in `values.yaml`, the hub backend skips JWT validation entirely. This is intentional for local development but **must not be used in production**.
+`auth.mode` in `values.yaml` selects how the platform authenticates users:
 
-To enable OIDC-based authentication, set the following fields in your `values.yaml`:
+| mode    | Hub                        | Frontend              | Use when |
+|---------|----------------------------|-----------------------|----------|
+| _(empty)_ | OIDC if `oidcIssuer` is set, otherwise no-auth (only auto-enabled when nothing is exposed via ingress) | derived | upgrading existing installs |
+| `oidc`  | external OIDC provider     | IdP redirect flow     | organization SSO |
+| `local` | hub-managed username/password accounts | login form | exposed installs without an IdP |
+| `none`  | no auth middleware         | "no auth" indicator   | port-forward or behind an edge auth proxy (Authelia/Authentik/oauth2-proxy) |
+
+Without any configuration the hub backend **refuses to start** unless it
+gets either OIDC settings or an explicit no-auth opt-in — there is no
+silent open-API default.
+
+### OIDC (organization SSO)
 
 ```yaml
 auth:
+  mode: oidc
   oidcIssuer: "https://your-oidc-provider.example.com"
   oidcClientId: "ainsel"
 ```
 
-Any OIDC provider that exposes a standard discovery endpoint (`/.well-known/openid-configuration`) is supported — for example Zitadel, Keycloak, or Dex.
+Any OIDC provider that exposes a standard discovery endpoint
+(`/.well-known/openid-configuration`) is supported — for example Zitadel,
+Keycloak, or Dex. The frontend reads the same values from the
+chart-rendered `runtime-config.js` and uses them to drive the login flow.
 
-The frontend reads the same values from the chart-rendered `runtime-config.js` and uses them to drive the login flow. No additional configuration is required beyond the two fields above.
+### Local users (no IdP required)
+
+```yaml
+auth:
+  mode: local
+  local:
+    adminUser: admin   # optional, defaults to admin
+```
+
+On first start the hub bootstraps an admin account. The chart generates the
+password and the JWT signing key into Secrets (stable across upgrades):
+
+```bash
+kubectl -n ainsel get secret ainsel-local-admin \
+  -o jsonpath='{.data.password}' | base64 -d
+```
+
+To bring your own credentials point `auth.local.adminPasswordSecret`
+(key `password`) and `auth.local.jwtSecretSecret` (key `secret`) at
+existing Secrets instead. Further users are managed via the UI
+(**Admin → Users**) or the `/api/v1/users` API; every user can change their
+own password under Profile. See `chart/values-local.yaml` for a full
+example.
+
+### No auth (local or proxied installs)
+
+For port-forward access use `chart/values-quickstart.yaml`, which disables
+all ingresses; the chart then detects "local mode" and enables no-auth
+automatically. To serve an unauthenticated instance through an ingress
+behind an edge auth proxy set:
+
+```yaml
+auth:
+  mode: none
+```
+
+Never use `mode: none` on a reachable host without such a proxy in front of
+the ingress.
 
 ---
 

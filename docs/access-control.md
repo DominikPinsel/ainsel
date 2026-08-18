@@ -6,14 +6,25 @@ determined by their role in that group.
 
 ## Authentication
 
-There are two ways to authenticate with the AInsel API. Both resolve to the
-same user identity and grant the same permissions.
+Interactive users authenticate either through an external OIDC provider or
+with hub-managed local accounts (`auth.mode: local`), depending on the
+deployment. In addition, every user can create personal access tokens for
+programmatic use. All methods resolve to the same user identity and grant
+the same permissions.
 
 ### OIDC (interactive)
 
-Browser-based authentication via Zitadel. The frontend handles the OAuth
-flow automatically. API requests carry a standard `Authorization: Bearer
-<jwt>` header.
+Browser-based authentication via an external provider (e.g. Zitadel). The
+frontend handles the OAuth flow automatically. API requests carry a standard
+`Authorization: Bearer <jwt>` header.
+
+### Local users (interactive)
+
+When the platform runs with `auth.mode: local`, users sign in with
+username/password against the hub itself. An `admin` account is bootstrapped
+on first start; further users are managed by admins via the UI (**Admin →
+Users**) or the `/api/v1/users` API. Successful logins receive a session
+JWT, used exactly like the OIDC one below.
 
 ### User tokens (programmatic)
 
