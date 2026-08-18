@@ -1,0 +1,72 @@
+# =============================================================================
+# Quickstart values — zero-to-running local install, no auth, no TLS, no DNS.
+#
+# This is the fastest way to get a working AInsel hub on a local or dev
+# cluster for evaluation. It intentionally exposes NOTHING outside the
+# cluster: every Ingress is disabled, and you reach the hub by port-forward.
+#
+# Because nothing is externally reachable, the chart detects "local mode"
+# and automatically sets HUB_ALLOW_INSECURE_NO_AUTH=true on the hub backend
+# (the hub otherwise refuses to start without OIDC). You do NOT need to set
+# auth.allowInsecureNoAuth yourself.
+#
+# Install:
+#
+#   helm install ainsel ./chart -n ainsel --create-namespace \
+#     -f chart/values-quickstart.yaml
+#
+# Then reach the hub via port-forward:
+#
+#   kubectl -n ainsel port-forward svc/hub-backend 8080:8080
+#   curl http://localhost:8080/api/v1/stats
+#
+#   kubectl -n ainsel port-forward svc/hub-frontend 8081:80
+#   # open http://localhost:8081  (UI runs in no-auth mode)
+#
+# The UI shows a small "no auth" indicator; every visitor has full access.
+# For accounts without an external IdP see values-local.yaml.
+#
+# Do NOT use these values on a cluster reachable from the internet. To expose
+# the platform, start from values-example.yaml instead.
+#
+# NOTE: the chart renders all resources into the `namespace` value (default
+# `ainsel`), independent of Helm's `-n` flag. Keep both in sync, e.g.
+# `helm install ... -n ainsel` or add `--set namespace=<your-ns>`.
+# =============================================================================
+
+# Nothing is served through an ingress controller in local mode.
+hub:
+  ingress:
+    enabled: false
+
+ui:
+  # Frontend runs in no-auth mode (authMode none) — served only via
+  # port-forward in this configuration.
+  enabled: true
+  ingress:
+    enabled: false
+
+mcp:
+  enabled: false
+
+# The gateway operator watches cluster-wide in released images; keep the
+# defaults, but if you run more than one AInsel release on the same cluster,
+# scale this to 0 on all but one (see chart README "Fresh-install behavior").
+connectorOperator: {}
+
+postgres:
+  enabled: true
+  storage: 1Gi
+
+qdrant:
+  enabled: true
+  storage: 1Gi
+
+# Observability off by default for a minimal local footprint.
+observability:
+  prometheus:
+    url: ""
+  serviceMonitor:
+    enabled: false
+  podMonitor:
+    enabled: false

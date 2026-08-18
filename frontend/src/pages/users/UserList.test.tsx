@@ -4,10 +4,17 @@ import userEvent from '@testing-library/user-event'
 import { UserList } from './UserList'
 import { renderWithProviders } from '../../test/renderWithProviders'
 
-vi.mock('react-oidc-context', () => ({
+vi.mock('../../auth/AuthProvider', () => ({
   useAuth: () => ({
-    user: { profile: { sub: 'admin-user' } },
-    isLoading: false,
+    mode: 'oidc',
+    ready: true,
+    token: 'tok',
+    user: { sub: 'admin-user', username: 'admin' },
+    isAdmin: true,
+    login: vi.fn(),
+    logout: vi.fn(),
+    signinRedirect: vi.fn(),
+    signoutRedirect: vi.fn(),
   }),
 }))
 

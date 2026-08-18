@@ -108,7 +108,11 @@ Common causes:
 
 ## OIDC / authentication errors
 
-If the hub logs show `authMW is nil`, the hub is running without authentication middleware. This is expected in local development mode and is not an error — the API is open.
+If the hub fails to start with `authMW is nil` / `api auth middleware is not
+configured`, no authentication is wired and the operator has not opted into
+running without auth. Configure `auth.mode` (`oidc`, `local`, or `none`) in
+your values — see `docs/deployment.md`. The chart auto-enables no-auth only
+when nothing is exposed via ingress ("local mode").
 
 If authentication is configured and you are seeing `401 Unauthorized` responses:
 
@@ -121,6 +125,11 @@ curl -H "Authorization: Bearer <token>" <issuer-url>/protocol/openid-connect/use
 ```
 
 A `token is expired` error means the client needs to refresh its token before calling the API. A `audience mismatch` error means the token was issued for a different client ID.
+
+For `auth.mode: local`: the bootstrap admin password lives in the
+`ainsel-local-admin` Secret and is never rotated on restarts. If it is lost,
+reset the account by updating the Secret and deleting the `local:admin` row
+from the `users` table so the bootstrap recreates it on next start.
 
 ---
 

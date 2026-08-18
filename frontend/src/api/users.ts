@@ -18,6 +18,26 @@ export function getUser(id: string) {
   return request<HubUser>(`/users/${encodeURIComponent(id)}`)
 }
 
+export function createUser(body: {
+  username: string
+  password: string
+  email?: string
+  isAdmin?: boolean
+}) {
+  return request<HubUser>('/users', { method: 'POST', body })
+}
+
+export function deleteUser(id: string) {
+  return request<void>(`/users/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+export function resetUserPassword(id: string, password: string) {
+  return request<HubUser>(`/users/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: { password },
+  })
+}
+
 export function updateUser(id: string, body: { isAdmin?: boolean }) {
   return request<HubUser>(`/users/${encodeURIComponent(id)}`, { method: 'PATCH', body })
 }
@@ -48,6 +68,31 @@ export function useUpdateUser() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, body }: { id: string; body: { isAdmin?: boolean } }) => updateUser(id, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+  })
+}
+
+export function useCreateUser() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: createUser,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+  })
+}
+
+export function useDeleteUser() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: deleteUser,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+  })
+}
+
+export function useResetUserPassword() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, password }: { id: string; password: string }) =>
+      resetUserPassword(id, password),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
   })
 }

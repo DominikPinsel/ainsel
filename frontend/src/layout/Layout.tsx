@@ -6,7 +6,7 @@ import { ReportButton } from '../components/ReportButton'
 import './Layout.css'
 
 export function Layout() {
-  const { user } = useAuth()
+  const { user, mode } = useAuth()
   const location = useLocation()
   const [menuOpen, setMenuOpen] = useState(false)
 
@@ -51,7 +51,7 @@ export function Layout() {
         </span>
       </header>
 
-      <Spine operator={user?.username ?? 'anon'} open={menuOpen} onClose={() => setMenuOpen(false)} />
+      <Spine operator={mode === 'none' ? 'no auth' : user?.username ?? 'anon'} open={menuOpen} onClose={() => setMenuOpen(false)} />
       <main id="content" className="canvas">
         <Outlet />
       </main>

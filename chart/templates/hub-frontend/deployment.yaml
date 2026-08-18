@@ -63,6 +63,10 @@ spec:
               value: hub-backend.{{ .Values.namespace }}.svc.cluster.local
             - name: BASE_PATH
               value: {{ .Values.ui.basePath | default "" | quote }}
+            {{- if .Values.auth.mode }}
+            - name: AUTH_MODE
+              value: {{ .Values.auth.mode | quote }}
+            {{- end }}
             {{- if .Values.auth.oidcIssuer }}
             - name: OIDC_ISSUER
               value: {{ .Values.auth.oidcIssuer | quote }}
