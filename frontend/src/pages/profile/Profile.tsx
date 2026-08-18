@@ -24,7 +24,7 @@ const THEME_OPTIONS: { value: Theme; label: string }[] = [
 ]
 
 export function Profile() {
-  const { signoutRedirect } = useAuth()
+  const { signoutRedirect, mode } = useAuth()
   const { data: user, isLoading } = useCurrentUser()
   const [theme, setTheme] = useState<Theme>(() => getStoredTheme() ?? 'light')
   const [reportBtn, setReportBtn] = useState(() => getReportBtnEnabled())
@@ -69,15 +69,17 @@ export function Profile() {
                 label="Username"
                 value={userDisplayName(user)}
                 action={
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => syncMe.mutate()}
-                    disabled={syncMe.isPending}
-                    aria-label="Sync username from Zitadel"
-                  >
-                    {syncMe.isPending ? '…' : 'Sync'}
-                  </Button>
+                  mode === 'oidc' ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => syncMe.mutate()}
+                      disabled={syncMe.isPending}
+                      aria-label="Sync username from identity provider"
+                    >
+                      {syncMe.isPending ? '…' : 'Sync'}
+                    </Button>
+                  ) : undefined
                 }
               />
               {syncMe.isError && (

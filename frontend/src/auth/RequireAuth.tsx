@@ -1,16 +1,24 @@
 import { useEffect, type ReactNode } from 'react'
-import { useAuth as useOidcAuth } from 'react-oidc-context'
+import { Navigate } from 'react-router-dom'
+import { useAuth } from './AuthProvider'
 
+// RequireAuth gates the authenticated app shell per mode:
+//   - none:  everyone passes (there is no auth),
+//   - local: without a valid token the user is sent to /login,
+//   - oidc:  unauthenticated users are redirected to the IdP (legacy flow).
 export function RequireAuth({ children }: { children: ReactNode }) {
-  const oidc = useOidcAuth()
+  const auth = useAuth()
 
+  const oidcNeedsRedirect = auth.mode === 'oidc' && auth.ready && !auth.token
   useEffect(() => {
-    if (!oidc.isLoading && !oidc.isAuthenticated && !oidc.activeNavigator) {
-      oidc.signinRedirect()
-    }
-  }, [oidc.isLoading, oidc.isAuthenticated, oidc.activeNavigator, oidc])
+    if (oidcNeedsRedirect) auth.signinRedirect()
+  }, [oidcNeedsRedirect, auth])
 
-  if (oidc.isLoading || oidc.activeNavigator) return null
-  if (!oidc.isAuthenticated) return null
+  if (auth.mode === 'none') return <>{children}</>
+  if (!auth.ready) return null
+  if (!auth.token) {
+    if (auth.mode === 'local') return <Navigate to="/login" replace />
+    return null // oidc: signinRedirect is in flight
+  }
   return <>{children}</>
 }
