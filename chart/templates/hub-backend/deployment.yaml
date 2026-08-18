@@ -108,7 +108,7 @@ spec:
             - name: HUB_METRICS_PORT
               value: "{{ .Values.hub.metricsPort }}"
             - name: PLATFORM_EXTERNAL_URL
-              value: {{ .Values.hub.platformExternalUrl | quote }}
+              value: {{ .Values.hub.platformExternalUrl | default (printf "https://%s%s" .Values.hub.ingress.host (.Values.ui.basePath | default "")) | quote }}
             - name: CONNECTOR_IMAGE_WEBHOOK
               value: "{{ .Values.hub.connectorImages.webhook.repository }}:{{ .Values.hub.connectorImages.webhook.tag }}"
             {{- if .Values.observability.prometheus.url }}
@@ -128,7 +128,7 @@ spec:
             - name: OIDC_PROJECT_ID
               value: {{ .Values.auth.oidcProjectId | quote }}
             {{- end }}
-            {{- if and .Values.auth.allowInsecureNoAuth (not .Values.auth.oidcIssuer) }}
+            {{- if and (not .Values.auth.oidcIssuer) (or .Values.auth.allowInsecureNoAuth (include "ainsel.localMode" .)) }}
             - name: HUB_ALLOW_INSECURE_NO_AUTH
               value: "true"
             {{- end }}

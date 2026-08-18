@@ -180,7 +180,9 @@ hub:
     className: nginx
     annotations:
       nginx.ingress.kubernetes.io/rewrite-target: /api/$2
-  platformExternalUrl: "https://ainsel.example.com/ainsel"
+  # Externally-reachable platform URL. When empty it is derived from the
+  # hub ingress host and ui.basePath (https://<hub.ingress.host><basePath>).
+  platformExternalUrl: ""
   connectorImages:
     webhook:
       repository: dpinsel/ainsel-webhook-receiver
@@ -384,6 +386,10 @@ auth:
   # empty. For local/air-gapped testing ONLY: every /api/v1/* endpoint
   # becomes open to any caller. Never enable on a reachable host without an
   # external auth proxy in front of the ingress.
+  #
+  # You normally do not need to set this by hand: when no ingress is enabled
+  # anywhere (hub/ui/mcp) and no OIDC issuer is set, the chart detects
+  # "local mode" and enables it automatically (see values-quickstart.yaml).
   allowInsecureNoAuth: false
   # internalValidateSecret is a shared secret between hub-backend and the MCP
   # service used to protect the /api/internal/user-tokens/validate endpoint.
