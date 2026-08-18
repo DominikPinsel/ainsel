@@ -120,6 +120,31 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.postgres.auth.existingSecret | default "ainsel-hub-db" }}
                   key: dsn
+            {{- $authMode := .Values.auth.mode | default "" }}
+            {{- if not (or (eq $authMode "") (eq $authMode "oidc") (eq $authMode "local") (eq $authMode "none")) }}
+            {{- fail (printf "auth.mode must be one of oidc, local, none (got %q)" $authMode) }}
+            {{- end }}
+            {{- if and (eq $authMode "oidc") (not .Values.auth.oidcIssuer) }}
+            {{- fail "auth.mode=oidc requires auth.oidcIssuer (and oidcClientId/oidcProjectId)" }}
+            {{- end }}
+            {{- if $authMode }}
+            - name: HUB_AUTH_MODE
+              value: {{ $authMode | quote }}
+            {{- end }}
+            {{- if eq $authMode "local" }}
+            - name: HUB_LOCAL_ADMIN_USER
+              value: {{ .Values.auth.local.adminUser | quote }}
+            - name: HUB_LOCAL_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.local.adminPasswordSecret | default "ainsel-local-admin" }}
+                  key: password
+            - name: HUB_LOCAL_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.local.jwtSecretSecret | default "ainsel-local-jwt" }}
+                  key: secret
+            {{- else }}
             {{- if .Values.auth.oidcIssuer }}
             - name: ZITADEL_ISSUER
               value: {{ .Values.auth.oidcIssuer | quote }}
@@ -128,9 +153,10 @@ spec:
             - name: OIDC_PROJECT_ID
               value: {{ .Values.auth.oidcProjectId | quote }}
             {{- end }}
-            {{- if and (not .Values.auth.oidcIssuer) (or .Values.auth.allowInsecureNoAuth (include "ainsel.localMode" .)) }}
+            {{- if or (eq $authMode "none") (and (not $authMode) (not .Values.auth.oidcIssuer) (or .Values.auth.allowInsecureNoAuth (include "ainsel.localMode" .))) }}
             - name: HUB_ALLOW_INSECURE_NO_AUTH
               value: "true"
+            {{- end }}
             {{- end }}
             {{- if .Values.auth.internalValidateSecret }}
             - name: HUB_INTERNAL_VALIDATE_SECRET

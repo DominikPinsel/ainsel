@@ -21,17 +21,33 @@ For the full deployment guide, see [`docs/deployment.md`](../docs/deployment.md)
 
 For a first look on a local/dev cluster — nothing is exposed outside the
 cluster, the hub runs without auth (auto-detected "local mode"), and you
-access the API via port-forward:
+access API and UI via port-forward:
 
 ```bash
 helm install ainsel . -n ainsel --create-namespace -f values-quickstart.yaml
 kubectl -n ainsel port-forward svc/hub-backend 8080:8080
 curl http://localhost:8080/api/v1/stats
+# UI (no-auth mode):
+kubectl -n ainsel port-forward svc/hub-frontend 8081:80
 ```
 
-The frontend console is disabled in this mode because it requires OIDC; see
-`values-quickstart.yaml` for details and the production path. Note: `-n`
-must match the chart's `namespace` value (both `ainsel` above).
+Note: `-n` must match the chart's `namespace` value (both `ainsel` above).
+
+### Authentication modes
+
+`auth.mode` selects how the platform authenticates users:
+
+| mode    | Hub                        | Frontend              | Use when |
+|---------|----------------------------|-----------------------|----------|
+| _(empty)_ | legacy behavior: OIDC if configured, else auto no-auth when nothing is exposed | derived | upgrading existing installs |
+| `none`  | no auth middleware         | "no auth" indicator   | port-forward or behind an edge auth proxy |
+| `local` | username/password accounts, admin bootstrapped from a Secret | login form | exposed installs without an IdP (`values-local.yaml`) |
+| `oidc`  | external OIDC provider     | IdP redirect flow     | organization SSO (`values-example.yaml`) |
+
+In `local` mode the chart generates `ainsel-local-admin` (bootstrap admin
+password) and `ainsel-local-jwt` (signing key) Secrets unless you point
+`auth.local.adminPasswordSecret` / `auth.local.jwtSecretSecret` at your own.
+Users are managed via **Admin → Users** in the UI or the `/api/v1/users` API.
 
 Lint and render locally:
 

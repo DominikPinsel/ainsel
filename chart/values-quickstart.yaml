@@ -15,14 +15,16 @@
 #   helm install ainsel ./chart -n ainsel --create-namespace \
 #     -f chart/values-quickstart.yaml
 #
-# Then reach the hub API via port-forward:
+# Then reach the hub via port-forward:
 #
 #   kubectl -n ainsel port-forward svc/hub-backend 8080:8080
 #   curl http://localhost:8080/api/v1/stats
 #
-# The frontend console requires OIDC to render (the released image always
-# needs a complete OIDC config), so it is disabled here. Enable it only once
-# you have OIDC set up — see docs/deployment.md.
+#   kubectl -n ainsel port-forward svc/hub-frontend 8081:80
+#   # open http://localhost:8081  (UI runs in no-auth mode)
+#
+# The UI shows a small "no auth" indicator; every visitor has full access.
+# For accounts without an external IdP see values-local.yaml.
 #
 # Do NOT use these values on a cluster reachable from the internet. To expose
 # the platform, start from values-example.yaml instead.
@@ -38,8 +40,11 @@ hub:
     enabled: false
 
 ui:
-  # Frontend needs OIDC; disabled for the no-auth quickstart.
-  enabled: false
+  # Frontend runs in no-auth mode (authMode none) — served only via
+  # port-forward in this configuration.
+  enabled: true
+  ingress:
+    enabled: false
 
 mcp:
   enabled: false

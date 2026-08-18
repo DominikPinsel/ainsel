@@ -1,0 +1,49 @@
+# =============================================================================
+# Local-user values — exposed install with hub-managed password accounts,
+# no external IdP required (auth.mode=local, issue #108).
+#
+#   helm install ainsel ./chart -n ainsel --create-namespace \
+#     -f chart/values-local.yaml \
+#     --set hub.ingress.host=<your-host> --set ui.ingress.host=<your-host>
+#
+# On first start the hub bootstraps an 'admin' account. The chart generates
+# its password into a Secret (stable across upgrades):
+#
+#   kubectl -n ainsel get secret ainsel-local-admin \
+#     -o jsonpath='{.data.password}' | base64 -d
+#
+# To bring your own credentials instead:
+#
+#   auth:
+#     local:
+#       adminPasswordSecret: my-admin-secret   # key: password
+#       jwtSecretSecret: my-jwt-secret         # key: secret
+#
+# Users are managed afterwards via the UI (Admin / Users) or the API.
+# For a zero-auth local/port-forward install use values-quickstart.yaml;
+# for organization SSO see values-example.yaml.
+# =============================================================================
+
+auth:
+  mode: local
+  local:
+    adminUser: admin
+
+hub:
+  ingress:
+    enabled: true
+    host: ainsel.example.com
+    path: /ainsel/api
+    className: nginx
+    annotations:
+      nginx.ingress.kubernetes.io/rewrite-target: /api/$2
+
+ui:
+  basePath: /ainsel
+  ingress:
+    enabled: true
+    host: ainsel.example.com
+    path: /ainsel(/|$)(.*)
+    className: nginx
+    annotations:
+      nginx.ingress.kubernetes.io/rewrite-target: /$2

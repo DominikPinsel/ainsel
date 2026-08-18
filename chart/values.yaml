@@ -378,6 +378,16 @@ chatMCP:
 # auth.allowInsecureNoAuth is true (see below); the frontend image always
 # requires a complete OIDC config, so the UI is only usable with OIDC set.
 auth:
+  # Authentication mode: oidc | local | none.
+  #   oidc  - external OIDC provider (requires oidcIssuer/clientId/projectId)
+  #   local - hub-managed username/password accounts (see auth.local);
+  #           an admin account is bootstrapped from a chart Secret
+  #   none  - no authentication; only safe port-forwarded or behind an edge
+  #           auth proxy (Authelia/Authentik/oauth2-proxy)
+  # Empty (default) keeps the legacy behavior: OIDC when oidcIssuer is
+  # configured, otherwise the chart's local-mode detection auto-enables
+  # no-auth when nothing is exposed via ingress.
+  mode: ""
   oidcIssuer: ""
   oidcClientId: ""
   oidcProjectId: ""
@@ -395,6 +405,18 @@ auth:
   # service used to protect the /api/internal/user-tokens/validate endpoint.
   # When unset, user token auth is disabled; OIDC remains the only MCP auth.
   internalValidateSecret: ""
+  # Settings for mode "local" (hub-managed username/password accounts).
+  local:
+    # Username of the bootstrapped admin account (created on first start).
+    adminUser: admin
+    # Existing Secret holding the admin password under key "password".
+    # When empty, the chart generates one into Secret "ainsel-local-admin":
+    #   kubectl -n <ns> get secret ainsel-local-admin \
+    #     -o jsonpath='{.data.password}' | base64 -d
+    adminPasswordSecret: ""
+    # Existing Secret holding the JWT signing key under key "secret".
+    # When empty, the chart generates one into Secret "ainsel-local-jwt".
+    jwtSecretSecret: ""
 # Forgejo integration — enables the bug-report button in the frontend.
 # When unset, the report button's issue-creation call will fail with
 # "Forgejo is not configured". Leave empty to disable issue creation.
