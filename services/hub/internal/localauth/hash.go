@@ -23,6 +23,10 @@ const (
 	argonThreads = 1
 	argonKeyLen  = 32
 	argonSaltLen = 16
+	// maxKeyLen bounds the key length parsed from a stored hash. Real hashes
+	// use 32 bytes; the cap keeps the uint32 conversion below obviously safe
+	// and rejects malformed input (gosec G115).
+	maxKeyLen = 128
 )
 
 var (
@@ -72,11 +76,13 @@ func VerifyPassword(password, encoded string) error {
 	if err != nil {
 		return ErrInvalidHash
 	}
-	if len(want) == 0 || threads == 0 {
+	if len(want) == 0 || len(want) > maxKeyLen || threads == 0 {
 		return ErrInvalidHash
 	}
 
-	got := argon2.IDKey([]byte(password), salt, time, mem, threads, uint32(len(want)))
+	// len(want) is bounded by the maxKeyLen check above, so the uint32
+	// conversion cannot overflow.
+	got := argon2.IDKey([]byte(password), salt, time, mem, threads, uint32(len(want))) // #nosec G115 -- bounded by maxKeyLen check above
 	if subtle.ConstantTimeCompare(got, want) != 1 {
 		return errors.New("localauth: password mismatch")
 	}
