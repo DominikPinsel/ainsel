@@ -61,3 +61,19 @@ func extractBearer(header string) string {
 	}
 	return strings.TrimSpace(header[len(prefix):])
 }
+
+// RequireAuth rejects requests that carry no authenticated user in the
+// context. The token middlewares (user tokens, local JWTs) deliberately fall
+// through on anonymous requests; in local mode there is no OIDC middleware
+// that would reject a missing bearer token, so this closer is what keeps the
+// API from being open. It must sit inside the token middlewares (closer to
+// the handler) so every authentication attempt has run first.
+func RequireAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := oidc.FromContext(r.Context()); !ok {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}

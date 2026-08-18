@@ -279,7 +279,10 @@ func wireLocalAuth(ctx context.Context, c *container) error {
 		return u.Username, nil
 	})
 	c.apiServer.SetAuthMiddleware(func(next http.Handler) http.Handler {
-		return userTokenMW(localMW(c.apiServer.IdentityPersistMiddleware(next)))
+		// RequireAuth sits inside both token middlewares: anonymous requests
+		// fall through the token checks and are rejected there, mirroring how
+		// the OIDC middleware rejects missing bearer tokens.
+		return userTokenMW(localMW(localauth.RequireAuth(c.apiServer.IdentityPersistMiddleware(next))))
 	})
 	c.apiServer.SetLocalAuthSecret([]byte(secret))
 	slog.Info("local auth enabled", "loginEndpoint", "/api/v1/auth/login")

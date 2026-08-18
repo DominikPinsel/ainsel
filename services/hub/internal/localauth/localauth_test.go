@@ -175,3 +175,32 @@ func TestMiddleware(t *testing.T) {
 		}
 	})
 }
+
+func TestRequireAuth(t *testing.T) {
+	reached := false
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	t.Run("no user rejected", func(t *testing.T) {
+		reached = false
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		rec := httptest.NewRecorder()
+		RequireAuth(inner).ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized || reached {
+			t.Fatalf("expected 401 without reaching handler, got status=%d reached=%v", rec.Code, reached)
+		}
+	})
+
+	t.Run("authenticated user passes", func(t *testing.T) {
+		reached = false
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		ctx := oidc.ContextWithUser(req.Context(), &oidc.User{Sub: "local:alice", Username: "alice"})
+		rec := httptest.NewRecorder()
+		RequireAuth(inner).ServeHTTP(rec, req.WithContext(ctx))
+		if rec.Code != http.StatusOK || !reached {
+			t.Fatalf("expected 200 and handler reached, got status=%d reached=%v", rec.Code, reached)
+		}
+	})
+}
