@@ -51,10 +51,10 @@ export function EventsDetail() {
     setParams((prev) => { const p = new URLSearchParams(prev); p.set('range', next); p.delete('page'); return p }, { replace: true })
 
   const setStatus = (v: string) =>
-    setParams((prev) => { const p = new URLSearchParams(prev); v ? p.set('status', v) : p.delete('status'); p.delete('page'); return p }, { replace: true })
+    setParams((prev) => { const p = new URLSearchParams(prev); if (v) { p.set('status', v) } else { p.delete('status') } p.delete('page'); return p }, { replace: true })
 
   const setConnector = (v: string) =>
-    setParams((prev) => { const p = new URLSearchParams(prev); v ? p.set('connector', v) : p.delete('connector'); p.delete('page'); return p }, { replace: true })
+    setParams((prev) => { const p = new URLSearchParams(prev); if (v) { p.set('connector', v) } else { p.delete('connector') } p.delete('page'); return p }, { replace: true })
 
   const clearAgent = () =>
     setParams((prev) => { const p = new URLSearchParams(prev); p.delete('agent'); p.delete('page'); return p }, { replace: true })
@@ -111,7 +111,7 @@ export function EventsDetail() {
   const toggleExpanded = (id: string) =>
     setExpandedIds((prev) => {
       const next = new Set(prev)
-      next.has(id) ? next.delete(id) : next.add(id)
+      if (next.has(id)) { next.delete(id) } else { next.add(id) }
       return next
     })
 
