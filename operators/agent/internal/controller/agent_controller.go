@@ -131,7 +131,7 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 			if updErr := r.Status().Update(ctx, &agent); updErr != nil {
 				return ctrl.Result{}, updErr
 			}
-			return ctrl.Result{Requeue: true}, nil
+			return ctrl.Result{RequeueAfter: time.Minute}, nil
 		}
 		return ctrl.Result{}, err
 	}
@@ -308,7 +308,6 @@ func resolvePiProvider(agent *ainselv1alpha1.Agent) piProviderConfig {
 		}
 	}
 }
-
 
 // resolveHubURL returns the hub backend REST API URL that MCP sidecars
 // (e.g. the chat-mcp sidecar) use to proxy requests back to the hub. The
@@ -1434,7 +1433,6 @@ func (r *AgentReconciler) computeSkillsHash(ctx context.Context, namespace strin
 
 	return fmt.Sprintf("sha256:%x", h.Sum(nil)), nil
 }
-
 
 // findAffectedAgents maps a Secret event to the Agent(s) that reference it.
 func (r *AgentReconciler) findAffectedAgents(ctx context.Context, obj client.Object) []reconcile.Request {
