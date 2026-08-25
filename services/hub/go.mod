@@ -12,9 +12,9 @@ require (
 	github.com/prometheus/client_golang v1.24.1
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0
 	golang.org/x/sync v0.22.0
-	k8s.io/api v0.36.3
+	k8s.io/api v0.36.4
 	k8s.io/apimachinery v0.36.4
-	k8s.io/client-go v0.36.3
+	k8s.io/client-go v0.36.4
 	sigs.k8s.io/controller-runtime v0.24.1
 )
 
