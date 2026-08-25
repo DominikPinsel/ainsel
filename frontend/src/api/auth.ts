@@ -27,7 +27,7 @@ async function rawRequest<T>(path: string, init: RequestInit, token?: string | n
   if (token) headers.Authorization = `Bearer ${token}`
   const res = await fetch(`${BASE_URL}${path}`, { ...init, headers })
   const text = await res.text()
-  let parsed: unknown = undefined
+  let parsed: unknown
   try {
     parsed = text ? JSON.parse(text) : undefined
   } catch {
