@@ -194,10 +194,24 @@ func toSimpleAgentResponse(a agentv1alpha1.Agent, imageDisplayName string) Simpl
 	return resp
 }
 
+// piBuiltinToolNames are the built-in tools provided by the pi agent runtime
+// (read, bash, edit, write, grep, find, ls). They are always available to any
+// agent regardless of whether the AgentImage explicitly lists them, because pi
+// registers them by default.
+var piBuiltinToolNames = map[string]struct{}{
+	"read":  {},
+	"bash":  {},
+	"edit":  {},
+	"write": {},
+	"grep":  {},
+	"find":  {},
+	"ls":    {},
+}
+
 // validateAgentImageRef checks that refName references an existing AgentImage and that
-// all entries in enabled are tools declared by that image. Returns the image's display
-// name along with a non-zero status code and error message on failure; returns
-// displayName, 0, "" on success.
+// all entries in enabled are tools declared by that image (or pi built-in tools).
+// Returns the image's display name along with a non-zero status code and error
+// message on failure; returns displayName, 0, "" on success.
 func (s *Server) validateAgentImageRef(ctx context.Context, refName string, enabled []string) (displayName string, statusCode int, errMessage string) {
 	if strings.TrimSpace(refName) == "" {
 		return "", http.StatusBadRequest, "imageRef.name is required"
@@ -216,7 +230,9 @@ func (s *Server) validateAgentImageRef(ctx context.Context, refName string, enab
 	var unknown []string
 	for _, t := range enabled {
 		if _, ok := valid[t]; !ok {
-			unknown = append(unknown, t)
+			if _, ok := piBuiltinToolNames[t]; !ok {
+				unknown = append(unknown, t)
+			}
 		}
 	}
 	if len(unknown) > 0 {
