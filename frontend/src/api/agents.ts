@@ -5,6 +5,9 @@ import type { Paginated } from './types'
 export type AgentLLM = { model: string; provider?: string; maxTurns?: number; temperature?: number }
 export type AgentPersona = { id: string }
 export type AgentImageRef = { name: string; displayName?: string }
+/** Agent-scoped skill selection: present = explicit override (empty items
+ *  = no skills), absent = inherit the runtime image's enabledSkills. */
+export type AgentSkills = { items: string[] }
 export type AgentOllamaCloud = { apiKey?: string }
 export type AgentOpenCode = { apiKey?: string }
 export type AgentAlibabaCloud = { apiKey?: string }
@@ -28,6 +31,7 @@ export type AgentResponse = AgentSummary & {
   llm?: AgentLLM
   persona?: AgentPersona
   enabledTools?: string[]
+  skills?: AgentSkills
   ollamaCloud?: AgentOllamaCloud
   openCode?: AgentOpenCode
   alibabaCloud?: AgentAlibabaCloud

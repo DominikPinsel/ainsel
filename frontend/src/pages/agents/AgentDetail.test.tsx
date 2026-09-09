@@ -341,7 +341,43 @@ describe('AgentDetail', () => {
     expect(screen.queryByLabelText('Agent image')).not.toBeInTheDocument()
   })
 
-  it('opens the Skills tab embedding only the skills editor', async () => {
+  it('opens the Skills tab as an agent-scoped selection and pins it on change', async () => {
+    const putCalls: Array<{ url: string; body?: string }> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) => {
+        if (init?.method === 'PUT') {
+          putCalls.push({ url, body: init.body ? String(init.body) : undefined })
+        }
+        if (url.includes('/skills?') || url.includes('/skills')) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                items: [
+                  {
+                    id: 'skill-pr',
+                    name: 'PR Review',
+                    description: 'Review pull requests',
+                  },
+                  {
+                    id: 'skill-triage',
+                    name: 'Issue Triage',
+                    description: 'Triage issues',
+                  },
+                ],
+                total: 2,
+                page: 1,
+                pageSize: 200,
+                totalPages: 1,
+              }),
+              { status: 200 },
+            ),
+          )
+        }
+        return Promise.resolve(defaultFetch(url, init))
+      }),
+    )
+
     renderWithProviders(
       <Routes>
         <Route path="/agents/:id" element={<AgentDetail />} />
@@ -351,23 +387,40 @@ describe('AgentDetail', () => {
     await screen.findAllByText('doc-writer')
     await userEvent.click(screen.getByRole('tab', { name: /^skills$/i }))
 
-    // The skills dual-list picker renders for the referenced image.
+    // The agent-scoped picker renders with agent wording, and the
+    // inherit-from-image hint shows while spec.skills is unset.
     expect(
       await screen.findByRole('button', {
-        name: /add selected to enabled on this image/i,
+        name: /add selected to enabled on this agent/i,
       }),
     ).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Skills' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /^save$/i })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: /pr review/i })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: /issue triage/i })).toBeInTheDocument()
+    expect(
+      screen.getByText(/inherited from the runtime image/i),
+    ).toBeInTheDocument()
 
-    // No tools-side sections leak onto this tab.
+    // No image-side sections leak onto this tab, and no embedded form save:
+    // the picker PUTs the agent directly.
     expect(screen.queryByLabelText('Image URL')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^save$/i })).not.toBeInTheDocument()
     expect(
       screen.queryByRole('heading', { name: 'MCP Servers' }),
     ).not.toBeInTheDocument()
-    expect(
-      screen.queryByRole('heading', { name: 'Environment Variables' }),
-    ).not.toBeInTheDocument()
+
+    // Enabling a skill pins the selection to the agent.
+    await userEvent.click(screen.getByRole('option', { name: /pr review/i }))
+    await userEvent.click(
+      screen.getByRole('button', { name: /add selected to enabled on this agent/i }),
+    )
+    await waitFor(() => {
+      const call = putCalls.find((c) => c.url.includes('/api/v1/agents/a1'))
+      expect(call).toBeDefined()
+      expect(JSON.parse(call!.body!)).toEqual({
+        name: 'doc-writer',
+        skills: { items: ['skill-pr'] },
+      })
+    })
   })
 
   it('shows the Triggers tab and renders the agent triggers panel', async () => {
