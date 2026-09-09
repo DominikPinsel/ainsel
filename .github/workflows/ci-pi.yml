@@ -2,12 +2,12 @@ name: CI - pi
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
     paths:
       - 'pi/**'
       - '.github/workflows/ci-pi.yml'
   pull_request:
-    branches: [main]
+    branches: [main, develop]
     types: [opened, synchronize, reopened]
     paths:
       - 'pi/**'

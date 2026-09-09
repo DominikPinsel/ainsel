@@ -2,14 +2,14 @@ name: CI - operators/agent
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
     paths:
       - 'operators/agent/**'
       - 'shared/api/**'
       - 'go.work'
       - '.github/workflows/ci-operators-agent.yml'
   pull_request:
-    branches: [main]
+    branches: [main, develop]
     types: [opened, synchronize, reopened]
     paths:
       - 'operators/agent/**'
