@@ -2,7 +2,7 @@ name: Dev Image - frontend
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
     paths:
       - 'frontend/**'
       - 'package.json'
@@ -10,7 +10,7 @@ on:
       - 'pnpm-workspace.yaml'
       - '.github/workflows/dev-image-frontend.yml'
   pull_request:
-    branches: [main]
+    branches: [main, develop]
     types: [opened, synchronize, reopened]
     paths:
       - 'frontend/**'

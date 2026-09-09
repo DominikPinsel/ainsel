@@ -2,7 +2,7 @@ name: Dev Image - services/hub
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
     paths:
       - 'services/hub/**'
       - 'shared/api/**'
@@ -10,7 +10,7 @@ on:
       - 'go.work'
       - '.github/workflows/dev-image-services-hub.yml'
   pull_request:
-    branches: [main]
+    branches: [main, develop]
     types: [opened, synchronize, reopened]
     paths:
       - 'services/hub/**'

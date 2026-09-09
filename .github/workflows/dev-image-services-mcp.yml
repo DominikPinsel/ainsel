@@ -2,14 +2,14 @@ name: Dev Image - services/mcp
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
     paths:
       - 'services/mcp/**'
       - 'shared/auth/**'
       - 'go.work'
       - '.github/workflows/dev-image-services-mcp.yml'
   pull_request:
-    branches: [main]
+    branches: [main, develop]
     types: [opened, synchronize, reopened]
     paths:
       - 'services/mcp/**'

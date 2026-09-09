@@ -2,12 +2,12 @@ name: CI - chart
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
     paths:
       - 'chart/**'
       - '.github/workflows/ci-chart.yml'
   pull_request:
-    branches: [main]
+    branches: [main, develop]
     types: [opened, synchronize, reopened]
     paths:
       - 'chart/**'
