@@ -65,13 +65,10 @@ function ImageRefPicker({ agent }: AgentImageSectionProps) {
   )
 }
 
-function NoImagePanel({ what }: { what: string }) {
+function NoImagePanel({ what, hint }: { what: string; hint: string }) {
   return (
     <Panel title={what} className="cropped">
-      <p className="label">
-        No image linked yet — pick one on the Image tab to configure its{' '}
-        {what.toLowerCase()}.
-      </p>
+      <p className="label">{hint}</p>
     </Panel>
   )
 }
@@ -89,7 +86,10 @@ export function AgentImageSection({ agent }: AgentImageSectionProps) {
       {imageName ? (
         <ImageFormContainer key={imageName} id={imageName} embedded sections="image" />
       ) : (
-        <NoImagePanel what="Image" />
+        <NoImagePanel
+          what="Image"
+          hint="No image linked yet — pick one above to configure it."
+        />
       )}
     </div>
   )
@@ -105,7 +105,10 @@ export function AgentToolsSection({ agent }: AgentImageSectionProps) {
   return imageName ? (
     <ImageFormContainer key={imageName} id={imageName} embedded sections="tools" />
   ) : (
-    <NoImagePanel what="Tools" />
+    <NoImagePanel
+      what="Tools"
+      hint="No image linked yet — pick one on the Image tab to configure its tools."
+    />
   )
 }
 
@@ -118,6 +121,9 @@ export function AgentSkillsSection({ agent }: AgentImageSectionProps) {
   return imageName ? (
     <ImageFormContainer key={imageName} id={imageName} embedded sections="skills" />
   ) : (
-    <NoImagePanel what="Skills" />
+    <NoImagePanel
+      what="Skills"
+      hint="No image linked yet — pick one on the Image tab to configure its skills."
+    />
   )
 }

@@ -191,17 +191,17 @@ export function ImageFormView({
         ) : null}
 
         {sections === 'all' || sections === 'image' ? (
-        <Panel title="Image" className="cropped">
-          <div style={{ display: 'grid', gap: 14 }}>
-            <Field label="Display Name" htmlFor="displayName" error={errors.displayName?.message}>
-              <Input id="displayName" {...register('displayName')} />
-            </Field>
-            {!isEdit ? (
-              <GroupField
-                value={watch('groupId') ?? ''}
-                onChange={(v) => setValue('groupId', v, { shouldDirty: true })}
-                error={errors.groupId?.message}
-              />
+          <Panel title="Image" className="cropped">
+            <div style={{ display: 'grid', gap: 14 }}>
+              <Field label="Display Name" htmlFor="displayName" error={errors.displayName?.message}>
+                <Input id="displayName" {...register('displayName')} />
+              </Field>
+              {!isEdit ? (
+                <GroupField
+                  value={watch('groupId') ?? ''}
+                  onChange={(v) => setValue('groupId', v, { shouldDirty: true })}
+                  error={errors.groupId?.message}
+                />
             ) : null}
             <Field label="Image URL" htmlFor="imageURL" error={errors.imageURL?.message}>
               <Input id="imageURL" placeholder="ghcr.io/org/image:tag" {...register('imageURL')} />
@@ -214,53 +214,53 @@ export function ImageFormView({
         ) : null}
 
         {sections === 'all' || sections === 'image' ? (
-        <EnvVarFieldArray
-          control={control}
-          register={register}
-          watch={watch}
-          errors={errors}
-        />
+          <EnvVarFieldArray
+            control={control}
+            register={register}
+            watch={watch}
+            errors={errors}
+          />
         ) : null}
 
         {sections === 'all' || sections === 'tools' ? (
-        <McpServerSelector
-          mcpServers={mcpServers}
-          envNames={envVars.map((e) => e.name).filter((n) => !!n)}
-          onChange={(names) => setValue('mcpServers', names)}
-          refresh={
-            isEdit && id
-              ? {
-                  id,
-                  onClick: onRefreshMCP,
-                  isPending: isRefreshing,
-                  isSaving,
-                }
-              : undefined
-          }
-        />
+          <McpServerSelector
+            mcpServers={mcpServers}
+            envNames={envVars.map((e) => e.name).filter((n) => !!n)}
+            onChange={(names) => setValue('mcpServers', names)}
+            refresh={
+              isEdit && id
+                ? {
+                    id,
+                    onClick: onRefreshMCP,
+                    isPending: isRefreshing,
+                    isSaving,
+                  }
+                : undefined
+            }
+          />
         ) : null}
 
         {sections === 'all' || sections === 'skills' ? (
-        <SkillsSelector
-          enabledSkills={watch('enabledSkills') ?? []}
-          onChange={(ids) => setValue('enabledSkills', ids, { shouldDirty: true })}
-        />
+          <SkillsSelector
+            enabledSkills={watch('enabledSkills') ?? []}
+            onChange={(ids) => setValue('enabledSkills', ids, { shouldDirty: true })}
+          />
         ) : null}
 
         {sections === 'all' || sections === 'tools' ? (
-        <ToolFieldArray
-          control={control}
-          register={register}
-          setValue={setValue}
-          watch={watch}
-          selectedIndex={selectedIndex}
-          setSelectedIndex={setSelectedIndex}
-          activeSource={activeSource}
-          setActiveSource={setActiveSource}
-          onRefreshMCP={onRefreshMCP}
-          isRefreshing={isRefreshing}
-          canRefresh={isEdit && !!id}
-        />
+          <ToolFieldArray
+            control={control}
+            register={register}
+            setValue={setValue}
+            watch={watch}
+            selectedIndex={selectedIndex}
+            setSelectedIndex={setSelectedIndex}
+            activeSource={activeSource}
+            setActiveSource={setActiveSource}
+            onRefreshMCP={onRefreshMCP}
+            isRefreshing={isRefreshing}
+            canRefresh={isEdit && !!id}
+          />
         ) : null}
       </form>
 
