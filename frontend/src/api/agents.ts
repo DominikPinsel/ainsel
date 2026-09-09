@@ -19,6 +19,9 @@ export type AgentSummary = {
   persona?: AgentPersona
   replicas?: number
   status?: { ready: boolean; replicas?: number }
+  /** RFC3339 timestamp of the last hub-mediated write (falls back to
+   *  creation time for agents that predate the annotation). */
+  updatedAt?: string
 }
 
 export type AgentResponse = AgentSummary & {
