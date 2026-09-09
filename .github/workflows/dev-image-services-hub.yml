@@ -32,7 +32,17 @@ jobs:
       - uses: actions/checkout@v7
       - name: Compute image metadata
         id: meta
-        run: echo "short_sha=$(echo ${GITHUB_SHA} | head -c 7)" >> $GITHUB_OUTPUT
+        run: |
+          short_sha=$(echo ${GITHUB_SHA} | head -c 7)
+          {
+            echo "short_sha=${short_sha}"
+            echo "tags<<EOF"
+            echo "dpinsel/ainsel-hub-backend:${short_sha}"
+            if [ "${GITHUB_REF}" = "refs/heads/develop" ]; then
+              echo "dpinsel/ainsel-hub-backend:dev"
+            fi
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
       - name: Login to Docker Hub
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v4
@@ -51,8 +61,6 @@ jobs:
           provenance: false
           sbom: false
           build-args: |
-            VERSION=${{ github.event_name == 'pull_request' && format('pr-{0}-{1}', github.event.pull_request.number, steps.meta.outputs.short_sha) || format('main-{0}', steps.meta.outputs.short_sha) }}
+            VERSION=${{ github.event_name == 'pull_request' && format('pr-{0}-{1}', github.event.pull_request.number, steps.meta.outputs.short_sha) || format('{0}-{1}', github.ref_name, steps.meta.outputs.short_sha) }}
             VCS_REF=${{ github.sha }}
-          tags: |
-            dpinsel/ainsel-hub-backend:dev
-            dpinsel/ainsel-hub-backend:${{ steps.meta.outputs.short_sha }}
+          tags: ${{ steps.meta.outputs.tags }}
