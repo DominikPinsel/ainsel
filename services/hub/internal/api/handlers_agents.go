@@ -24,6 +24,13 @@ type AgentImageRefInfo struct {
 	DisplayName string `json:"displayName,omitempty"`
 }
 
+// AgentSkillsInfo is the API representation of the agent-scoped skill
+// selection: present = explicit override (empty items = no skills),
+// absent = inherit the referenced image's enabledSkills.
+type AgentSkillsInfo struct {
+	Items []string `json:"items"`
+}
+
 // SimpleAgentResponse is the simplified API representation of an Agent.
 type SimpleAgentResponse struct {
 	ID             string                   `json:"id"`
@@ -33,6 +40,7 @@ type SimpleAgentResponse struct {
 	LLM            AgentLLMInfo             `json:"llm"`
 	Persona        *AgentPersonaInfo        `json:"persona,omitempty"`
 	EnabledTools   []string                 `json:"enabledTools,omitempty"`
+	Skills         *AgentSkillsInfo         `json:"skills,omitempty"`
 	Replicas       *int32                   `json:"replicas,omitempty"`
 	Memory         *AgentMemoryInfo         `json:"memory,omitempty"`
 	OllamaCloud    *AgentOllamaCloudInfo    `json:"ollamaCloud,omitempty"`
@@ -102,6 +110,7 @@ type SimpleAgentCreateRequest struct {
 	LLM            AgentLLMInfo             `json:"llm"`
 	Persona        *AgentPersonaInfo        `json:"persona,omitempty"`
 	EnabledTools   []string                 `json:"enabledTools,omitempty"`
+	Skills         *AgentSkillsInfo         `json:"skills,omitempty"`
 	Replicas       *int32                   `json:"replicas,omitempty"`
 	Memory         *AgentMemoryInfo         `json:"memory,omitempty"`
 	OllamaCloud    *AgentOllamaCloudInfo    `json:"ollamaCloud,omitempty"`
@@ -118,6 +127,7 @@ type SimpleAgentUpdateRequest struct {
 	LLM            *AgentLLMInfo            `json:"llm,omitempty"`
 	Persona        *AgentPersonaInfo        `json:"persona,omitempty"`
 	EnabledTools   *[]string                `json:"enabledTools,omitempty"`
+	Skills         *AgentSkillsInfo         `json:"skills,omitempty"`
 	Replicas       *int32                   `json:"replicas,omitempty"`
 	Memory         *AgentMemoryInfo         `json:"memory,omitempty"`
 	OllamaCloud    *AgentOllamaCloudInfo    `json:"ollamaCloud,omitempty"`
@@ -162,6 +172,11 @@ func toSimpleAgentResponse(a agentv1alpha1.Agent, imageDisplayName string) Simpl
 
 	if a.Spec.Persona.ID != "" {
 		resp.Persona = &AgentPersonaInfo{ID: a.Spec.Persona.ID}
+	}
+
+	// Skills: nil = inherit from the image (legacy), present = explicit.
+	if a.Spec.Skills != nil {
+		resp.Skills = &AgentSkillsInfo{Items: a.Spec.Skills.Items}
 	}
 
 	// Replicas
@@ -441,6 +456,12 @@ func (s *Server) createAgent(ctx context.Context, w http.ResponseWriter, r *http
 		}
 	}
 
+	if req.Skills != nil {
+		if err := s.validateEnabledSkills(ctx, w, req.Skills.Items); err != nil {
+			return
+		}
+	}
+
 	id := generateID("a")
 
 	agent := agentv1alpha1.Agent{
@@ -469,6 +490,11 @@ func (s *Server) createAgent(ctx context.Context, w http.ResponseWriter, r *http
 		agent.Spec.Persona = agentv1alpha1.AgentPersona{
 			ID: req.Persona.ID,
 		}
+	}
+	if req.Skills != nil {
+		items := make([]string, len(req.Skills.Items))
+		copy(items, req.Skills.Items)
+		agent.Spec.Skills = &agentv1alpha1.AgentSkills{Items: items}
 	}
 	if req.Replicas != nil {
 		agent.Spec.Scaling = &agentv1alpha1.AgentScaling{
@@ -640,6 +666,12 @@ func (s *Server) updateAgent(ctx context.Context, w http.ResponseWriter, r *http
 		}
 	}
 
+	if req.Skills != nil {
+		if err := s.validateEnabledSkills(ctx, w, req.Skills.Items); err != nil {
+			return
+		}
+	}
+
 	if req.Name != nil {
 		existing.Spec.DisplayName = *req.Name
 	}
@@ -651,6 +683,11 @@ func (s *Server) updateAgent(ctx context.Context, w http.ResponseWriter, r *http
 	}
 	if req.EnabledTools != nil {
 		existing.Spec.EnabledTools = *req.EnabledTools
+	}
+	if req.Skills != nil {
+		items := make([]string, len(req.Skills.Items))
+		copy(items, req.Skills.Items)
+		existing.Spec.Skills = &agentv1alpha1.AgentSkills{Items: items}
 	}
 	if req.LLM != nil {
 		if req.LLM.Model != "" {
