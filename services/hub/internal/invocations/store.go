@@ -1,6 +1,7 @@
 package invocations
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -13,11 +14,49 @@ import (
 // explicit capacity is provided.
 const DefaultCapacity = 1000
 
-// Store is an in-memory, thread-safe ring buffer of recent invocations.
+// Retention is how long invocation records are kept before pruning. It is
+// deliberately aligned with tasklogs.ConversationRetention so an invocation
+// and its conversation transcript expire together: the UI reaches a
+// transcript only through its invocation record, so a conversation that
+// outlives its invocation would be unreachable.
+const Retention = 48 * time.Hour
+
+// Store is the persistence contract for invocation history. The hub always
+// wires the Postgres-backed implementation (NewPgStore) in production;
+// NewMemoryStore exists for unit tests and as a fallback when no database
+// is configured.
+type Store interface {
+	// Record creates a new invocation record in StatusRunning and stores it.
+	// The returned invocation is a copy with ID and StartTime populated.
+	Record(inv Invocation) Invocation
+	// Complete updates an existing invocation with its terminal status and
+	// returns false when the invocation is unknown. errMsg is recorded when
+	// status is failure/timeout.
+	Complete(id, status, errMsg string, endTime time.Time) bool
+	// Get returns the invocation with the given ID, or false if absent.
+	Get(id string) (Invocation, bool)
+	// List returns invocations sorted newest-first, applying the given filters.
+	List(opts ListOptions) []Invocation
+	// ListWithTotal behaves like List but also returns the number of
+	// invocations matching the filters before opts.Limit is applied.
+	ListWithTotal(opts ListOptions) ([]Invocation, int)
+	// Len returns the number of invocations currently stored.
+	Len() int
+	// Capacity reports the configured retention bound for API compatibility.
+	// The in-memory store evicts by count; the Postgres store prunes by age.
+	Capacity() int
+	// Prune removes records older than the given retention. Implementations
+	// that evict by capacity (memory) have nothing to prune and return 0.
+	Prune(ctx context.Context, retention time.Duration) (int64, error)
+}
+
+// MemoryStore is an in-memory, thread-safe ring buffer of recent
+// invocations.
 //
 // When the buffer reaches capacity, recording a new invocation evicts the
-// oldest one. Lookups by ID remain O(1) via a map index.
-type Store struct {
+// oldest one. Lookups by ID remain O(1) via a map index. Records do not
+// survive hub restarts — use NewPgStore for durable history.
+type MemoryStore struct {
 	mu       sync.RWMutex
 	capacity int
 	// order holds invocation IDs in insertion order. The oldest is at the
@@ -28,16 +67,16 @@ type Store struct {
 	byID  map[string]*Invocation
 }
 
-// NewStore returns a new Store with the given capacity. If capacity <= 0,
-// DefaultCapacity is used.
-func NewStore(capacity int) *Store {
+// NewMemoryStore returns a new MemoryStore with the given capacity. If
+// capacity <= 0, DefaultCapacity is used.
+func NewMemoryStore(capacity int) *MemoryStore {
 	if capacity <= 0 {
 		capacity = DefaultCapacity
 	}
-	return &Store{
+	return &MemoryStore{
 		capacity: capacity,
-		order:    make([]string, 0, capacity),
-		byID:     make(map[string]*Invocation, capacity),
+		order:     make([]string, 0, capacity),
+		byID:      make(map[string]*Invocation, capacity),
 	}
 }
 
@@ -50,7 +89,7 @@ func generateID() string {
 
 // Record creates a new invocation record in StatusRunning and stores it.
 // The returned invocation is a copy; the canonical record lives in the store.
-func (s *Store) Record(inv Invocation) Invocation {
+func (s *MemoryStore) Record(inv Invocation) Invocation {
 	if inv.ID == "" {
 		inv.ID = generateID()
 	}
@@ -83,7 +122,7 @@ func (s *Store) Record(inv Invocation) Invocation {
 //
 // If the invocation is not found (e.g. evicted from the ring buffer),
 // Complete returns false. errMsg is recorded when status is failure/timeout.
-func (s *Store) Complete(id, status, errMsg string, endTime time.Time) bool {
+func (s *MemoryStore) Complete(id, status, errMsg string, endTime time.Time) bool {
 	if endTime.IsZero() {
 		endTime = time.Now().UTC()
 	}
@@ -102,7 +141,7 @@ func (s *Store) Complete(id, status, errMsg string, endTime time.Time) bool {
 }
 
 // Get returns a copy of the invocation with the given ID, or false if absent.
-func (s *Store) Get(id string) (Invocation, bool) {
+func (s *MemoryStore) Get(id string) (Invocation, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	rec, ok := s.byID[id]
@@ -135,7 +174,7 @@ type ListOptions struct {
 //
 // The returned slice contains copies of the stored records; callers may
 // safely mutate them without affecting the store.
-func (s *Store) List(opts ListOptions) []Invocation {
+func (s *MemoryStore) List(opts ListOptions) []Invocation {
 	items, _ := s.ListWithTotal(opts)
 	return items
 }
@@ -143,7 +182,7 @@ func (s *Store) List(opts ListOptions) []Invocation {
 // ListWithTotal behaves like List but additionally returns the number of
 // invocations matching the filters before opts.Limit is applied. This lets
 // callers report a truthful total even when the result set is capped.
-func (s *Store) ListWithTotal(opts ListOptions) ([]Invocation, int) {
+func (s *MemoryStore) ListWithTotal(opts ListOptions) ([]Invocation, int) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -187,13 +226,19 @@ func (s *Store) ListWithTotal(opts ListOptions) ([]Invocation, int) {
 }
 
 // Len returns the number of invocations currently stored.
-func (s *Store) Len() int {
+func (s *MemoryStore) Len() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return len(s.order)
 }
 
 // Capacity returns the maximum number of invocations the store will retain.
-func (s *Store) Capacity() int {
+func (s *MemoryStore) Capacity() int {
 	return s.capacity
+}
+
+// Prune is a no-op: the ring buffer bounds itself by capacity, so there is
+// nothing to age out. Satisfies the Store interface.
+func (s *MemoryStore) Prune(ctx context.Context, retention time.Duration) (int64, error) {
+	return 0, nil
 }

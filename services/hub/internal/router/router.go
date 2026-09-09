@@ -42,12 +42,12 @@ type Router struct {
 	index       *trigger.Index
 	eq          Queue
 	broadcaster Broadcaster
-	invocations *invocations.Store
+	invocations invocations.Store
 	pollInterval time.Duration
 }
 
 // New creates a Router backed by the PostgreSQL event queue.
-func New(eq Queue, index *trigger.Index, broadcaster Broadcaster, invStore *invocations.Store) *Router {
+func New(eq Queue, index *trigger.Index, broadcaster Broadcaster, invStore invocations.Store) *Router {
 	return &Router{
 		index:        index,
 		eq:           eq,

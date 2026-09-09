@@ -41,7 +41,7 @@ type container struct {
 	triggerStore   *triggers.Store
 	cronEmitter    *cron.Emitter
 	eventQueue     *eventqueue.Store
-	invStore       *invocations.Store
+	invStore       invocations.Store
 	mcpSvc         *mcpservers.Service
 	personaSvc     *personas.Service
 	skillSvc       *skills.Service
@@ -69,7 +69,6 @@ type containerConfig struct {
 	hubPort                string
 	metricsPort            string
 	promURL                string
-	invocationCapacity     int
 	claimTimeoutSecs       int
 	connectorCfg           api.ConnectorConfig
 	hubAllowInsecureNoAuth bool
@@ -124,8 +123,12 @@ func newContainer(ctx context.Context, cfg containerConfig, deps containerDeps) 
 	c.promClient = wirePrometheus(cfg.promURL)
 
 	// --- Invocation store + cron emitter ---
-	c.invStore = invocations.NewStore(cfg.invocationCapacity)
-	slog.Info("invocation history store ready", "capacity", c.invStore.Capacity())
+	// Invocation history is persisted in Postgres so it survives hub
+	// restarts — the event detail view reaches conversation transcripts
+	// through invocation records, and an in-memory buffer lost them on
+	// every restart. The memory store remains the fallback for tests.
+	c.invStore = invocations.NewPgStore(pool)
+	slog.Info("invocation history store ready", "backend", "postgres", "capacity", c.invStore.Capacity())
 	c.cronEmitter = cron.New(c.eventQueue, c.invStore)
 
 	// --- Service layer ---

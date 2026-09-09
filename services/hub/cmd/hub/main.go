@@ -40,7 +40,6 @@ func main() {
 		hubPort:                envOrDefault("HUB_PORT", "8080"),
 		metricsPort:            envOrDefault("HUB_METRICS_PORT", "9090"),
 		promURL:                envOrDefault("HUB_PROMETHEUS_URL", ""),
-		invocationCapacity:     envIntOrDefault("HUB_INVOCATION_BUFFER_SIZE", invocations.DefaultCapacity),
 		claimTimeoutSecs:       envIntOrDefault("TASK_CLAIM_TIMEOUT_SECONDS", 1800),
 		connectorCfg:           api.LoadConnectorConfig(),
 		hubAllowInsecureNoAuth: os.Getenv("HUB_ALLOW_INSECURE_NO_AUTH") == "true",
@@ -125,6 +124,12 @@ func main() {
 					slog.Error("conversation prune failed", "error", err)
 				} else if cn > 0 {
 					slog.Info("pruned old conversation messages", "count", cn)
+				}
+				inv, err := c.invStore.Prune(ctx, invocations.Retention)
+				if err != nil {
+					slog.Error("invocation prune failed", "error", err)
+				} else if inv > 0 {
+					slog.Info("pruned old invocations", "count", inv)
 				}
 			}
 		}
