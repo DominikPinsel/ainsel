@@ -56,8 +56,6 @@ jobs:
           load: ${{ github.event_name == 'pull_request' }}
           provenance: false
           sbom: false
-          build-args: |
-            TOOLS_TAG=main
           tags: ${{ steps.meta.outputs.tags }}
 
       # ---------- Go variant (ainsel-pi-go:1.24) ---------------------------
