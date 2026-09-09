@@ -168,14 +168,14 @@ commit subject.
 
 - `main` is the production branch. Merges here trigger release-please and,
   via tags, versioned image builds. **Never commit directly to `main`.**
-- `dev` is the development branch. Merges here build `:dev` images and roll
-  them out to the `ainsel-dev` environment. Cut `dev` from `main` and keep
+- `develop` is the development branch. Pushes here build `:dev` images that
+  the `ainsel-dev` environment runs. Cut `develop` from `main` and keep
   it fed with work in progress.
 - Feature work happens on `type/short-description` branches
   (`feat/agent-scaling`, `fix/webhook-timeout`, `docs/architecture-update`)
-  and is merged via PR.
-- Base new branches on the latest `origin/main`:
-  `git fetch origin && git checkout -b feat/my-thing origin/main`.
+  and is merged via PR into `develop`.
+- Base new branches on the latest `origin/develop`:
+  `git fetch origin && git checkout -b feat/my-thing origin/develop`.
 - Always `git pull --rebase` before pushing to catch remote changes.
 - Delete branches after merging.
 
