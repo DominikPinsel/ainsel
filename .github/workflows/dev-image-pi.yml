@@ -2,12 +2,12 @@ name: Dev Image - pi
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
     paths:
       - 'pi/**'
       - '.github/workflows/dev-image-pi.yml'
   pull_request:
-    branches: [main]
+    branches: [main, develop]
     types: [opened, synchronize, reopened]
     paths:
       - 'pi/**'
