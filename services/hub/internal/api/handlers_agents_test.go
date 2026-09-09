@@ -334,6 +334,77 @@ func TestUpdateAgent_Replicas(t *testing.T) {
 	}
 }
 
+func TestAgents_UpdatedAtStampedAndExposed(t *testing.T) {
+	img := testAgentImage("img-1", "git")
+	s := testServer(t, img)
+	s.mux.HandleFunc("/api/v1/agents", s.handleAgents)
+	s.mux.HandleFunc("/api/v1/agents/", s.handleAgent)
+
+	createReq := SimpleAgentCreateRequest{
+		Name:     "Stale Agent",
+		ImageRef: AgentImageRefInfo{Name: "img-1"},
+		LLM:      AgentLLMInfo{Model: "glm-5.1:cloud"},
+	}
+	body, _ := json.Marshal(createReq)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/agents", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var created SimpleAgentResponse
+	if err := json.NewDecoder(rec.Body).Decode(&created); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if created.UpdatedAt == "" {
+		t.Fatal("expected updatedAt to be set on create")
+	}
+
+	// The stored object carries the annotation the list API derives
+	// updatedAt from.
+	var stored agentv1alpha1.Agent
+	if err := s.client.Get(context.Background(), types.NamespacedName{Name: created.ID, Namespace: "test-ns"}, &stored); err != nil {
+		t.Fatalf("get stored agent: %v", err)
+	}
+	if got := stored.Annotations[AgentUpdatedAtAnnotation]; got != created.UpdatedAt {
+		t.Fatalf("expected annotation %q to match response updatedAt %q", got, created.UpdatedAt)
+	}
+
+	// Updates restamp the annotation so recency ordering stays truthful.
+	two := int32(2)
+	updateReq := SimpleAgentUpdateRequest{Replicas: &two}
+	ubody, _ := json.Marshal(updateReq)
+	ureq := httptest.NewRequest(http.MethodPut, "/api/v1/agents/"+created.ID, bytes.NewReader(ubody))
+	ureq.Header.Set("Content-Type", "application/json")
+	urec := httptest.NewRecorder()
+	s.mux.ServeHTTP(urec, ureq)
+	if urec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", urec.Code, urec.Body.String())
+	}
+	var updated SimpleAgentResponse
+	if err := json.NewDecoder(urec.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if updated.UpdatedAt == "" {
+		t.Fatal("expected updatedAt to be set after update")
+	}
+
+	// Listing exposes updatedAt so clients can order by recency.
+	lreq := httptest.NewRequest(http.MethodGet, "/api/v1/agents", nil)
+	lrec := httptest.NewRecorder()
+	s.mux.ServeHTTP(lrec, lreq)
+	var list struct {
+		Items []SimpleAgentResponse `json:"items"`
+	}
+	if err := json.NewDecoder(lrec.Body).Decode(&list); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(list.Items) != 1 || list.Items[0].UpdatedAt == "" {
+		t.Fatalf("expected list to expose updatedAt, got %+v", list.Items)
+	}
+}
+
 func TestUpdateAgent_PartialLLMUpdate(t *testing.T) {
 	img := testAgentImage("img-1", "git")
 	s := testServer(t, img)

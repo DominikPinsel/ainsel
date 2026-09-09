@@ -17,6 +17,11 @@ import { GroupField } from '../../components/GroupField'
 export type ImageFormViewProps = {
   isEdit: boolean
   id: string | undefined
+  /** Embedded mode: no page titleblock, no Cancel/Delete — just the form. */
+  embedded?: boolean
+  /** Which form sections to render. Default 'all'; the agent detail tabs use
+   *  'image', 'tools', and 'skills' to split the editor across tabs. */
+  sections?: 'all' | 'image' | 'tools' | 'skills'
   image: { displayName?: string; imageURL?: string } | undefined
   register: UseFormRegister<ImageFormValues>
   control: Control<ImageFormValues>
@@ -44,6 +49,8 @@ export type ImageFormViewProps = {
 export function ImageFormView({
   isEdit,
   id,
+  embedded = false,
+  sections = 'all',
   image,
   register,
   control,
@@ -73,6 +80,24 @@ export function ImageFormView({
 
   return (
     <>
+      {embedded ? (
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'baseline',
+            gap: 12,
+            marginBottom: 16,
+          }}
+        >
+          <div className="label" style={{ fontSize: 13 }}>
+            {image?.displayName ?? id ?? 'Image'}
+          </div>
+          <Button type="submit" variant="primary" form="image-form" disabled={isSubmitting}>
+            {isSubmitting ? 'Saving…' : 'Save'}
+          </Button>
+        </div>
+      ) : (
       <Titleblock
         crumbs={
           <>
@@ -100,11 +125,16 @@ export function ImageFormView({
           </>
         }
       />
+      )}
       <form
         id="image-form"
         onSubmit={onSubmit}
         noValidate
-        style={{ padding: '28px 32px', maxWidth: 1100 }}
+        style={
+          embedded
+            ? { maxWidth: 1100 }
+            : { padding: '28px 32px', maxWidth: 1100 }
+        }
       >
         {submitError ? (
           <div
@@ -160,17 +190,18 @@ export function ImageFormView({
           </div>
         ) : null}
 
-        <Panel title="Image" className="cropped">
-          <div style={{ display: 'grid', gap: 14 }}>
-            <Field label="Display Name" htmlFor="displayName" error={errors.displayName?.message}>
-              <Input id="displayName" {...register('displayName')} />
-            </Field>
-            {!isEdit ? (
-              <GroupField
-                value={watch('groupId') ?? ''}
-                onChange={(v) => setValue('groupId', v, { shouldDirty: true })}
-                error={errors.groupId?.message}
-              />
+        {sections === 'all' || sections === 'image' ? (
+          <Panel title="Image" className="cropped">
+            <div style={{ display: 'grid', gap: 14 }}>
+              <Field label="Display Name" htmlFor="displayName" error={errors.displayName?.message}>
+                <Input id="displayName" {...register('displayName')} />
+              </Field>
+              {!isEdit ? (
+                <GroupField
+                  value={watch('groupId') ?? ''}
+                  onChange={(v) => setValue('groupId', v, { shouldDirty: true })}
+                  error={errors.groupId?.message}
+                />
             ) : null}
             <Field label="Image URL" htmlFor="imageURL" error={errors.imageURL?.message}>
               <Input id="imageURL" placeholder="ghcr.io/org/image:tag" {...register('imageURL')} />
@@ -180,50 +211,60 @@ export function ImageFormView({
             </Field>
           </div>
         </Panel>
+        ) : null}
 
-        <EnvVarFieldArray
-          control={control}
-          register={register}
-          watch={watch}
-          errors={errors}
-        />
+        {sections === 'all' || sections === 'image' ? (
+          <EnvVarFieldArray
+            control={control}
+            register={register}
+            watch={watch}
+            errors={errors}
+          />
+        ) : null}
 
-        <McpServerSelector
-          mcpServers={mcpServers}
-          envNames={envVars.map((e) => e.name).filter((n) => !!n)}
-          onChange={(names) => setValue('mcpServers', names)}
-          refresh={
-            isEdit && id
-              ? {
-                  id,
-                  onClick: onRefreshMCP,
-                  isPending: isRefreshing,
-                  isSaving,
-                }
-              : undefined
-          }
-        />
+        {sections === 'all' || sections === 'tools' ? (
+          <McpServerSelector
+            mcpServers={mcpServers}
+            envNames={envVars.map((e) => e.name).filter((n) => !!n)}
+            onChange={(names) => setValue('mcpServers', names)}
+            refresh={
+              isEdit && id
+                ? {
+                    id,
+                    onClick: onRefreshMCP,
+                    isPending: isRefreshing,
+                    isSaving,
+                  }
+                : undefined
+            }
+          />
+        ) : null}
 
-        <SkillsSelector
-          enabledSkills={watch('enabledSkills') ?? []}
-          onChange={(ids) => setValue('enabledSkills', ids, { shouldDirty: true })}
-        />
+        {sections === 'all' || sections === 'skills' ? (
+          <SkillsSelector
+            enabledSkills={watch('enabledSkills') ?? []}
+            onChange={(ids) => setValue('enabledSkills', ids, { shouldDirty: true })}
+          />
+        ) : null}
 
-        <ToolFieldArray
-          control={control}
-          register={register}
-          setValue={setValue}
-          watch={watch}
-          selectedIndex={selectedIndex}
-          setSelectedIndex={setSelectedIndex}
-          activeSource={activeSource}
-          setActiveSource={setActiveSource}
-          onRefreshMCP={onRefreshMCP}
-          isRefreshing={isRefreshing}
-          canRefresh={isEdit && !!id}
-        />
+        {sections === 'all' || sections === 'tools' ? (
+          <ToolFieldArray
+            control={control}
+            register={register}
+            setValue={setValue}
+            watch={watch}
+            selectedIndex={selectedIndex}
+            setSelectedIndex={setSelectedIndex}
+            activeSource={activeSource}
+            setActiveSource={setActiveSource}
+            onRefreshMCP={onRefreshMCP}
+            isRefreshing={isRefreshing}
+            canRefresh={isEdit && !!id}
+          />
+        ) : null}
       </form>
 
+      {embedded ? null : (
       <ConfirmModal
         open={confirmOpen}
         title="Delete agent image?"
@@ -238,6 +279,7 @@ export function ImageFormView({
         onConfirm={onConfirmDelete}
         onCancel={() => setConfirmOpen(false)}
       />
+      )}
     </>
   )
 }
