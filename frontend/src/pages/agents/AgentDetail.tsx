@@ -17,6 +17,7 @@ import { AgentPersonaSection } from './AgentPersonaSection'
 import {
   AgentImageSection,
   AgentToolsSection,
+  AgentMCPSection,
   AgentSkillsSection,
 } from './AgentImageSection'
 
@@ -168,7 +169,12 @@ export function AgentDetail() {
 
           {data && tab === 'image' ? <AgentImageSection agent={data} /> : null}
 
-          {data && tab === 'tools' ? <AgentToolsSection agent={data} /> : null}
+          {data && tab === 'tools' ? (
+            <>
+              <AgentToolsSection agent={data} />
+              <AgentMCPSection agent={data} />
+            </>
+          ) : null}
 
           {data && tab === 'skills' ? <AgentSkillsSection agent={data} /> : null}
 

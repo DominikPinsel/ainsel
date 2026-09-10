@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { useUpdateAgent, type AgentResponse } from '../../api/agents'
 import { useAgentImage, useAgentImages } from '../../api/agentImages'
+import { useMCPServers } from '../../api/mcpServers'
 import { ApiError } from '../../api/client'
+import { DualListPicker } from '../../primitives/DualListPicker'
 import { Panel } from '../../primitives/Panel'
 import { Select } from '../../primitives/Select'
 import { ImageFormContainer } from '../images/ImageFormContainer'
@@ -97,9 +99,11 @@ export function AgentImageSection({ agent }: AgentImageSectionProps) {
 }
 
 /**
- * The Tools tab of the agent detail page: the tools side of the referenced
- * image (MCP servers and the tool list). The embedded header shows which
- * image is being edited; switching images happens on the Image tab.
+ * The Tools tab of the agent detail page: the tool catalog comes from the
+ * referenced image (discovery requires a container context, so tools stay
+ * image-scoped for now — see the M4 plan); the MCP section below is the
+ * agent's own. The embedded header shows which image is being edited;
+ * switching images happens on the Image tab.
  */
 export function AgentToolsSection({ agent }: AgentImageSectionProps) {
   const imageName = agent.imageRef?.name
@@ -110,6 +114,91 @@ export function AgentToolsSection({ agent }: AgentImageSectionProps) {
       what="Tools"
       hint="No image linked yet — pick one on the Image tab to configure its tools."
     />
+  )
+}
+
+/**
+ * The agent-scoped MCP section of the Tools tab: the agent's own server
+ * selection, resolved from the hub's MCP registry at write time. Until the
+ * agent has an explicit list (spec.mcp), the effective set is inherited from
+ * the runtime image's servers; the first change pins the selection to this
+ * agent.
+ */
+export function AgentMCPSection({ agent }: AgentImageSectionProps) {
+  const imageName = agent.imageRef?.name
+  const image = useAgentImage(imageName)
+  const { data: registry, isLoading } = useMCPServers()
+  const updateAgent = useUpdateAgent()
+  const [saveError, setSaveError] = useState<string | null>(null)
+
+  const effective = agent.mcp
+    ? agent.mcp.servers.map((s) => s.name)
+    : (image.data?.mcpServers ?? []).map((s) => s.name)
+  const envNameSet = new Set((image.data?.env ?? []).map((e) => e.name))
+
+  const onChange = (names: string[]) => {
+    setSaveError(null)
+    updateAgent.mutate(
+      { id: agent.id, body: { name: agent.name, mcp: { servers: names } } },
+      {
+        onError: (err) =>
+          setSaveError(
+            err instanceof ApiError ? err.message : 'Failed to update MCP servers.',
+          ),
+      },
+    )
+  }
+
+  if (!imageName) {
+    return (
+      <NoImagePanel
+        what="MCP Servers"
+        hint="No image linked yet — pick one on the Image tab to configure MCP servers."
+      />
+    )
+  }
+
+  return (
+    <div style={{ display: 'grid', gap: 8 }}>
+      <div style={{ marginTop: 24 }}>
+        <Panel title="MCP Servers">
+          <DualListPicker
+            items={registry ?? []}
+            selectedIds={effective}
+            onChange={onChange}
+            getId={(s) => s.name}
+            getLabel={(s) => s.displayName || s.name}
+            getDescription={(s) => {
+              const tokenEnv = s.tokenFromEnv ?? ''
+              if (tokenEnv === '') return null
+              const missing = !envNameSet.has(tokenEnv)
+              return (
+                <span style={{ color: missing ? 'var(--signal)' : undefined }}>
+                  {missing
+                    ? `⚠ $${tokenEnv} not in env`
+                    : `reads token from $${tokenEnv}`}
+                </span>
+              )
+            }}
+            getSearchText={(s) => `${s.displayName ?? ''} ${s.name} ${s.tokenFromEnv ?? ''}`}
+            isLoading={isLoading}
+            emptyLabel="No MCP servers configured."
+            enabledTitle="Enabled on this agent"
+          />
+        </Panel>
+      </div>
+      {agent.mcp ? null : (
+        <p className="label" style={{ margin: '0 0 4px', color: 'var(--ink-3)' }}>
+          Currently inherited from the runtime image — the first change pins the
+          MCP selection to this agent.
+        </p>
+      )}
+      {saveError ? (
+        <p className="label" style={{ margin: 0, color: 'var(--signal)' }}>
+          {saveError}
+        </p>
+      ) : null}
+    </div>
   )
 }
 
