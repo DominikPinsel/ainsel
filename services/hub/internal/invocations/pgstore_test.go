@@ -56,7 +56,7 @@ func TestPgStoreRecordGetComplete(t *testing.T) {
 	rec := s.Record(invocations.Invocation{
 		AgentName:   "a-test",
 		TriggerName: "t-test",
-		EventID:      "evt-1",
+		EventID:     "evt-1",
 		Connector:   "c-1",
 	})
 	if rec.ID == "" {

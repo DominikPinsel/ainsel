@@ -75,8 +75,8 @@ func NewMemoryStore(capacity int) *MemoryStore {
 	}
 	return &MemoryStore{
 		capacity: capacity,
-		order:     make([]string, 0, capacity),
-		byID:      make(map[string]*Invocation, capacity),
+		order:    make([]string, 0, capacity),
+		byID:     make(map[string]*Invocation, capacity),
 	}
 }
 

@@ -128,7 +128,7 @@ func newContainer(ctx context.Context, cfg containerConfig, deps containerDeps) 
 	// through invocation records, and an in-memory buffer lost them on
 	// every restart. The memory store remains the fallback for tests.
 	c.invStore = invocations.NewPgStore(pool)
-	slog.Info("invocation history store ready", "backend", "postgres", "capacity", c.invStore.Capacity())
+	slog.Info("invocation history store ready", "backend", "postgres", "retention", invocations.Retention)
 	c.cronEmitter = cron.New(c.eventQueue, c.invStore)
 
 	// --- Service layer ---
