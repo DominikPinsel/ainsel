@@ -388,6 +388,7 @@ func (r *AgentReconciler) reconcileDeployment(ctx context.Context, agent *ainsel
 	// CreateOrUpdate closure and returned to the caller so the Reconcile
 	// loop can set a Degraded condition and emit Warning Events.
 	var missingEnv []mcpservers.MissingEnvEntry
+	var err error
 
 	labels := map[string]string{
 		"app.kubernetes.io/name":       agentName,
@@ -399,10 +400,17 @@ func (r *AgentReconciler) reconcileDeployment(ctx context.Context, agent *ainsel
 	// Resolve each enabled MCP name to a runtime URL by looking up its
 	// Service in the agent's namespace. Missing Services are logged and
 	// skipped — the agent still rolls out.
-	mcpEntries, mcpMissing, err := mcpservers.Discover(ctx, r.Client, agent.Namespace, agent.Spec.EnabledMCPs)
-	if err != nil {
-		log.Error(err, "discover MCP services")
-		return nil, nil, err
+	// Agent-scoped MCP definitions (spec.mcp) carry their URLs already, so
+	// Service discovery is the legacy path only: when spec.mcp is set it is
+	// authoritative and enabledMCPs is ignored.
+	var mcpEntries, mcpMissing []string
+	if agent.Spec.MCP == nil {
+		discovered, missing, err := mcpservers.Discover(ctx, r.Client, agent.Namespace, agent.Spec.EnabledMCPs)
+		if err != nil {
+			log.Error(err, "discover MCP services")
+			return nil, nil, err
+		}
+		mcpEntries, mcpMissing = discovered, missing
 	}
 	for _, n := range mcpMissing {
 		log.Info("MCP service not found, skipping", "agent", agent.Name, "mcp", n)
@@ -762,11 +770,11 @@ func (r *AgentReconciler) reconcileDeployment(ctx context.Context, agent *ainsel
 									})
 									imageEnvNames[e.Name] = true
 								}
-								// Inject the resolved MCP server URLs. Empty when
-								// spec.enabledMCPs is empty or all referenced
-								// Services are missing.
+								// Inject the effective MCP server URLs: the agent's
+								// own definitions (explicit override, empty = none)
+								// or the referenced image's servers (legacy).
 								// Also append any MCP servers configured on the AgentImage.
-								for _, s := range img.Spec.MCPServers {
+								for _, s := range effectiveMCPServers(agent, img) {
 									mcpEntries = append(mcpEntries, fmt.Sprintf("%s=%s", s.Name, s.URL))
 								}
 								// Append MCP entries for sidecar containers that declare an MCP path.
@@ -805,7 +813,7 @@ func (r *AgentReconciler) reconcileDeployment(ctx context.Context, agent *ainsel
 								// from the image env are skipped; the controller logs
 								// them so a future Degraded condition can surface the
 								// misconfiguration to the user.
-								tokenValue, me := mcpservers.TokenEnvValue(img.Spec.MCPServers, imageEnvNames)
+								tokenValue, me := mcpservers.TokenEnvValue(effectiveMCPServers(agent, img), imageEnvNames)
 								if len(me) > 0 {
 									missingEnv = append(missingEnv, me...)
 									var descs []string
@@ -1415,6 +1423,26 @@ func effectiveSkills(agent *ainselv1alpha1.Agent, img *ainselv1alpha1.AgentImage
 		return agent.Spec.Skills.Items
 	}
 	return img.Spec.EnabledSkills
+}
+
+// effectiveMCPServers returns the MCP server definitions the agent
+// connects to: the agent's own selection when set (explicit override, empty
+// = no servers), falling back to the referenced image's servers (legacy
+// behavior). Agent definitions are snapshots resolved by the hub at write
+// time, so registry edits never rewrite running agents.
+func effectiveMCPServers(agent *ainselv1alpha1.Agent, img *ainselv1alpha1.AgentImage) []ainselv1alpha1.AgentImageMCPServer {
+	if agent.Spec.MCP != nil {
+		servers := make([]ainselv1alpha1.AgentImageMCPServer, 0, len(agent.Spec.MCP.Servers))
+		for _, s := range agent.Spec.MCP.Servers {
+			servers = append(servers, ainselv1alpha1.AgentImageMCPServer{
+				Name:         s.Name,
+				URL:          s.URL,
+				TokenFromEnv: s.TokenFromEnv,
+			})
+		}
+		return servers
+	}
+	return img.Spec.MCPServers
 }
 
 // computeSkillsHash builds a stable hash of the Data map in the shared skills
