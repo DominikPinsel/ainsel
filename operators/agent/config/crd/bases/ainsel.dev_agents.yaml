@@ -161,6 +161,41 @@ spec:
                 required:
                 - model
                 type: object
+              mcp:
+                description: |-
+                  MCP explicitly defines the MCP servers this agent connects to at
+                  runtime, as resolved definitions (URL + token env reference), not just
+                  names. When nil, the agent inherits the referenced image's MCPServers
+                  (legacy behavior); once set, the agent's servers replace the image's —
+                  empty Servers means no MCP connections.
+                properties:
+                  servers:
+                    description: Servers lists the MCP servers this agent connects
+                      to.
+                    items:
+                      description: |-
+                        AgentMCPServer is one MCP server definition this agent connects to at
+                        runtime: the URL is resolved from the hub's MCP registry at write time,
+                        so the agent pod is decoupled from later registry edits.
+                      properties:
+                        name:
+                          description: Name is the MCP registry entry name.
+                          type: string
+                        tokenFromEnv:
+                          description: |-
+                            TokenFromEnv names the env var on the agent pod whose value is sent
+                            as the bearer token. Empty means the server needs no token.
+                          type: string
+                        url:
+                          description: URL is the MCP server endpoint the agent runtime
+                            connects to.
+                          type: string
+                      required:
+                      - name
+                      - url
+                      type: object
+                    type: array
+                type: object
               memory:
                 properties:
                   enabled:
