@@ -20,6 +20,9 @@ export type ImageFormViewProps = {
   /** Embedded mode: no page titleblock, no Cancel/Delete — just the form. */
   embedded?: boolean
   /** Which form sections to render. Default 'all'; the agent detail tabs use
+   *  the narrower modes. The MCP server picker is part of 'all' only — the
+   *  agent detail page has its own agent-scoped MCP section, so the shared
+   *  image picker never appears there.
    *  'image', 'tools', and 'skills' to split the editor across tabs. */
   sections?: 'all' | 'image' | 'tools' | 'skills'
   image: { displayName?: string; imageURL?: string } | undefined
@@ -222,7 +225,7 @@ export function ImageFormView({
           />
         ) : null}
 
-        {sections === 'all' || sections === 'tools' ? (
+        {sections === 'all' ? (
           <McpServerSelector
             mcpServers={mcpServers}
             envNames={envVars.map((e) => e.name).filter((n) => !!n)}

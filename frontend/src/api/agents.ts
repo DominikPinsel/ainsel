@@ -8,6 +8,17 @@ export type AgentImageRef = { name: string; displayName?: string }
 /** Agent-scoped skill selection: present = explicit override (empty items
  *  = no skills), absent = inherit the runtime image's enabledSkills. */
 export type AgentSkills = { items: string[] }
+/** One agent-scoped MCP server definition, resolved from the hub's MCP
+ *  registry at write time (a snapshot — registry edits don't rewrite
+ *  running agents). */
+export type AgentMCPServer = {
+  name: string
+  url: string
+  tokenFromEnv?: string
+}
+/** Agent-scoped MCP selection: present = explicit override (empty servers
+ *  = no connections), absent = inherit the image's mcpServers. */
+export type AgentMCP = { servers: AgentMCPServer[] }
 export type AgentOllamaCloud = { apiKey?: string }
 export type AgentOpenCode = { apiKey?: string }
 export type AgentAlibabaCloud = { apiKey?: string }
@@ -32,13 +43,19 @@ export type AgentResponse = AgentSummary & {
   persona?: AgentPersona
   enabledTools?: string[]
   skills?: AgentSkills
+  mcp?: AgentMCP
   ollamaCloud?: AgentOllamaCloud
   openCode?: AgentOpenCode
   alibabaCloud?: AgentAlibabaCloud
   customProvider?: AgentCustomProvider
 }
 
-export type AgentRequest = Omit<AgentResponse, 'id' | 'status'> & { groupId?: string }
+export type AgentRequest = Omit<AgentResponse, 'id' | 'status' | 'mcp'> & {
+  groupId?: string
+  /** Write-side MCP selection: registry names, resolved by the hub to
+   *  full definitions when writing the agent. */
+  mcp?: { servers: string[] }
+}
 
 export type ListAgentsParams = {
   page?: number
