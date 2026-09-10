@@ -17,7 +17,7 @@ Common causes and fixes:
 - **Missing Postgres secret** — The hub exits early if the database secret is absent or has the wrong key names. Verify the secret exists and contains the expected keys (`host`, `port`, `user`, `password`, `dbname` or a single `dsn`). Re-create the secret and restart the hub deployment.
 - **Hub not reachable** — If you see `hub: connection refused` or a connection-refused error, confirm the hub URL in `values.yaml` is correct and that the hub pod in the platform namespace is running: `kubectl get pods -n <nats-namespace>`.
 - **Bad OIDC config** — An `oidc: failed to fetch provider metadata` error means the issuer URL is unreachable from inside the cluster. Check that the URL is correct, that DNS resolves, and that the cluster can reach the OIDC provider. Verify the client ID matches what is registered.
-- **CRD not installed** — A `no kind "Agent" is registered` error means CRDs were not applied. Run `kubectl apply -f chart/crds/` and restart the hub.
+- **CRD not installed** — A `no kind "Agent" is registered` error means CRDs were not applied. Run `kubectl apply -f chart/templates/crds/` and restart the hub.
 
 After fixing the root cause, rollout-restart the deployment:
 

@@ -122,7 +122,7 @@ For each new connector source, you need:
 | `<Source>Connector` CRD types | `shared/api/api/v1alpha1/` | Kubernetes type definition for the connector config |
 | Connector service | `services/<source>-event-gateway/` | Webhook receiver, normalizer, publisher, optional reactor |
 | Operator reconciliation | `operators/event-gateway/internal/controller/` | Watches the CRD, creates Deployment + Service |
-| CRD YAML | `chart/crds/` | Installs the CRD into the cluster |
+| CRD YAML | `chart/templates/crds/` | Installs the CRD into the cluster |
 | Helm template | `chart/templates/connectors/` | Optional: default connector manifests |
 | Event type registration | `shared/api/event_types.go` | Add `XxxEventTypes()` for your source |
 
@@ -211,10 +211,10 @@ Generate the CRD YAML and register it:
 
 ```bash
 cd shared/api
-make manifests   # generates chart/crds/jiraconnector.yaml
+make manifests   # generates chart/templates/crds/jiraconnector.yaml
 ```
 
-Add the CRD YAML to `chart/crds/jiraconnector.yaml`.
+Add the CRD YAML to `chart/templates/crds/jiraconnector.yaml`.
 
 ---
 
@@ -513,7 +513,7 @@ func main() {
 
 ### CRD
 
-Copy the generated CRD YAML to `chart/crds/jiraconnector.yaml`.
+Copy the generated CRD YAML to `chart/templates/crds/jiraconnector.yaml`.
 
 ### Connector Template (Optional)
 
@@ -785,7 +785,7 @@ lint:
 Before submitting your connector PR, verify:
 
 - [ ] CRD types defined in `shared/api/api/v1alpha1/<source>connector_types.go`
-- [ ] CRD YAML generated and added to `chart/crds/`
+- [ ] CRD YAML generated and added to `chart/templates/crds/`
 - [ ] Connector service in `services/<source>-event-gateway/` with:
   - [ ] Webhook handler with HMAC/signature validation
   - [ ] Normalizer that produces canonical `Event` structs
