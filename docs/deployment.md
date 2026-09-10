@@ -276,7 +276,7 @@ helm upgrade ainsel ./chart -n ainsel -f values.yaml
 Note: Helm does not update CRDs on upgrade. If CRDs changed, apply them manually:
 
 ```bash
-kubectl apply -f chart/crds/
+kubectl apply -f chart/templates/crds/
 ```
 
 ## Next steps
