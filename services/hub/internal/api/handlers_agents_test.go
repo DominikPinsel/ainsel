@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	agentv1alpha1 "github.com/DominikPinsel/ainsel/shared/api/api/v1alpha1"
+	"github.com/DominikPinsel/ainsel/services/hub/internal/skills"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -973,5 +974,91 @@ func TestAgents_DisplayName_UpdateWithoutImageRef_ResolvesSeparately(t *testing.
 	}
 	if updated.ImageRef.DisplayName != "Resolved Image" {
 		t.Errorf("expected displayName 'Resolved Image', got %q", updated.ImageRef.DisplayName)
+	}
+}
+
+func TestAgents_SkillsScoped(t *testing.T) {
+	img := testAgentImage("img-1", "git")
+	s := testServer(t, img)
+	ms := newMockSkillService()
+	ms.skills["skill-1"] = &skills.Skill{ID: "skill-1", Name: "Skill One"}
+	ms.skills["skill-2"] = &skills.Skill{ID: "skill-2", Name: "Skill Two"}
+	s.skills = ms
+	s.mux.HandleFunc("/api/v1/agents", s.handleAgents)
+	s.mux.HandleFunc("/api/v1/agents/", s.handleAgent)
+
+	do := func(method, path string, body any) *httptest.ResponseRecorder {
+		b, _ := json.Marshal(body)
+		req := httptest.NewRequest(method, path, bytes.NewReader(b))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		s.mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// Create with an explicit skill selection.
+	rec := do(http.MethodPost, "/api/v1/agents", SimpleAgentCreateRequest{
+		Name:     "Skilled Agent",
+		ImageRef: AgentImageRefInfo{Name: "img-1"},
+		LLM:      AgentLLMInfo{Model: "glm-5.1:cloud"},
+		Skills:   &AgentSkillsInfo{Items: []string{"skill-1", "skill-2"}},
+	})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var created SimpleAgentResponse
+	if err := json.NewDecoder(rec.Body).Decode(&created); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if created.Skills == nil || len(created.Skills.Items) != 2 {
+		t.Fatalf("expected explicit skills on create response, got %+v", created.Skills)
+	}
+
+	var stored agentv1alpha1.Agent
+	if err := s.client.Get(context.Background(), types.NamespacedName{Name: created.ID, Namespace: "test-ns"}, &stored); err != nil {
+		t.Fatalf("get stored: %v", err)
+	}
+	if stored.Spec.Skills == nil || len(stored.Spec.Skills.Items) != 2 {
+		t.Fatalf("expected spec.skills on stored CR, got %+v", stored.Spec.Skills)
+	}
+
+	// Update to an explicit empty selection — distinct from "unset"
+	// (nil = inherit the image's enabledSkills).
+	rec = do(http.MethodPut, "/api/v1/agents/"+created.ID, SimpleAgentUpdateRequest{
+		Skills: &AgentSkillsInfo{Items: []string{}},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var updated SimpleAgentResponse
+	if err := json.NewDecoder(rec.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if updated.Skills == nil || len(updated.Skills.Items) != 0 {
+		t.Fatalf("expected explicit empty skills, got %+v", updated.Skills)
+	}
+	if err := s.client.Get(context.Background(), types.NamespacedName{Name: created.ID, Namespace: "test-ns"}, &stored); err != nil {
+		t.Fatalf("get stored: %v", err)
+	}
+	if stored.Spec.Skills == nil || len(stored.Spec.Skills.Items) != 0 {
+		t.Fatalf("expected explicit empty spec.skills, got %+v", stored.Spec.Skills)
+	}
+
+	// Unknown skill ids are rejected.
+	rec = do(http.MethodPut, "/api/v1/agents/"+created.ID, SimpleAgentUpdateRequest{
+		Skills: &AgentSkillsInfo{Items: []string{"skill-1", "nope"}},
+	})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for unknown skill, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	rec = do(http.MethodPost, "/api/v1/agents", SimpleAgentCreateRequest{
+		Name:     "Bad Skills",
+		ImageRef: AgentImageRefInfo{Name: "img-1"},
+		LLM:      AgentLLMInfo{Model: "glm-5.1:cloud"},
+		Skills:   &AgentSkillsInfo{Items: []string{"nope"}},
+	})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for unknown skill on create, got %d: %s", rec.Code, rec.Body.String())
 	}
 }

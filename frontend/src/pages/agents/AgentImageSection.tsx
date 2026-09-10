@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { useUpdateAgent, type AgentResponse } from '../../api/agents'
-import { useAgentImages } from '../../api/agentImages'
+import { useAgentImage, useAgentImages } from '../../api/agentImages'
 import { ApiError } from '../../api/client'
 import { Panel } from '../../primitives/Panel'
 import { Select } from '../../primitives/Select'
 import { ImageFormContainer } from '../images/ImageFormContainer'
+import { SkillsSelector } from '../images/SkillsSelector'
 
 type AgentImageSectionProps = {
   agent: AgentResponse
@@ -113,17 +114,65 @@ export function AgentToolsSection({ agent }: AgentImageSectionProps) {
 }
 
 /**
- * The Skills tab of the agent detail page: the skills side of the referenced
- * image (which skills are enabled on it).
+ * The Skills tab of the agent detail page: the agent's own skill selection.
+ * Until the agent has an explicit list (spec.skills), the effective set is
+ * inherited from the runtime image's enabledSkills; the first change pins
+ * the selection to this agent.
  */
 export function AgentSkillsSection({ agent }: AgentImageSectionProps) {
   const imageName = agent.imageRef?.name
-  return imageName ? (
-    <ImageFormContainer key={imageName} id={imageName} embedded sections="skills" />
-  ) : (
-    <NoImagePanel
-      what="Skills"
-      hint="No image linked yet — pick one on the Image tab to configure its skills."
-    />
+  const image = useAgentImage(imageName)
+  const updateAgent = useUpdateAgent()
+  const [saveError, setSaveError] = useState<string | null>(null)
+
+  const effective = agent.skills
+    ? agent.skills.items
+    : (image.data?.enabledSkills ?? [])
+
+  const onChange = (items: string[]) => {
+    setSaveError(null)
+    updateAgent.mutate(
+      { id: agent.id, body: { name: agent.name, skills: { items } } },
+      {
+        onError: (err) =>
+          setSaveError(
+            err instanceof ApiError ? err.message : 'Failed to update skills.',
+          ),
+      },
+    )
+  }
+
+  if (!imageName) {
+    return (
+      <NoImagePanel
+        what="Skills"
+        hint="No image linked yet — pick one on the Image tab to configure its skills."
+      />
+    )
+  }
+
+  return (
+    <div style={{ display: 'grid', gap: 8 }}>
+      <SkillsSelector
+        enabledSkills={effective}
+        onChange={onChange}
+        labels={{
+          enabledTitle: 'Enabled on this agent',
+          emptyLabel:
+            'No skills available. Create skills first to enable them on this agent.',
+        }}
+      />
+      {agent.skills ? null : (
+        <p className="label" style={{ margin: '0 0 4px', color: 'var(--ink-3)' }}>
+          Currently inherited from the runtime image — the first change pins the
+          skill selection to this agent.
+        </p>
+      )}
+      {saveError ? (
+        <p className="label" style={{ margin: 0, color: 'var(--signal)' }}>
+          {saveError}
+        </p>
+      ) : null}
+    </div>
   )
 }

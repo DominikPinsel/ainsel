@@ -5,9 +5,11 @@ import { Panel } from '../../primitives/Panel'
 type SkillsSelectorProps = {
   enabledSkills: string[]
   onChange: (ids: string[]) => void
+  /** Wording for non-image contexts, e.g. the agent detail Skills tab. */
+  labels?: { enabledTitle?: string; emptyLabel?: string }
 }
 
-export function SkillsSelector({ enabledSkills, onChange }: SkillsSelectorProps) {
+export function SkillsSelector({ enabledSkills, onChange, labels }: SkillsSelectorProps) {
   const { data, isLoading } = useSkills({ pageSize: 200 })
   const skills = data?.items ?? []
   return (
@@ -21,8 +23,11 @@ export function SkillsSelector({ enabledSkills, onChange }: SkillsSelectorProps)
           getLabel={(s) => s.name}
           getDescription={(s) => s.description}
           isLoading={isLoading}
-          emptyLabel="No skills available. Create skills first to enable them on this image."
-          enabledTitle="Enabled on this image"
+          emptyLabel={
+            labels?.emptyLabel ??
+            'No skills available. Create skills first to enable them on this image.'
+          }
+          enabledTitle={labels?.enabledTitle ?? 'Enabled on this image'}
         />
       </Panel>
     </div>
