@@ -222,3 +222,33 @@
     transition: none;
   }
 }
+
+/* Recent agents under the Agents nav entry */
+.nav-recent {
+  display: grid;
+  gap: 1px;
+  padding: 3px 0 6px;
+}
+.nav-sublink {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px 4px 36px;
+  border-radius: 6px;
+  color: var(--spine-ink-3);
+  text-decoration: none;
+  font-family: var(--ui);
+  font-size: 12px;
+  transition: background 0.12s, color 0.12s;
+}
+.nav-sublink:hover {
+  background: var(--spine-hover);
+  color: var(--spine-ink);
+}
+.nav-sublink.active {
+  background: var(--signal);
+  color: #fff;
+}
+.nav-sublink .dot {
+  flex-shrink: 0;
+}

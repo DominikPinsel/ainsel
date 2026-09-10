@@ -13,12 +13,21 @@ import { Tag } from '../../primitives/Tag'
 import { Titleblock } from '../../layout/Titleblock'
 import { AgentTriggers } from './AgentTriggers'
 import { AgentSchedules } from './AgentSchedules'
+import { AgentPersonaSection } from './AgentPersonaSection'
+import {
+  AgentImageSection,
+  AgentToolsSection,
+  AgentSkillsSection,
+} from './AgentImageSection'
 
 const TABS = [
   { value: 'overview', label: 'Overview' },
+  { value: 'persona', label: 'Persona' },
+  { value: 'image', label: 'Image' },
+  { value: 'tools', label: 'Tools' },
+  { value: 'skills', label: 'Skills' },
   { value: 'triggers', label: 'Triggers' },
   { value: 'schedule', label: 'Schedule' },
-  { value: 'status', label: 'Status' },
 ] as const
 
 const TAB_VALUES: string[] = TABS.map((t) => t.value)
@@ -26,10 +35,12 @@ const TAB_VALUES: string[] = TABS.map((t) => t.value)
 export function AgentDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const tabParam = searchParams.get('tab')
-  const initialTab = tabParam && TAB_VALUES.includes(tabParam) ? tabParam : 'overview'
-  const [tab, setTab] = useState<string>(initialTab)
+  const tab = tabParam && TAB_VALUES.includes(tabParam) ? tabParam : 'overview'
+  const onTabChange = (next: string) => {
+    setSearchParams(next === 'overview' ? {} : { tab: next }, { replace: true })
+  }
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const { data, isLoading, error } = useAgent(id)
@@ -76,7 +87,7 @@ export function AgentDetail() {
         }
       />
       <div style={{ padding: '28px 32px' }}>
-        <Tabs value={tab} onChange={setTab} tabs={TABS} aria-label="Agent sections" />
+        <Tabs value={tab} onChange={onTabChange} tabs={TABS} aria-label="Agent sections" />
         <div style={{ marginTop: 24 }}>
           {isLoading ? <p className="label">Loading…</p> : null}
           {error ? (
@@ -100,9 +111,9 @@ export function AgentDetail() {
                     <div className="k">Image</div>
                     <div className="v">
                       {data.imageRef ? (
-                        <Link to={`/agent-images/${encodeURIComponent(data.imageRef.name)}`}>
+                        <Button variant="ghost" onClick={() => onTabChange('image')}>
                           {data.imageRef.displayName ?? data.imageRef.name}
-                        </Link>
+                        </Button>
                       ) : (
                         '—'
                       )}
@@ -114,30 +125,6 @@ export function AgentDetail() {
                 ) : null}
               </Panel>
 
-              {data.enabledTools && data.enabledTools.length > 0 ? (
-                <Panel title={`Enabled Tools · ${data.enabledTools.length}`} className="cropped">
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                    {data.enabledTools.map((t) => (
-                      <Tag key={t}>{t}</Tag>
-                    ))}
-                  </div>
-                </Panel>
-              ) : null}
-
-              {data.persona?.id ? <PersonaPanel personaId={data.persona.id} /> : null}
-            </div>
-          ) : null}
-
-          {data && tab === 'triggers' ? (
-            <AgentTriggers agentId={data.id} agentName={data.name} />
-          ) : null}
-
-          {data && tab === 'schedule' ? (
-            <AgentSchedules agentId={data.id} />
-          ) : null}
-
-          {data && tab === 'status' ? (
-            <>
               <Panel title="Runtime Status" className="cropped">
                 <div className="info-grid">
                   <div>
@@ -157,7 +144,40 @@ export function AgentDetail() {
                   </div>
                 </div>
               </Panel>
-            </>
+
+              {data.enabledTools && data.enabledTools.length > 0 ? (
+                <Panel title={`Enabled Tools · ${data.enabledTools.length}`} className="cropped">
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {data.enabledTools.map((t) => (
+                      <Tag key={t}>{t}</Tag>
+                    ))}
+                  </div>
+                </Panel>
+              ) : null}
+
+              {data.persona?.id ? (
+                <PersonaPanel
+                  personaId={data.persona.id}
+                  onConfigure={() => onTabChange('persona')}
+                />
+              ) : null}
+            </div>
+          ) : null}
+
+          {data && tab === 'persona' ? <AgentPersonaSection agent={data} /> : null}
+
+          {data && tab === 'image' ? <AgentImageSection agent={data} /> : null}
+
+          {data && tab === 'tools' ? <AgentToolsSection agent={data} /> : null}
+
+          {data && tab === 'skills' ? <AgentSkillsSection agent={data} /> : null}
+
+          {data && tab === 'triggers' ? (
+            <AgentTriggers agentId={data.id} agentName={data.name} />
+          ) : null}
+
+          {data && tab === 'schedule' ? (
+            <AgentSchedules agentId={data.id} />
           ) : null}
         </div>
       </div>
@@ -184,7 +204,13 @@ export function AgentDetail() {
   )
 }
 
-function PersonaPanel({ personaId }: { personaId: string }) {
+function PersonaPanel({
+  personaId,
+  onConfigure,
+}: {
+  personaId: string
+  onConfigure: () => void
+}) {
   const { data, isLoading, error } = usePersona(personaId)
 
   if (isLoading) {
@@ -217,9 +243,9 @@ function PersonaPanel({ personaId }: { personaId: string }) {
       ) : null}
       <Markdown source={preview} />
       <p style={{ marginTop: 12 }}>
-        <Link to={`/personas/${encodeURIComponent(data.id)}`}>
-          View full persona →
-        </Link>
+        <Button variant="ghost" onClick={onConfigure}>
+          Configure persona →
+        </Button>
       </p>
     </Panel>
   )

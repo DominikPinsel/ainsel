@@ -17,7 +17,6 @@ import (
 	"github.com/DominikPinsel/ainsel/services/hub/internal/mcpservers"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/personas"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/prometheus"
-	"github.com/DominikPinsel/ainsel/services/hub/internal/skills"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/tasklogs"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/triggers"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/usertokens"
@@ -65,7 +64,7 @@ type Server struct {
 	invocations            invocations.Store
 	mcp                    *mcpservers.Service
 	personas               *personas.Service
-	skills                 *skills.Service
+	skills                 SkillService
 	triggerStore           *triggers.Store
 	chat                   *chat.Store
 	taskLogs               *tasklogs.Store
@@ -173,7 +172,7 @@ type Config struct {
 }
 
 // New creates a new API server with routes registered.
-func New(c client.Client, namespace string, connectorCfg ConnectorConfig, promClient *prometheus.Client, invStore invocations.Store, mcp *mcpservers.Service, personaSvc *personas.Service, skillSvc *skills.Service, cfg *Config) *Server {
+func New(c client.Client, namespace string, connectorCfg ConnectorConfig, promClient *prometheus.Client, invStore invocations.Store, mcp *mcpservers.Service, personaSvc *personas.Service, skillSvc SkillService, cfg *Config) *Server {
 	s := &Server{client: c, mux: http.NewServeMux(), ns: namespace, connectorCfg: connectorCfg, prom: promClient, invocations: invStore, mcp: mcp, personas: personaSvc, skills: skillSvc}
 	s.wsHub = newWsHub()
 	s.observabilityCache = newPromCache(observabilityCacheTTL)

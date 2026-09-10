@@ -13,12 +13,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	ainselv1alpha1 "github.com/DominikPinsel/ainsel/shared/api/api/v1alpha1"
-
 )
 
 func findEnvVar(envs []corev1.EnvVar, name string) *corev1.EnvVar {
@@ -102,7 +102,7 @@ var _ = Describe("Agent Controller", func() {
 			err := k8sClient.Get(ctx, typeNamespacedName, resource)
 			if err == nil {
 				By("Cleanup the specific resource instance Agent")
-	Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
 			}
 
 			By("Cleanup the AgentImage fixture")
@@ -116,8 +116,8 @@ var _ = Describe("Agent Controller", func() {
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
 			controllerReconciler := &AgentReconciler{
-				Client:          k8sClient,
-				Scheme:          k8sClient.Scheme(),
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
@@ -262,8 +262,8 @@ var _ = Describe("Agent Controller", func() {
 
 			By("Triggering reconciliation")
 			controllerReconciler := &AgentReconciler{
-				Client:          k8sClient,
-				Scheme:          k8sClient.Scheme(),
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
 			}
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
@@ -342,8 +342,8 @@ var _ = Describe("Agent Controller", func() {
 
 			By("Triggering reconciliation")
 			controllerReconciler := &AgentReconciler{
-				Client:          k8sClient,
-				Scheme:          k8sClient.Scheme(),
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
 			}
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
@@ -371,8 +371,8 @@ var _ = Describe("Agent Controller", func() {
 		It("should reflect the Deployment's ReadyReplicas in Agent status.replicas", func() {
 			By("Initial reconciliation creates the Deployment")
 			controllerReconciler := &AgentReconciler{
-				Client:          k8sClient,
-				Scheme:          k8sClient.Scheme(),
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
@@ -433,8 +433,8 @@ var _ = Describe("Agent Controller", func() {
 			Expect(k8sClient.Update(ctx, agent)).To(Succeed())
 
 			controllerReconciler := &AgentReconciler{
-				Client:          k8sClient,
-				Scheme:          k8sClient.Scheme(),
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
@@ -455,8 +455,8 @@ var _ = Describe("Agent Controller", func() {
 
 		It("should default to 1 replica when scaling is nil", func() {
 			controllerReconciler := &AgentReconciler{
-				Client:          k8sClient,
-				Scheme:          k8sClient.Scheme(),
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
@@ -499,8 +499,8 @@ var _ = Describe("Agent Controller", func() {
 
 			By("Reconciling")
 			controllerReconciler := &AgentReconciler{
-				Client:          k8sClient,
-				Scheme:          k8sClient.Scheme(),
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
 			}
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
@@ -525,8 +525,8 @@ var _ = Describe("Agent Controller", func() {
 
 			By("Reconciling")
 			controllerReconciler := &AgentReconciler{
-				Client:          k8sClient,
-				Scheme:          k8sClient.Scheme(),
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
 			}
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
@@ -556,8 +556,8 @@ var _ = Describe("Agent Controller", func() {
 
 			By("Reconciling")
 			controllerReconciler := &AgentReconciler{
-				Client:          k8sClient,
-				Scheme:          k8sClient.Scheme(),
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
 			}
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
@@ -601,8 +601,8 @@ var _ = Describe("Agent Controller", func() {
 
 			By("Reconciling")
 			controllerReconciler := &AgentReconciler{
-				Client:          k8sClient,
-				Scheme:          k8sClient.Scheme(),
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
 			}
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
@@ -626,8 +626,8 @@ var _ = Describe("Agent Controller", func() {
 
 			By("Reconciling")
 			controllerReconciler := &AgentReconciler{
-				Client:          k8sClient,
-				Scheme:          k8sClient.Scheme(),
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
 			}
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
@@ -665,8 +665,8 @@ var _ = Describe("Agent Controller", func() {
 		It("should omit the ainsel block from models.json when spec.llm.temperature is unset", func() {
 			By("Reconciling without touching spec.llm.temperature")
 			controllerReconciler := &AgentReconciler{
-				Client:          k8sClient,
-				Scheme:          k8sClient.Scheme(),
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
 			}
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
@@ -694,8 +694,8 @@ var _ = Describe("Agent Controller", func() {
 
 			By("Reconciling")
 			controllerReconciler := &AgentReconciler{
-				Client:          k8sClient,
-				Scheme:          k8sClient.Scheme(),
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
 			}
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
@@ -765,8 +765,8 @@ var _ = Describe("Agent Controller", func() {
 			Expect(k8sClient.Update(ctx, agent)).To(Succeed())
 
 			controllerReconciler := &AgentReconciler{
-				Client:          k8sClient,
-				Scheme:          k8sClient.Scheme(),
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
 			}
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
@@ -820,8 +820,8 @@ var _ = Describe("Agent Controller", func() {
 			Expect(k8sClient.Update(ctx, img)).To(Succeed())
 
 			controllerReconciler := &AgentReconciler{
-				Client:          k8sClient,
-				Scheme:          k8sClient.Scheme(),
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
@@ -954,8 +954,8 @@ var _ = Describe("Agent Controller", func() {
 			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
 
 			controllerReconciler := &AgentReconciler{
-				Client:          k8sClient,
-				Scheme:          k8sClient.Scheme(),
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
@@ -993,8 +993,8 @@ var _ = Describe("Agent Controller", func() {
 			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
 
 			controllerReconciler := &AgentReconciler{
-				Client:          k8sClient,
-				Scheme:          k8sClient.Scheme(),
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
@@ -1025,8 +1025,8 @@ var _ = Describe("Agent Controller", func() {
 
 			By("Reconciling")
 			controllerReconciler := &AgentReconciler{
-				Client:          k8sClient,
-				Scheme:          k8sClient.Scheme(),
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
 			}
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
@@ -1058,8 +1058,8 @@ var _ = Describe("Agent Controller", func() {
 
 			By("Reconciling")
 			controllerReconciler := &AgentReconciler{
-				Client:          k8sClient,
-				Scheme:          k8sClient.Scheme(),
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
 			}
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
@@ -1091,8 +1091,8 @@ var _ = Describe("Agent Controller", func() {
 
 			By("Reconciling")
 			controllerReconciler := &AgentReconciler{
-				Client:          k8sClient,
-				Scheme:          k8sClient.Scheme(),
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
 			}
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
@@ -1135,8 +1135,8 @@ var _ = Describe("Agent Controller", func() {
 
 			By("Reconciling")
 			controllerReconciler := &AgentReconciler{
-				Client:          k8sClient,
-				Scheme:          k8sClient.Scheme(),
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
 			}
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
@@ -1165,8 +1165,8 @@ var _ = Describe("Agent Controller", func() {
 
 			By("Reconciling to get the initial hash")
 			controllerReconciler := &AgentReconciler{
-				Client:          k8sClient,
-				Scheme:          k8sClient.Scheme(),
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
 			}
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
@@ -1245,8 +1245,8 @@ var _ = Describe("Agent Controller", func() {
 
 			By("Reconciling")
 			controllerReconciler := &AgentReconciler{
-				Client:          k8sClient,
-				Scheme:          k8sClient.Scheme(),
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
 			}
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
@@ -1280,8 +1280,8 @@ var _ = Describe("Agent Controller", func() {
 
 			By("Reconciling to get the initial hash")
 			controllerReconciler := &AgentReconciler{
-				Client:          k8sClient,
-				Scheme:          k8sClient.Scheme(),
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
 			}
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
@@ -1471,8 +1471,8 @@ var _ = Describe("Agent Controller", func() {
 			Expect(k8sClient.Update(ctx, img)).To(Succeed())
 
 			controllerReconciler := &AgentReconciler{
-				Client:          k8sClient,
-				Scheme:          k8sClient.Scheme(),
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
 			}
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
@@ -1507,6 +1507,83 @@ var _ = Describe("Agent Controller", func() {
 			Expect(setupCmd).To(ContainSubstring("cp -r /var/agent-skills/. /home/agent/.pi/agent/skills/"))
 		})
 
+		// updateSkillsWithRetry updates spec.skills on the test agent,
+		// retrying on optimistic-lock conflicts (the suite's manager writes
+		// agent status concurrently).
+		updateSkillsWithRetry := func(skills *ainselv1alpha1.AgentSkills) error {
+			return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+				agent := &ainselv1alpha1.Agent{}
+				if err := k8sClient.Get(ctx, typeNamespacedName, agent); err != nil {
+					return err
+				}
+				agent.Spec.Skills = skills
+				return k8sClient.Update(ctx, agent)
+			})
+		}
+
+		It("should mount the agent's own skill selection when spec.skills is set", func() {
+			By("Enabling a skill on the image, then overriding the selection on the agent")
+			img := &ainselv1alpha1.AgentImage{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testImageName, Namespace: "default"}, img)).To(Succeed())
+			img.Spec.EnabledSkills = []string{"git-review"}
+			Expect(k8sClient.Update(ctx, img)).To(Succeed())
+
+			Expect(updateSkillsWithRetry(&ainselv1alpha1.AgentSkills{Items: []string{"bash-advanced"}})).To(Succeed())
+			controllerReconciler := &AgentReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying the agent's list wins entirely (no merge with the image)")
+			deploy := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      "agent-" + resourceName,
+				Namespace: "default",
+			}, deploy)).To(Succeed())
+
+			var skillsVol *corev1.Volume
+			for i := range deploy.Spec.Template.Spec.Volumes {
+				if deploy.Spec.Template.Spec.Volumes[i].Name == "agent-skills" {
+					skillsVol = &deploy.Spec.Template.Spec.Volumes[i]
+					break
+				}
+			}
+			Expect(skillsVol).NotTo(BeNil(), "skills volume must be present")
+			Expect(skillsVol.ConfigMap.Items).To(ConsistOf(
+				corev1.KeyToPath{Key: "bash-advanced", Path: "bash-advanced/SKILL.md"},
+			))
+		})
+
+		It("should mount no skills when spec.skills is explicitly empty", func() {
+			By("Overriding an image skill with an explicit empty agent selection")
+			img := &ainselv1alpha1.AgentImage{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testImageName, Namespace: "default"}, img)).To(Succeed())
+			img.Spec.EnabledSkills = []string{"git-review"}
+			Expect(k8sClient.Update(ctx, img)).To(Succeed())
+
+			Expect(updateSkillsWithRetry(&ainselv1alpha1.AgentSkills{Items: []string{}})).To(Succeed())
+			controllerReconciler := &AgentReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			deploy := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      "agent-" + resourceName,
+				Namespace: "default",
+			}, deploy)).To(Succeed())
+
+			for i := range deploy.Spec.Template.Spec.Volumes {
+				Expect(deploy.Spec.Template.Spec.Volumes[i].Name).NotTo(
+					Equal("agent-skills"), "explicit empty selection must not mount the skills volume",
+				)
+			}
+		})
+
 		It("should stamp a skill-hash annotation on the Deployment pod template", func() {
 			By("Creating the shared skills ConfigMap")
 			skillsCM := &corev1.ConfigMap{
@@ -1528,8 +1605,8 @@ var _ = Describe("Agent Controller", func() {
 			Expect(k8sClient.Update(ctx, img)).To(Succeed())
 
 			controllerReconciler := &AgentReconciler{
-				Client:          k8sClient,
-				Scheme:          k8sClient.Scheme(),
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
 			}
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
@@ -1567,8 +1644,8 @@ var _ = Describe("Agent Controller", func() {
 			Expect(k8sClient.Update(ctx, img)).To(Succeed())
 
 			controllerReconciler := &AgentReconciler{
-				Client:          k8sClient,
-				Scheme:          k8sClient.Scheme(),
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
 			}
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
@@ -1618,9 +1695,9 @@ var _ = Describe("Agent Controller", func() {
 
 			By("Reconciling")
 			controllerReconciler := &AgentReconciler{
-				Client:          k8sClient,
-				Scheme:          k8sClient.Scheme(),
-				Recorder:        fakeRecorder,
+				Client:   k8sClient,
+				Scheme:   k8sClient.Scheme(),
+				Recorder: fakeRecorder,
 			}
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
@@ -1667,9 +1744,9 @@ var _ = Describe("Agent Controller", func() {
 			By("Reconciling again to clear the Degraded condition")
 			fakeRecorder2 := record.NewFakeRecorder(10)
 			controllerReconciler2 := &AgentReconciler{
-				Client:          k8sClient,
-				Scheme:          k8sClient.Scheme(),
-				Recorder:        fakeRecorder2,
+				Client:   k8sClient,
+				Scheme:   k8sClient.Scheme(),
+				Recorder: fakeRecorder2,
 			}
 			_, err = controllerReconciler2.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())

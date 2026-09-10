@@ -54,12 +54,18 @@ List all Agents in the configured namespace, sorted by resource name.
       "enabledTools": ["read", "edit"],
       "scaling": {"minReplicas": 0, "maxReplicas": 3},
       "memory": {"enabled": true, "provider": "example"},
-      "status": {"ready": true, "replicas": 1}
+      "status": {"ready": true, "replicas": 1},
+      "skills": {"items": ["git-review"]},
+      "updatedAt": "2026-06-22T00:05:00Z"
     }
   ],
   "total": 1, "page": 1, "pageSize": 50, "totalPages": 1
 }
 ```
+
+Agents carry an `updatedAt` timestamp (RFC3339) in both list and detail responses. The hub stamps it on every create/update via the `ainsel.dev/updated-at` annotation; for agents that predate the annotation it falls back to the resource creation time.
+
+Agents also carry an agent-scoped skill selection in `skills`: **present = explicit override** (`{"items": []}` means no skills at all), **absent = inherit** the referenced image's `enabledSkills` (legacy behavior). Every id must exist in the skill library (`/skills`); unknown ids are rejected with `400`. Once set, the selection is explicit — the API does not currently offer a reset-to-inherit.
 
 ### POST /api/v1/agents
 

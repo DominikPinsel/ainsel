@@ -98,7 +98,7 @@ Each variant extends the base `ainsel-pi` image.
 
 ```bash
 # Base image.
-docker build --build-arg TOOLS_TAG=main -t ainsel/ainsel-pi:dev .
+docker build -t ainsel/ainsel-pi:dev .
 
 # Go variant (must have the base image already pushed to the registry).
 docker build --build-arg BASE_TAG=dev -t ainsel/ainsel-pi-go:1.24-dev -f pi/Dockerfile.go pi/

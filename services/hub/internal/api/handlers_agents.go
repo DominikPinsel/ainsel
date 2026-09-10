@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	agentv1alpha1 "github.com/DominikPinsel/ainsel/shared/api/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
@@ -23,6 +24,13 @@ type AgentImageRefInfo struct {
 	DisplayName string `json:"displayName,omitempty"`
 }
 
+// AgentSkillsInfo is the API representation of the agent-scoped skill
+// selection: present = explicit override (empty items = no skills),
+// absent = inherit the referenced image's enabledSkills.
+type AgentSkillsInfo struct {
+	Items []string `json:"items"`
+}
+
 // SimpleAgentResponse is the simplified API representation of an Agent.
 type SimpleAgentResponse struct {
 	ID             string                   `json:"id"`
@@ -32,6 +40,7 @@ type SimpleAgentResponse struct {
 	LLM            AgentLLMInfo             `json:"llm"`
 	Persona        *AgentPersonaInfo        `json:"persona,omitempty"`
 	EnabledTools   []string                 `json:"enabledTools,omitempty"`
+	Skills         *AgentSkillsInfo         `json:"skills,omitempty"`
 	Replicas       *int32                   `json:"replicas,omitempty"`
 	Memory         *AgentMemoryInfo         `json:"memory,omitempty"`
 	OllamaCloud    *AgentOllamaCloudInfo    `json:"ollamaCloud,omitempty"`
@@ -39,6 +48,7 @@ type SimpleAgentResponse struct {
 	AlibabaCloud   *AgentAlibabaCloudInfo   `json:"alibabaCloud,omitempty"`
 	CustomProvider *AgentCustomProviderInfo `json:"customProvider,omitempty"`
 	Status         *SimpleAgentStatus       `json:"status,omitempty"`
+	UpdatedAt      string                   `json:"updatedAt,omitempty"`
 }
 
 type AgentLLMInfo struct {
@@ -100,6 +110,7 @@ type SimpleAgentCreateRequest struct {
 	LLM            AgentLLMInfo             `json:"llm"`
 	Persona        *AgentPersonaInfo        `json:"persona,omitempty"`
 	EnabledTools   []string                 `json:"enabledTools,omitempty"`
+	Skills         *AgentSkillsInfo         `json:"skills,omitempty"`
 	Replicas       *int32                   `json:"replicas,omitempty"`
 	Memory         *AgentMemoryInfo         `json:"memory,omitempty"`
 	OllamaCloud    *AgentOllamaCloudInfo    `json:"ollamaCloud,omitempty"`
@@ -116,12 +127,31 @@ type SimpleAgentUpdateRequest struct {
 	LLM            *AgentLLMInfo            `json:"llm,omitempty"`
 	Persona        *AgentPersonaInfo        `json:"persona,omitempty"`
 	EnabledTools   *[]string                `json:"enabledTools,omitempty"`
+	Skills         *AgentSkillsInfo         `json:"skills,omitempty"`
 	Replicas       *int32                   `json:"replicas,omitempty"`
 	Memory         *AgentMemoryInfo         `json:"memory,omitempty"`
 	OllamaCloud    *AgentOllamaCloudInfo    `json:"ollamaCloud,omitempty"`
 	OpenCode       *AgentOpenCodeInfo       `json:"openCode,omitempty"`
 	AlibabaCloud   *AgentAlibabaCloudInfo   `json:"alibabaCloud,omitempty"`
 	CustomProvider *AgentCustomProviderInfo `json:"customProvider,omitempty"`
+}
+
+// AgentUpdatedAtAnnotation is stamped by the hub on every agent write so the
+// API can expose a meaningful updatedAt for "recently updated" UIs.
+// Kubernetes objects carry no spec-change timestamp of their own, and all
+// user-driven updates flow through the hub, so the hub is the right place to
+// track it. A missing annotation falls back to the creation timestamp.
+const AgentUpdatedAtAnnotation = "ainsel.dev/updated-at"
+
+func stampAgentUpdatedAt() string {
+	return time.Now().UTC().Truncate(time.Second).Format(time.RFC3339)
+}
+
+func agentUpdatedAt(a agentv1alpha1.Agent) string {
+	if v, ok := a.Annotations[AgentUpdatedAtAnnotation]; ok {
+		return v
+	}
+	return a.CreationTimestamp.UTC().Truncate(time.Second).Format(time.RFC3339)
 }
 
 func toSimpleAgentResponse(a agentv1alpha1.Agent, imageDisplayName string) SimpleAgentResponse {
@@ -137,10 +167,16 @@ func toSimpleAgentResponse(a agentv1alpha1.Agent, imageDisplayName string) Simpl
 			Temperature: a.Spec.LLM.Temperature,
 		},
 		EnabledTools: a.Spec.EnabledTools,
+		UpdatedAt:   agentUpdatedAt(a),
 	}
 
 	if a.Spec.Persona.ID != "" {
 		resp.Persona = &AgentPersonaInfo{ID: a.Spec.Persona.ID}
+	}
+
+	// Skills: nil = inherit from the image (legacy), present = explicit.
+	if a.Spec.Skills != nil {
+		resp.Skills = &AgentSkillsInfo{Items: a.Spec.Skills.Items}
 	}
 
 	// Replicas
@@ -420,12 +456,21 @@ func (s *Server) createAgent(ctx context.Context, w http.ResponseWriter, r *http
 		}
 	}
 
+	if req.Skills != nil {
+		if err := s.validateEnabledSkills(ctx, w, req.Skills.Items); err != nil {
+			return
+		}
+	}
+
 	id := generateID("a")
 
 	agent := agentv1alpha1.Agent{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      id,
 			Namespace: s.ns,
+			Annotations: map[string]string{
+				AgentUpdatedAtAnnotation: stampAgentUpdatedAt(),
+			},
 		},
 	}
 	agent.APIVersion = "ainsel.dev/v1alpha1"
@@ -445,6 +490,11 @@ func (s *Server) createAgent(ctx context.Context, w http.ResponseWriter, r *http
 		agent.Spec.Persona = agentv1alpha1.AgentPersona{
 			ID: req.Persona.ID,
 		}
+	}
+	if req.Skills != nil {
+		items := make([]string, len(req.Skills.Items))
+		copy(items, req.Skills.Items)
+		agent.Spec.Skills = &agentv1alpha1.AgentSkills{Items: items}
 	}
 	if req.Replicas != nil {
 		agent.Spec.Scaling = &agentv1alpha1.AgentScaling{
@@ -616,6 +666,12 @@ func (s *Server) updateAgent(ctx context.Context, w http.ResponseWriter, r *http
 		}
 	}
 
+	if req.Skills != nil {
+		if err := s.validateEnabledSkills(ctx, w, req.Skills.Items); err != nil {
+			return
+		}
+	}
+
 	if req.Name != nil {
 		existing.Spec.DisplayName = *req.Name
 	}
@@ -627,6 +683,11 @@ func (s *Server) updateAgent(ctx context.Context, w http.ResponseWriter, r *http
 	}
 	if req.EnabledTools != nil {
 		existing.Spec.EnabledTools = *req.EnabledTools
+	}
+	if req.Skills != nil {
+		items := make([]string, len(req.Skills.Items))
+		copy(items, req.Skills.Items)
+		existing.Spec.Skills = &agentv1alpha1.AgentSkills{Items: items}
 	}
 	if req.LLM != nil {
 		if req.LLM.Model != "" {
@@ -800,6 +861,13 @@ func (s *Server) updateAgent(ctx context.Context, w http.ResponseWriter, r *http
 			}
 		}
 	}
+
+	// Stamp the hub-managed updated-at annotation so the list API can surface
+	// recently updated agents.
+	if existing.Annotations == nil {
+		existing.Annotations = map[string]string{}
+	}
+	existing.Annotations[AgentUpdatedAtAnnotation] = stampAgentUpdatedAt()
 
 	if err := s.client.Update(ctx, &existing); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

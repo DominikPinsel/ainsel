@@ -5,6 +5,9 @@ import type { Paginated } from './types'
 export type AgentLLM = { model: string; provider?: string; maxTurns?: number; temperature?: number }
 export type AgentPersona = { id: string }
 export type AgentImageRef = { name: string; displayName?: string }
+/** Agent-scoped skill selection: present = explicit override (empty items
+ *  = no skills), absent = inherit the runtime image's enabledSkills. */
+export type AgentSkills = { items: string[] }
 export type AgentOllamaCloud = { apiKey?: string }
 export type AgentOpenCode = { apiKey?: string }
 export type AgentAlibabaCloud = { apiKey?: string }
@@ -19,12 +22,16 @@ export type AgentSummary = {
   persona?: AgentPersona
   replicas?: number
   status?: { ready: boolean; replicas?: number }
+  /** RFC3339 timestamp of the last hub-mediated write (falls back to
+   *  creation time for agents that predate the annotation). */
+  updatedAt?: string
 }
 
 export type AgentResponse = AgentSummary & {
   llm?: AgentLLM
   persona?: AgentPersona
   enabledTools?: string[]
+  skills?: AgentSkills
   ollamaCloud?: AgentOllamaCloud
   openCode?: AgentOpenCode
   alibabaCloud?: AgentAlibabaCloud

@@ -41,16 +41,104 @@ function defaultFetch(url: string, init?: RequestInit): Response {
       { status: 200 },
     )
   }
-  if (url.match(/\/api\/v1\/personas\/01HXTEST00000000000000000$/)) {
+  const personaMatch = url.match(/\/api\/v1\/personas\/([^/?]+)$/)
+  if (personaMatch) {
+    const id = personaMatch[1]
+    const alt = id.endsWith('1')
     return new Response(
       JSON.stringify({
-        id: '01HXTEST00000000000000000',
-        name: 'docs-writer',
+        id,
+        name: alt ? 'ops-triager' : 'docs-writer',
         description: 'docs persona',
         currentVersion: 1,
-        text: '# Persona\n\nYou are a docs writer.',
+        text: alt
+          ? '# Persona\n\nYou triage issues.'
+          : '# Persona\n\nYou are a docs writer.',
         createdAt: '2026-05-01T00:00:00Z',
         updatedAt: '2026-05-01T00:00:00Z',
+      }),
+      { status: 200 },
+    )
+  }
+  if (url.includes('/personas')) {
+    return new Response(
+      JSON.stringify({
+        items: [
+          {
+            id: '01HXTEST00000000000000000',
+            name: 'docs-writer',
+            description: 'docs persona',
+            currentVersion: 1,
+            createdAt: '2026-05-01T00:00:00Z',
+            updatedAt: '2026-05-01T00:00:00Z',
+          },
+          {
+            id: '01HXTEST00000000000000001',
+            name: 'ops-triager',
+            description: 'triage persona',
+            currentVersion: 1,
+            createdAt: '2026-05-01T00:00:00Z',
+            updatedAt: '2026-05-01T00:00:00Z',
+          },
+        ],
+        total: 2,
+        page: 1,
+        pageSize: 200,
+        totalPages: 1,
+      }),
+      { status: 200 },
+    )
+  }
+  if (url.includes('/agent-images/claude-tooling-base')) {
+    return new Response(
+      JSON.stringify({
+        id: 'claude-tooling-base:1.4',
+        displayName: 'Claude Tooling Base',
+        description: 'Base tooling image',
+        imageURL: 'ghcr.io/ainsel/claude-tooling:1.4',
+        tools: [
+          { name: 'read_file', kind: 'shell' },
+          { name: 'run_shell', kind: 'shell' },
+        ],
+        env: [],
+        mcpServers: [],
+        enabledSkills: [],
+      }),
+      { status: 200 },
+    )
+  }
+  if (url.includes('/skills')) {
+    return new Response(
+      JSON.stringify({ items: [], total: 0, page: 1, pageSize: 200, totalPages: 0 }),
+      { status: 200 },
+    )
+  }
+  if (url.includes('/mcp-servers')) {
+    return new Response(JSON.stringify([]), { status: 200 })
+  }
+  if (url.includes('/agent-images')) {
+    return new Response(
+      JSON.stringify({
+        items: [
+          {
+            id: 'claude-tooling-base:1.4',
+            displayName: 'Claude Tooling Base',
+            imageURL: 'ghcr.io/ainsel/claude-tooling:1.4',
+            toolCount: 2,
+            enabledSkills: [],
+          },
+          {
+            id: 'minimal:1.0',
+            displayName: 'Minimal',
+            imageURL: 'ghcr.io/ainsel/minimal:1.0',
+            toolCount: 0,
+            enabledSkills: [],
+          },
+        ],
+        total: 2,
+        page: 1,
+        pageSize: 200,
+        totalPages: 1,
       }),
       { status: 200 },
     )
@@ -112,7 +200,7 @@ describe('AgentDetail', () => {
     expect(screen.getByText('run_shell')).toBeInTheDocument()
   })
 
-  it('renders persona panel with name, markdown, and view-full link', async () => {
+  it('renders persona panel with name, markdown, and configure button', async () => {
     const { container } = renderWithProviders(
       <Routes>
         <Route path="/agents/:id" element={<AgentDetail />} />
@@ -123,8 +211,216 @@ describe('AgentDetail', () => {
     expect(container.querySelector('.md-body h1')?.textContent).toBe('Persona')
     expect(screen.getByText(/persona · docs-writer/i)).toBeInTheDocument()
     expect(screen.getByText(/docs persona/)).toBeInTheDocument()
-    const link = screen.getByRole('link', { name: /view full persona/i })
-    expect(link).toHaveAttribute('href', '/personas/01HXTEST00000000000000000')
+    expect(
+      screen.getByRole('button', { name: /configure persona/i }),
+    ).toBeInTheDocument()
+  })
+
+  it('opens the Persona tab from the overview button, loads the editor, and switches personas', async () => {
+    const putCalls: Array<{ url: string; body?: string }> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) => {
+        if (init?.method === 'PUT') {
+          putCalls.push({ url, body: init.body ? String(init.body) : undefined })
+        }
+        return Promise.resolve(defaultFetch(url, init))
+      }),
+    )
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/agents/:id" element={<AgentDetail />} />
+      </Routes>,
+      { route: '/agents/a1' },
+    )
+    await screen.findAllByText('doc-writer')
+    await userEvent.click(
+      await screen.findByRole('button', { name: /configure persona/i }),
+    )
+
+    // The editor loads the linked persona's content.
+    const text = await screen.findByLabelText('Persona Text')
+    expect((text as HTMLTextAreaElement).value).toContain('You are a docs writer.')
+    expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('docs-writer')
+
+    // Switching the linked persona patches the agent with the new reference.
+    await userEvent.selectOptions(
+      screen.getByLabelText('Linked persona'),
+      '01HXTEST00000000000000001',
+    )
+    await waitFor(() => {
+      const call = putCalls.find((c) => c.url.includes('/api/v1/agents/a1'))
+      expect(call).toBeDefined()
+      expect(JSON.parse(call!.body!)).toEqual({
+        name: 'doc-writer',
+        persona: { id: '01HXTEST00000000000000001' },
+      })
+    })
+  })
+
+  it('opens the Image tab with image identity and env, and switches images', async () => {
+    const putCalls: Array<{ url: string; body?: string }> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) => {
+        if (init?.method === 'PUT') {
+          putCalls.push({ url, body: init.body ? String(init.body) : undefined })
+        }
+        return Promise.resolve(defaultFetch(url, init))
+      }),
+    )
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/agents/:id" element={<AgentDetail />} />
+      </Routes>,
+      { route: '/agents/a1' },
+    )
+    await screen.findAllByText('doc-writer')
+    await userEvent.click(screen.getByRole('tab', { name: /^image$/i }))
+
+    // The embedded editor loads the referenced image's identity and env.
+    const urlInput = await screen.findByLabelText('Image URL')
+    await waitFor(() =>
+      expect(urlInput).toHaveValue('ghcr.io/ainsel/claude-tooling:1.4'),
+    )
+    expect(
+      screen.getByRole('heading', { name: 'Environment Variables' }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^save$/i })).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /^cancel$/i }),
+    ).not.toBeInTheDocument()
+
+    // No tools-side or skills sections leak onto this tab.
+    expect(
+      screen.queryByRole('heading', { name: 'MCP Servers' }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('heading', { name: 'Skills' }),
+    ).not.toBeInTheDocument()
+
+    // Switching the image patches the agent with the new reference.
+    await userEvent.selectOptions(screen.getByLabelText('Agent image'), 'minimal:1.0')
+    await waitFor(() => {
+      const call = putCalls.find((c) => c.url.includes('/api/v1/agents/a1'))
+      expect(call).toBeDefined()
+      expect(JSON.parse(call!.body!)).toEqual({
+        name: 'doc-writer',
+        imageRef: { name: 'minimal:1.0' },
+      })
+    })
+  })
+
+  it('opens the Tools tab with only the tools side of the image', async () => {
+    renderWithProviders(
+      <Routes>
+        <Route path="/agents/:id" element={<AgentDetail />} />
+      </Routes>,
+      { route: '/agents/a1' },
+    )
+    await screen.findAllByText('doc-writer')
+    await userEvent.click(screen.getByRole('tab', { name: /^tools$/i }))
+
+    // MCP servers and the tool list render for the referenced image.
+    expect(
+      await screen.findByRole('heading', { name: 'MCP Servers' }),
+    ).toBeInTheDocument()
+    expect((await screen.findAllByText('read_file')).length).toBeGreaterThan(0)
+    expect(screen.getByRole('button', { name: /^save$/i })).toBeInTheDocument()
+
+    // No image-side, skills, or picker sections on this tab.
+    expect(screen.queryByLabelText('Image URL')).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('heading', { name: 'Environment Variables' }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('heading', { name: 'Skills' }),
+    ).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Agent image')).not.toBeInTheDocument()
+  })
+
+  it('opens the Skills tab as an agent-scoped selection and pins it on change', async () => {
+    const putCalls: Array<{ url: string; body?: string }> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) => {
+        if (init?.method === 'PUT') {
+          putCalls.push({ url, body: init.body ? String(init.body) : undefined })
+        }
+        if (url.includes('/skills?') || url.includes('/skills')) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                items: [
+                  {
+                    id: 'skill-pr',
+                    name: 'PR Review',
+                    description: 'Review pull requests',
+                  },
+                  {
+                    id: 'skill-triage',
+                    name: 'Issue Triage',
+                    description: 'Triage issues',
+                  },
+                ],
+                total: 2,
+                page: 1,
+                pageSize: 200,
+                totalPages: 1,
+              }),
+              { status: 200 },
+            ),
+          )
+        }
+        return Promise.resolve(defaultFetch(url, init))
+      }),
+    )
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/agents/:id" element={<AgentDetail />} />
+      </Routes>,
+      { route: '/agents/a1' },
+    )
+    await screen.findAllByText('doc-writer')
+    await userEvent.click(screen.getByRole('tab', { name: /^skills$/i }))
+
+    // The agent-scoped picker renders with agent wording, and the
+    // inherit-from-image hint shows while spec.skills is unset.
+    expect(
+      await screen.findByRole('button', {
+        name: /add selected to enabled on this agent/i,
+      }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: /pr review/i })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: /issue triage/i })).toBeInTheDocument()
+    expect(
+      screen.getByText(/inherited from the runtime image/i),
+    ).toBeInTheDocument()
+
+    // No image-side sections leak onto this tab, and no embedded form save:
+    // the picker PUTs the agent directly.
+    expect(screen.queryByLabelText('Image URL')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^save$/i })).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('heading', { name: 'MCP Servers' }),
+    ).not.toBeInTheDocument()
+
+    // Enabling a skill pins the selection to the agent.
+    await userEvent.click(screen.getByRole('option', { name: /pr review/i }))
+    await userEvent.click(
+      screen.getByRole('button', { name: /add selected to enabled on this agent/i }),
+    )
+    await waitFor(() => {
+      const call = putCalls.find((c) => c.url.includes('/api/v1/agents/a1'))
+      expect(call).toBeDefined()
+      expect(JSON.parse(call!.body!)).toEqual({
+        name: 'doc-writer',
+        skills: { items: ['skill-pr'] },
+      })
+    })
   })
 
   it('shows the Triggers tab and renders the agent triggers panel', async () => {
@@ -153,7 +449,7 @@ describe('AgentDetail', () => {
     expect(screen.queryByRole('button', { name: /access/i })).not.toBeInTheDocument()
   })
 
-  it('switches to status tab and shows runtime stats and Access card', async () => {
+  it('shows runtime stats on the overview tab and no separate Status tab', async () => {
     renderWithProviders(
       <Routes>
         <Route path="/agents/:id" element={<AgentDetail />} />
@@ -161,9 +457,11 @@ describe('AgentDetail', () => {
       { route: '/agents/a1' },
     )
     await screen.findByText('claude-opus-4-7')
-    await userEvent.click(screen.getByRole('tab', { name: 'Status' }))
-    expect(await screen.findByText('Runtime Status')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Runtime Status' })).toBeInTheDocument()
     expect(screen.getByText('Configured Replicas')).toBeInTheDocument()
+    expect(
+      screen.queryByRole('tab', { name: /^status$/i }),
+    ).not.toBeInTheDocument()
   })
 
   it('opens the Triggers tab directly via the ?tab=triggers deep link', async () => {

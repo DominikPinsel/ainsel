@@ -14,6 +14,12 @@ type AgentSpec struct {
 	LLM          AgentLLM      `json:"llm"`
 	Persona      AgentPersona  `json:"persona"`
 	EnabledTools []string      `json:"enabledTools,omitempty"`
+	// Skills explicitly selects the skill library entries this agent mounts.
+	// When nil, the agent inherits the referenced image's EnabledSkills
+	// (legacy behavior); once set, the agent's list replaces the image's —
+	// an empty Items means no skills.
+	// +optional
+	Skills *AgentSkills `json:"skills,omitempty"`
 	// EnabledMCPs lists the names of MCPServer registry entries this agent
 	// should connect to at runtime. Names refer to MCPServer rows managed
 	// by the hub backend; the agent operator injects URLs into the agent
@@ -30,6 +36,16 @@ type AgentSpec struct {
 // AgentImageRef references an AgentImage by metadata name in the same namespace.
 type AgentImageRef struct {
 	Name string `json:"name"`
+}
+
+// AgentSkills is the agent-scoped skill selection. The wrapper makes the
+// distinction between "not configured" (nil = inherit the referenced
+// image's EnabledSkills) and "explicitly empty" (Items: [] = no skills)
+// representable in the CR — a bare []string could not.
+type AgentSkills struct {
+	// Items lists skill library ids (hub /skills API) to mount for this agent.
+	// +optional
+	Items []string `json:"items"`
 }
 
 // AgentRuntime holds operator-managed runtime configuration for the agent pod.

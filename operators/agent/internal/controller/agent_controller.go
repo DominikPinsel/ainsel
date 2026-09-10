@@ -309,7 +309,6 @@ func resolvePiProvider(agent *ainselv1alpha1.Agent) piProviderConfig {
 	}
 }
 
-
 // resolveHubURL returns the hub backend REST API URL that MCP sidecars
 // (e.g. the chat-mcp sidecar) use to proxy requests back to the hub. The
 // operator reads HUB_URL from its own environment; the chart injects it
@@ -485,9 +484,10 @@ func (r *AgentReconciler) reconcileDeployment(ctx context.Context, agent *ainsel
 		{Name: "pi-home", MountPath: "/home/agent/.pi/agent"},
 		{Name: "pi-models", MountPath: "/var/pi-models", ReadOnly: true},
 	}
-	if len(img.Spec.EnabledSkills) > 0 {
-		skillItems := make([]corev1.KeyToPath, 0, len(img.Spec.EnabledSkills))
-		for _, id := range img.Spec.EnabledSkills {
+	skills := effectiveSkills(agent, img)
+	if len(skills) > 0 {
+		skillItems := make([]corev1.KeyToPath, 0, len(skills))
+		for _, id := range skills {
 			skillItems = append(skillItems, corev1.KeyToPath{
 				Key:  id,
 				Path: id + "/SKILL.md",
@@ -970,7 +970,7 @@ func (r *AgentReconciler) reconcileDeployment(ctx context.Context, agent *ainsel
 		// annotate the pod template. When the hub updates a skill, the hash
 		// changes, which causes Kubernetes to perform a rolling restart
 		// automatically so the agent picks up the new skill content.
-		if len(img.Spec.EnabledSkills) > 0 {
+		if len(effectiveSkills(agent, img)) > 0 {
 			skillHash, err := r.computeSkillsHash(ctx, agent.Namespace)
 			if err != nil {
 				return fmt.Errorf("computing skill hash: %w", err)
@@ -1407,6 +1407,16 @@ func (r *AgentReconciler) computePersonaHash(ctx context.Context, namespace, per
 	return fmt.Sprintf("sha256:%x", h.Sum(nil)), nil
 }
 
+// effectiveSkills returns the skill ids an agent mounts: the agent's own
+// spec.skills when set (an explicit override, possibly empty), otherwise
+// the referenced image's EnabledSkills (legacy behavior).
+func effectiveSkills(agent *ainselv1alpha1.Agent, img *ainselv1alpha1.AgentImage) []string {
+	if agent.Spec.Skills != nil {
+		return agent.Spec.Skills.Items
+	}
+	return img.Spec.EnabledSkills
+}
+
 // computeSkillsHash builds a stable hash of the Data map in the shared skills
 // ConfigMap. If the ConfigMap does not exist, a stable sentinel value is used
 // so that when it is later created the hash changes and triggers a restart.
@@ -1434,7 +1444,6 @@ func (r *AgentReconciler) computeSkillsHash(ctx context.Context, namespace strin
 
 	return fmt.Sprintf("sha256:%x", h.Sum(nil)), nil
 }
-
 
 // findAffectedAgents maps a Secret event to the Agent(s) that reference it.
 func (r *AgentReconciler) findAffectedAgents(ctx context.Context, obj client.Object) []reconcile.Request {
@@ -1493,7 +1502,8 @@ func (r *AgentReconciler) findAffectedAgentsFromConfigMap(ctx context.Context, o
 	// Fast path: shared skills ConfigMap.
 	if cm.Name == sharedskills.ConfigMapName {
 		// Find all AgentImages with enabled skills so we can match them
-		// against agents.
+		// against agents; agents with an explicit spec.skills are
+		// matched regardless of their image.
 		imgList := &ainselv1alpha1.AgentImageList{}
 		if err := r.List(ctx, imgList, client.InNamespace(cm.Namespace)); err != nil {
 			log.Error(err, "failed to list agent images for skills ConfigMap watcher")
@@ -1513,7 +1523,8 @@ func (r *AgentReconciler) findAffectedAgentsFromConfigMap(ctx context.Context, o
 		}
 		var requests []reconcile.Request
 		for _, agent := range agentList.Items {
-			if _, ok := imageNamesWithSkills[agent.Spec.ImageRef.Name]; ok {
+			_, imgHasSkills := imageNamesWithSkills[agent.Spec.ImageRef.Name]
+			if agent.Spec.Skills != nil || imgHasSkills {
 				requests = append(requests, reconcile.Request{
 					NamespacedName: types.NamespacedName{
 						Namespace: agent.Namespace,
