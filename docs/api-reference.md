@@ -56,6 +56,7 @@ List all Agents in the configured namespace, sorted by resource name.
       "memory": {"enabled": true, "provider": "example"},
       "status": {"ready": true, "replicas": 1},
       "skills": {"items": ["git-review"]},
+      "mcp": {"servers": [{"name": "github", "url": "https://mcp.github.com/sse", "tokenFromEnv": "GITHUB_TOKEN"}]},
       "updatedAt": "2026-06-22T00:05:00Z"
     }
   ],
@@ -66,6 +67,8 @@ List all Agents in the configured namespace, sorted by resource name.
 Agents carry an `updatedAt` timestamp (RFC3339) in both list and detail responses. The hub stamps it on every create/update via the `ainsel.dev/updated-at` annotation; for agents that predate the annotation it falls back to the resource creation time.
 
 Agents also carry an agent-scoped skill selection in `skills`: **present = explicit override** (`{"items": []}` means no skills at all), **absent = inherit** the referenced image's `enabledSkills` (legacy behavior). Every id must exist in the skill library (`/skills`); unknown ids are rejected with `400`. Once set, the selection is explicit — the API does not currently offer a reset-to-inherit.
+
+The same wrapper semantics apply to the agent-scoped MCP selection in `mcp`, with one asymmetry: **requests carry registry names** (`{"servers": ["github"]}`), and the hub resolves each name to its full definition from the MCP registry (`/mcp-servers`, unknown names → `400`) when writing — **responses return the resolved definitions** (`name`, `url`, `tokenFromEnv`). The agent CR holds a snapshot: later registry edits do not rewrite existing agents. Absent `mcp` inherits the referenced image's `mcpServers` (legacy); `{"servers": []}` explicitly connects to none.
 
 ### POST /api/v1/agents
 
