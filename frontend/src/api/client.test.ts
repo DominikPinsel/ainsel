@@ -5,6 +5,7 @@ import {
   UnauthorizedError,
   request,
   setAuthToken,
+  setUnauthorizedHandler,
 } from './client'
 
 const mockFetch = () => globalThis.fetch as ReturnType<typeof vi.fn>
@@ -13,9 +14,11 @@ describe('api/client', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn())
     setAuthToken(null)
+    setUnauthorizedHandler(null)
   })
   afterEach(() => {
     vi.unstubAllGlobals()
+    vi.useRealTimers()
   })
 
   it('parses a 200 JSON response', async () => {
@@ -58,12 +61,43 @@ describe('api/client', () => {
     expect(url).not.toContain('connector=')
   })
 
-  it('throws UnauthorizedError on 401', async () => {
+  it('throws UnauthorizedError on 401 even when no handler is registered', async () => {
     mockFetch().mockResolvedValue(new Response('', { status: 401 }))
     await expect(request('/foo')).rejects.toBeInstanceOf(UnauthorizedError)
   })
 
-  it('reloads the page on 401 so RequireAuth re-redirects to the IdP', async () => {
+  it('invokes the registered unauthorized handler on 401 instead of reloading', async () => {
+    const handler = vi.fn()
+    setUnauthorizedHandler(handler)
+    mockFetch().mockResolvedValue(new Response('', { status: 401 }))
+    await expect(request('/foo')).rejects.toBeInstanceOf(UnauthorizedError)
+    expect(handler).toHaveBeenCalledTimes(1)
+  })
+
+  it('coalesces a burst of 401s into a single handler invocation', async () => {
+    // Pages like /observability fire ~10 requests on mount; a wave of
+    // simultaneous 401s must trigger exactly one recovery attempt.
+    const handler = vi.fn()
+    setUnauthorizedHandler(handler)
+    mockFetch().mockResolvedValue(new Response('', { status: 401 }))
+    await Promise.allSettled([request('/a'), request('/b'), request('/c')])
+    expect(handler).toHaveBeenCalledTimes(1)
+  })
+
+  it('invokes the handler again once the cooldown window has elapsed', async () => {
+    vi.useFakeTimers()
+    const handler = vi.fn()
+    setUnauthorizedHandler(handler)
+    // Each request needs its own Response — a body can only be read once.
+    mockFetch().mockImplementation(() => Promise.resolve(new Response('', { status: 401 })))
+    await expect(request('/foo')).rejects.toBeInstanceOf(UnauthorizedError)
+    vi.advanceTimersByTime(10_001)
+    await expect(request('/foo')).rejects.toBeInstanceOf(UnauthorizedError)
+    expect(handler).toHaveBeenCalledTimes(2)
+  })
+
+  it('no longer reloads the page on 401 (blind reloads caused a refresh loop)', async () => {
+    setUnauthorizedHandler(() => undefined)
     mockFetch().mockResolvedValue(new Response('', { status: 401 }))
     const reload = vi.fn()
     // jsdom's `window.location` is non-configurable and its `reload` getter
@@ -75,7 +109,7 @@ describe('api/client', () => {
     })
     try {
       await expect(request('/foo')).rejects.toBeInstanceOf(UnauthorizedError)
-      expect(reload).toHaveBeenCalledTimes(1)
+      expect(reload).not.toHaveBeenCalled()
     } finally {
       Object.defineProperty(window, 'location', {
         configurable: true,
