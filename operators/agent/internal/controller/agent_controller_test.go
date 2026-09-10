@@ -1507,18 +1507,21 @@ var _ = Describe("Agent Controller", func() {
 			Expect(setupCmd).To(ContainSubstring("cp -r /var/agent-skills/. /home/agent/.pi/agent/skills/"))
 		})
 
-		// updateSkillsWithRetry updates spec.skills on the test agent,
-		// retrying on optimistic-lock conflicts (the suite's manager writes
-		// agent status concurrently).
-		updateSkillsWithRetry := func(skills *ainselv1alpha1.AgentSkills) error {
+		// updateAgentWithRetry updates the test agent, retrying on
+		// optimistic-lock conflicts (the suite's manager writes agent
+		// status concurrently).
+		updateAgentWithRetry := func(mutate func(*ainselv1alpha1.Agent)) error {
 			return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 				agent := &ainselv1alpha1.Agent{}
 				if err := k8sClient.Get(ctx, typeNamespacedName, agent); err != nil {
 					return err
 				}
-				agent.Spec.Skills = skills
+				mutate(agent)
 				return k8sClient.Update(ctx, agent)
 			})
+		}
+		updateSkillsWithRetry := func(skills *ainselv1alpha1.AgentSkills) error {
+			return updateAgentWithRetry(func(a *ainselv1alpha1.Agent) { a.Spec.Skills = skills })
 		}
 
 		It("should mount the agent's own skill selection when spec.skills is set", func() {
@@ -1582,6 +1585,77 @@ var _ = Describe("Agent Controller", func() {
 					Equal("agent-skills"), "explicit empty selection must not mount the skills volume",
 				)
 			}
+		})
+
+		It("should wire agent-scoped MCP servers when spec.mcp is set", func() {
+			By("Enabling an MCP server on the image, then overriding on the agent")
+			img := &ainselv1alpha1.AgentImage{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testImageName, Namespace: "default"}, img)).To(Succeed())
+			img.Spec.MCPServers = []ainselv1alpha1.AgentImageMCPServer{
+				{Name: "shared-mcp", URL: "http://shared.example/mcp"},
+			}
+			img.Spec.Env = []ainselv1alpha1.AgentImageEnvVar{{Name: "AGENT_MCP_TOKEN"}}
+			Expect(k8sClient.Update(ctx, img)).To(Succeed())
+
+			Expect(updateAgentWithRetry(func(a *ainselv1alpha1.Agent) {
+				a.Spec.MCP = &ainselv1alpha1.AgentMCP{Servers: []ainselv1alpha1.AgentMCPServer{
+					{Name: "agent-mcp", URL: "http://agent.example/mcp", TokenFromEnv: "AGENT_MCP_TOKEN"},
+				}}
+			})).To(Succeed())
+
+			By("Reconciling and verifying the deployment env")
+			controllerReconciler := &AgentReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			deploy := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      "agent-" + resourceName,
+				Namespace: "default",
+			}, deploy)).To(Succeed())
+			mainEnv := deploy.Spec.Template.Spec.Containers[0].Env
+			mcpServers := findEnvVar(mainEnv, "MCP_SERVERS")
+			Expect(mcpServers).NotTo(BeNil())
+			Expect(mcpServers.Value).To(ContainSubstring("agent-mcp=http://agent.example/mcp"))
+			Expect(mcpServers.Value).NotTo(
+				ContainSubstring("shared-mcp"), "agent definitions replace the image's servers, they do not merge",
+			)
+			tokens := findEnvVar(mainEnv, "MCP_SERVER_TOKENS")
+			Expect(tokens).NotTo(BeNil())
+			Expect(tokens.Value).To(ContainSubstring("agent-mcp=$(AGENT_MCP_TOKEN)"))
+		})
+
+		It("should wire no MCP servers when spec.mcp is explicitly empty", func() {
+			By("Enabling an MCP server on the image, then selecting none on the agent")
+			img := &ainselv1alpha1.AgentImage{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testImageName, Namespace: "default"}, img)).To(Succeed())
+			img.Spec.MCPServers = []ainselv1alpha1.AgentImageMCPServer{
+				{Name: "shared-mcp", URL: "http://shared.example/mcp"},
+			}
+			Expect(k8sClient.Update(ctx, img)).To(Succeed())
+
+			Expect(updateAgentWithRetry(func(a *ainselv1alpha1.Agent) {
+				a.Spec.MCP = &ainselv1alpha1.AgentMCP{}
+			})).To(Succeed())
+
+			controllerReconciler := &AgentReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			deploy := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      "agent-" + resourceName,
+				Namespace: "default",
+			}, deploy)).To(Succeed())
+			mcpServers := findEnvVar(deploy.Spec.Template.Spec.Containers[0].Env, "MCP_SERVERS")
+			Expect(mcpServers).NotTo(BeNil())
+			Expect(mcpServers.Value).To(BeEmpty(), "explicit empty selection wires no servers")
 		})
 
 		It("should stamp a skill-hash annotation on the Deployment pod template", func() {
