@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/DominikPinsel/ainsel/services/hub/internal/mcpservers"
 	agentv1alpha1 "github.com/DominikPinsel/ainsel/shared/api/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -31,6 +33,62 @@ type AgentSkillsInfo struct {
 	Items []string `json:"items"`
 }
 
+// AgentMCPServerInfo is the API representation of one agent-scoped MCP
+// server: the definition is resolved from the hub's MCP registry at
+// write time, so later registry edits do not silently change running
+// agents.
+type AgentMCPServerInfo struct {
+	Name         string `json:"name"`
+	URL          string `json:"url"`
+	TokenFromEnv string `json:"tokenFromEnv,omitempty"`
+}
+
+// AgentMCPInfo is the API representation of the agent-scoped MCP
+// selection: present = explicit override (empty servers = no MCP
+// connections), absent = inherit the referenced image's mcpServers
+// (legacy behavior).
+type AgentMCPInfo struct {
+	Servers []AgentMCPServerInfo `json:"servers"`
+}
+
+// AgentMCPRequest selects MCP servers by registry name; the hub resolves
+// each name to its full definition when writing the agent.
+type AgentMCPRequest struct {
+	Servers []string `json:"servers"`
+}
+
+// resolveMCPRequest resolves registry names into agent-scoped MCP
+// definitions. A nil request means "leave unchanged"; a non-nil request
+// (including an empty Servers list) is an explicit selection and returns
+// a non-nil AgentMCP.
+func (s *Server) resolveMCPRequest(ctx context.Context, w http.ResponseWriter, req *AgentMCPRequest) (*agentv1alpha1.AgentMCP, error) {
+	if req == nil {
+		return nil, nil
+	}
+	if s.mcp == nil {
+		writeError(w, http.StatusServiceUnavailable, "mcp service not configured")
+		return nil, fmt.Errorf("mcp service not configured")
+	}
+	mcp := &agentv1alpha1.AgentMCP{Servers: make([]agentv1alpha1.AgentMCPServer, 0, len(req.Servers))}
+	for _, name := range req.Servers {
+		server, err := s.mcp.Get(ctx, name)
+		if err != nil {
+			if errors.Is(err, mcpservers.ErrNotFound) {
+				writeError(w, http.StatusBadRequest, "mcp server not found: "+name)
+				return nil, err
+			}
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return nil, err
+		}
+		mcp.Servers = append(mcp.Servers, agentv1alpha1.AgentMCPServer{
+			Name:         server.Name,
+			URL:          server.URL,
+			TokenFromEnv: server.TokenFromEnv,
+		})
+	}
+	return mcp, nil
+}
+
 // SimpleAgentResponse is the simplified API representation of an Agent.
 type SimpleAgentResponse struct {
 	ID             string                   `json:"id"`
@@ -41,6 +99,7 @@ type SimpleAgentResponse struct {
 	Persona        *AgentPersonaInfo        `json:"persona,omitempty"`
 	EnabledTools   []string                 `json:"enabledTools,omitempty"`
 	Skills         *AgentSkillsInfo         `json:"skills,omitempty"`
+	MCP            *AgentMCPInfo            `json:"mcp,omitempty"`
 	Replicas       *int32                   `json:"replicas,omitempty"`
 	Memory         *AgentMemoryInfo         `json:"memory,omitempty"`
 	OllamaCloud    *AgentOllamaCloudInfo    `json:"ollamaCloud,omitempty"`
@@ -111,6 +170,7 @@ type SimpleAgentCreateRequest struct {
 	Persona        *AgentPersonaInfo        `json:"persona,omitempty"`
 	EnabledTools   []string                 `json:"enabledTools,omitempty"`
 	Skills         *AgentSkillsInfo         `json:"skills,omitempty"`
+	MCP            *AgentMCPRequest         `json:"mcp,omitempty"`
 	Replicas       *int32                   `json:"replicas,omitempty"`
 	Memory         *AgentMemoryInfo         `json:"memory,omitempty"`
 	OllamaCloud    *AgentOllamaCloudInfo    `json:"ollamaCloud,omitempty"`
@@ -128,6 +188,7 @@ type SimpleAgentUpdateRequest struct {
 	Persona        *AgentPersonaInfo        `json:"persona,omitempty"`
 	EnabledTools   *[]string                `json:"enabledTools,omitempty"`
 	Skills         *AgentSkillsInfo         `json:"skills,omitempty"`
+	MCP            *AgentMCPRequest         `json:"mcp,omitempty"`
 	Replicas       *int32                   `json:"replicas,omitempty"`
 	Memory         *AgentMemoryInfo         `json:"memory,omitempty"`
 	OllamaCloud    *AgentOllamaCloudInfo    `json:"ollamaCloud,omitempty"`
@@ -167,7 +228,7 @@ func toSimpleAgentResponse(a agentv1alpha1.Agent, imageDisplayName string) Simpl
 			Temperature: a.Spec.LLM.Temperature,
 		},
 		EnabledTools: a.Spec.EnabledTools,
-		UpdatedAt:   agentUpdatedAt(a),
+		UpdatedAt:    agentUpdatedAt(a),
 	}
 
 	if a.Spec.Persona.ID != "" {
@@ -177,6 +238,19 @@ func toSimpleAgentResponse(a agentv1alpha1.Agent, imageDisplayName string) Simpl
 	// Skills: nil = inherit from the image (legacy), present = explicit.
 	if a.Spec.Skills != nil {
 		resp.Skills = &AgentSkillsInfo{Items: a.Spec.Skills.Items}
+	}
+
+	// MCP: nil = inherit from the image (legacy), present = explicit.
+	if a.Spec.MCP != nil {
+		mcpInfo := &AgentMCPInfo{Servers: make([]AgentMCPServerInfo, 0, len(a.Spec.MCP.Servers))}
+		for _, srv := range a.Spec.MCP.Servers {
+			mcpInfo.Servers = append(mcpInfo.Servers, AgentMCPServerInfo{
+				Name:         srv.Name,
+				URL:          srv.URL,
+				TokenFromEnv: srv.TokenFromEnv,
+			})
+		}
+		resp.MCP = mcpInfo
 	}
 
 	// Replicas
@@ -461,6 +535,10 @@ func (s *Server) createAgent(ctx context.Context, w http.ResponseWriter, r *http
 			return
 		}
 	}
+	mcpSelection, err := s.resolveMCPRequest(ctx, w, req.MCP)
+	if err != nil {
+		return
+	}
 
 	id := generateID("a")
 
@@ -495,6 +573,9 @@ func (s *Server) createAgent(ctx context.Context, w http.ResponseWriter, r *http
 		items := make([]string, len(req.Skills.Items))
 		copy(items, req.Skills.Items)
 		agent.Spec.Skills = &agentv1alpha1.AgentSkills{Items: items}
+	}
+	if mcpSelection != nil {
+		agent.Spec.MCP = mcpSelection
 	}
 	if req.Replicas != nil {
 		agent.Spec.Scaling = &agentv1alpha1.AgentScaling{
@@ -671,6 +752,10 @@ func (s *Server) updateAgent(ctx context.Context, w http.ResponseWriter, r *http
 			return
 		}
 	}
+	mcpSelection, err := s.resolveMCPRequest(ctx, w, req.MCP)
+	if err != nil {
+		return
+	}
 
 	if req.Name != nil {
 		existing.Spec.DisplayName = *req.Name
@@ -688,6 +773,9 @@ func (s *Server) updateAgent(ctx context.Context, w http.ResponseWriter, r *http
 		items := make([]string, len(req.Skills.Items))
 		copy(items, req.Skills.Items)
 		existing.Spec.Skills = &agentv1alpha1.AgentSkills{Items: items}
+	}
+	if mcpSelection != nil {
+		existing.Spec.MCP = mcpSelection
 	}
 	if req.LLM != nil {
 		if req.LLM.Model != "" {
