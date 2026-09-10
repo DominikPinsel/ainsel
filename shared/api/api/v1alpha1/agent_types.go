@@ -20,6 +20,13 @@ type AgentSpec struct {
 	// an empty Items means no skills.
 	// +optional
 	Skills *AgentSkills `json:"skills,omitempty"`
+	// MCP explicitly defines the MCP servers this agent connects to at
+	// runtime, as resolved definitions (URL + token env reference), not just
+	// names. When nil, the agent inherits the referenced image's MCPServers
+	// (legacy behavior); once set, the agent's servers replace the image's —
+	// empty Servers means no MCP connections.
+	// +optional
+	MCP *AgentMCP `json:"mcp,omitempty"`
 	// EnabledMCPs lists the names of MCPServer registry entries this agent
 	// should connect to at runtime. Names refer to MCPServer rows managed
 	// by the hub backend; the agent operator injects URLs into the agent
@@ -46,6 +53,28 @@ type AgentSkills struct {
 	// Items lists skill library ids (hub /skills API) to mount for this agent.
 	// +optional
 	Items []string `json:"items"`
+}
+
+// AgentMCPServer is one MCP server definition this agent connects to at
+// runtime: the URL is resolved from the hub's MCP registry at write time,
+// so the agent pod is decoupled from later registry edits.
+type AgentMCPServer struct {
+	// Name is the MCP registry entry name.
+	Name string `json:"name"`
+	// URL is the MCP server endpoint the agent runtime connects to.
+	URL string `json:"url"`
+	// TokenFromEnv names the env var on the agent pod whose value is sent
+	// as the bearer token. Empty means the server needs no token.
+	// +optional
+	TokenFromEnv string `json:"tokenFromEnv,omitempty"`
+}
+
+// AgentMCP is the agent-scoped MCP selection: Servers replaces (never
+// merges with) the referenced image's MCPServers when present.
+type AgentMCP struct {
+	// Servers lists the MCP servers this agent connects to.
+	// +optional
+	Servers []AgentMCPServer `json:"servers"`
 }
 
 // AgentRuntime holds operator-managed runtime configuration for the agent pod.
