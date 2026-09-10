@@ -19,7 +19,7 @@ type capturedFire struct {
 }
 
 func TestUpsertAndDelete(t *testing.T) {
-	e := New(nil, invocations.NewStore(10))
+	e := New(nil, invocations.NewMemoryStore(10))
 	ct := &triggers.CronTrigger{
 		ID:        "daily",
 		DisplayName: "Daily",
@@ -39,7 +39,7 @@ func TestUpsertAndDelete(t *testing.T) {
 }
 
 func TestInvalidScheduleSkipped(t *testing.T) {
-	e := New(nil, invocations.NewStore(10))
+	e := New(nil, invocations.NewMemoryStore(10))
 	e.Upsert(&triggers.CronTrigger{
 		ID:       "bad",
 		Schedule: "not a cron",
@@ -50,7 +50,7 @@ func TestInvalidScheduleSkipped(t *testing.T) {
 }
 
 func TestTickFiresDueEntry(t *testing.T) {
-	invStore := invocations.NewStore(10)
+	invStore := invocations.NewMemoryStore(10)
 	e := New(nil, invStore)
 
 	var captured []capturedFire
@@ -121,7 +121,7 @@ func TestTickFiresDueEntry(t *testing.T) {
 }
 
 func TestDisabledEntryDoesNotFire(t *testing.T) {
-	e := New(nil, invocations.NewStore(10))
+	e := New(nil, invocations.NewMemoryStore(10))
 	var captured []capturedFire
 	e.SetFire(func(agentRef, triggerName, invocationID string, event ainselapishared.Event) error {
 		captured = append(captured, capturedFire{})
@@ -147,7 +147,7 @@ func TestDisabledEntryDoesNotFire(t *testing.T) {
 }
 
 func TestFireFailureMarksInvocationFailed(t *testing.T) {
-	invStore := invocations.NewStore(10)
+	invStore := invocations.NewMemoryStore(10)
 	e := New(nil, invStore)
 	e.SetFire(func(agentRef, triggerName, invocationID string, event ainselapishared.Event) error {
 		return errPublish
@@ -191,7 +191,7 @@ type errPublishErr struct{}
 func (errPublishErr) Error() string { return "publish failed" }
 
 func TestNewEntryDoesNotFireImmediately(t *testing.T) {
-	invStore := invocations.NewStore(10)
+	invStore := invocations.NewMemoryStore(10)
 	e := New(nil, invStore)
 
 	var captured []capturedFire
@@ -228,7 +228,7 @@ func TestNewEntryDoesNotFireImmediately(t *testing.T) {
 }
 
 func TestRunStopsOnContextCancel(t *testing.T) {
-	e := New(nil, invocations.NewStore(10))
+	e := New(nil, invocations.NewMemoryStore(10))
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {

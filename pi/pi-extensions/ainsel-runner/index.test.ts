@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { extractEventContext, buildUserMessage, createTurnTracker, beginTurn, endTurn, recordAssistantEnd, captureMessage, markSettled, waitForSettle, toConversationPayloads, postTaskMessages, reportConversation, redactSecrets, resetRedactionCache, capToolResultContent, truncateWithMarker, resolveToolResultMaxChars, resolveEventDataMaxChars, resolveInternalToken } from "./index.ts";
+import { extractEventContext, buildUserMessage, createTurnTracker, beginTurn, endTurn, recordAssistantEnd, captureMessage, markSettled, waitForSettle, toConversationPayloads, postTaskMessages, reportConversation, flushTurnMessages, queueConversationFlush, redactSecrets, resetRedactionCache, capToolResultContent, truncateWithMarker, resolveToolResultMaxChars, resolveEventDataMaxChars, resolveInternalToken } from "./index.ts";
 import type { HubEvent, TurnTracker, ConversationPayload } from "./index.ts";
 
 describe("extractEventContext", () => {
@@ -768,6 +768,174 @@ describe("markSettled / waitForSettle", () => {
 		assert.equal(tracker.capturedMessages.length, 1);
 		assert.equal(tracker.capturedMessages[0].gen, 2);
 		assert.deepEqual(tracker.capturedMessages[0].message, { role: "user", content: "task B" });
+	});
+});
+
+describe("flushTurnMessages", () => {
+	const meta = { agentName: "olli", invocationId: "inv-1", correlationId: "task-7" };
+
+	/** newPostCtx builds a post context for the tracker's active generation. */
+	function newPostCtx(tracker: any, opts: { gen?: number; taskId?: number } = {}) {
+		return {
+			hubUrl: "http://hub",
+			token: "tok",
+			meta,
+			gen: opts.gen ?? tracker.activeGeneration,
+			taskId: opts.taskId ?? 7,
+			postedCount: 0,
+			postChain: Promise.resolve(),
+		};
+	}
+
+	/** fetchRecorder replaces globalThis.fetch and records the role of each
+	 *  task-messages POST body, in call order. */
+	function fetchRecorder(): { posted: string[]; calls: () => number } {
+		const posted: string[] = [];
+		globalThis.fetch = (async (_url: any, init?: any) => {
+			const body = JSON.parse(init?.body);
+			posted.push(body.role);
+			return new Response(null, { status: 204 });
+		}) as any;
+		return { posted, calls: () => posted.length };
+	}
+
+	it("posts newly captured messages and never posts one twice", async () => {
+		const originalFetch = globalThis.fetch;
+		try {
+			const tracker = createTurnTracker();
+			beginTurn(tracker);
+			const ctx = newPostCtx(tracker);
+			tracker.postCtx = ctx;
+
+			const { posted } = fetchRecorder();
+			captureMessage(tracker, { role: "user", content: "hi" });
+			captureMessage(tracker, { role: "assistant", content: [{ type: "text", text: "hello" }], usage: { input: 1, output: 2, totalTokens: 3 } });
+			flushTurnMessages(tracker);
+			await ctx.postChain;
+			assert.deepEqual(posted, ["user", "assistant"]);
+
+			// Second turn: only the newly captured pair is posted.
+			captureMessage(tracker, { role: "assistant", content: [{ type: "text", text: "more" }], usage: { input: 1, output: 1, totalTokens: 2 } });
+			captureMessage(tracker, { role: "toolResult", toolCallId: "tc-1", isError: false, content: "ok" });
+			flushTurnMessages(tracker);
+			await ctx.postChain;
+			assert.deepEqual(posted, ["user", "assistant", "assistant", "toolResult"]);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	it("is a no-op without an active task post context", () => {
+		const tracker = createTurnTracker();
+		beginTurn(tracker);
+		captureMessage(tracker, { role: "user", content: "hi" });
+		// No postCtx installed — must not throw and must not post.
+		flushTurnMessages(tracker);
+	});
+
+	it("is a no-op while an aborted turn is draining (generation mismatch)", async () => {
+		const originalFetch = globalThis.fetch;
+		try {
+			const tracker = createTurnTracker();
+			beginTurn(tracker);
+			const ctx = newPostCtx(tracker, { gen: 99 });
+			tracker.postCtx = ctx;
+			const { posted } = fetchRecorder();
+			captureMessage(tracker, { role: "user", content: "hi" });
+			flushTurnMessages(tracker);
+			await new Promise((r) => setTimeout(r, 10));
+			assert.equal(posted.length, 0);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	it("is a no-op after the turn settled (activeGeneration 0)", async () => {
+		const originalFetch = globalThis.fetch;
+		try {
+			const tracker = createTurnTracker();
+			beginTurn(tracker);
+			const ctx = newPostCtx(tracker);
+			tracker.postCtx = ctx;
+			const { posted } = fetchRecorder();
+			captureMessage(tracker, { role: "user", content: "hi" });
+			endTurn(tracker); // agent_settled
+			flushTurnMessages(tracker);
+			await new Promise((r) => setTimeout(r, 10));
+			assert.equal(posted.length, 0);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	it("chains batches so a later batch cannot overtake an in-flight earlier one", async () => {
+		const originalFetch = globalThis.fetch;
+		try {
+			const tracker = createTurnTracker();
+			beginTurn(tracker);
+			const ctx = newPostCtx(tracker);
+			tracker.postCtx = ctx;
+
+			const posted: string[] = [];
+			let calls = 0;
+			let releaseHold: (() => void) | null = null;
+			const hold = new Promise<void>((resolve) => { releaseHold = resolve; });
+			globalThis.fetch = (async (_url: any, init?: any) => {
+				calls++;
+				const body = JSON.parse(init?.body);
+				posted.push(body.role);
+				if (calls === 1) await hold; // first POST stalls until released
+				return new Response(null, { status: 204 });
+			}) as any;
+
+			captureMessage(tracker, { role: "user", content: "turn one" });
+			flushTurnMessages(tracker); // batch 1 — stalls on the held POST
+			captureMessage(tracker, { role: "assistant", content: [{ type: "text", text: "turn two" }], usage: { input: 1, output: 1, totalTokens: 2 } });
+			flushTurnMessages(tracker); // batch 2 — must queue behind batch 1
+
+			// Give batch 2 ample opportunity to (wrongly) overtake batch 1.
+			await new Promise((r) => setTimeout(r, 25));
+			assert.deepEqual(posted, ["user"]); // batch 2 must not have started
+
+			releaseHold!();
+			await ctx.postChain;
+			assert.deepEqual(posted, ["user", "assistant"]);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	it("final flush via queueConversationFlush posts only the remainder, once", async () => {
+		const originalFetch = globalThis.fetch;
+		try {
+			const tracker = createTurnTracker();
+			beginTurn(tracker);
+			const ctx = newPostCtx(tracker);
+			tracker.postCtx = ctx;
+			const { posted } = fetchRecorder();
+
+			captureMessage(tracker, { role: "user", content: "hi" });
+			captureMessage(tracker, { role: "assistant", content: [{ type: "text", text: "hello" }], usage: { input: 1, output: 2, totalTokens: 3 } });
+			captureMessage(tracker, { role: "toolResult", toolCallId: "tc-1", isError: false, content: "ok" });
+
+			// Incremental flush posts the first two; then the turn settles.
+			ctx.postedCount = 2; // simulate an earlier flush of user+assistant
+			flushTurnMessages(tracker);
+			assert.equal(posted.length, 0); // nothing new captured since the flush
+
+			// The task ends: final report posts the remaining toolResult only.
+			tracker.postCtx = null;
+			queueConversationFlush(tracker, ctx);
+			await ctx.postChain;
+			assert.deepEqual(posted, ["toolResult"]);
+
+			// Repeated final flushes must not duplicate the post.
+			queueConversationFlush(tracker, ctx);
+			await ctx.postChain;
+			assert.deepEqual(posted, ["toolResult"]);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
 	});
 });
 

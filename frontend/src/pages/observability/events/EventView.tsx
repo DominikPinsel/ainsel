@@ -21,6 +21,12 @@ function formatDuration(ms: number | undefined): string {
   return ms !== undefined ? `${(ms / 1000).toFixed(1)}s` : '—'
 }
 
+// Poll interval for the event detail page while any invocation is still
+// running. Conversation messages are reported incrementally per LLM turn and
+// invocation records are completed by the agent's ack — without polling, a
+// page opened before the run finished would never show them.
+const RUNNING_POLL_MS = 5000
+
 function Kpi({
   label,
   children,
@@ -43,7 +49,12 @@ function Kpi({
 }
 
 function InvocationDetail({ invocation }: { invocation: InvocationEntry }) {
-  const conversations = useConversations({ invocation: invocation.id })
+  const conversations = useConversations(
+    { invocation: invocation.id },
+    // Keep polling the transcript while the invocation runs so the
+    // incrementally reported messages appear without a manual refresh.
+    { refetchInterval: invocation.status === 'running' ? RUNNING_POLL_MS : false },
+  )
   const messages = useMemo(() => conversations.data?.messages ?? [], [conversations.data])
   const total = conversations.data?.total
   const tokens = useMemo(
@@ -90,7 +101,14 @@ function InvocationDetail({ invocation }: { invocation: InvocationEntry }) {
 export function EventView() {
   const { id } = useParams<{ id: string }>()
   const { data, isLoading, error } = useEvent(id ?? '')
-  const invocations = useInvocations({ event: id, pageSize: 50 })
+  // Any invocation still running means the event detail is a live view:
+  // poll so status flips, new invocations, and the transcript show up.
+  const invocations = useInvocations({ event: id, pageSize: 50 }, {
+    refetchInterval: (query) =>
+      (query.state.data?.items ?? []).some((inv) => inv.status === 'running')
+        ? RUNNING_POLL_MS
+        : false,
+  })
 
   return (
     <>

@@ -382,10 +382,11 @@ Delete a Trigger.
 
 ## Invocations
 
-The hub records every event dispatch to an agent in an in-memory ring buffer
-(default capacity 1000, configurable via `HUB_INVOCATION_BUFFER_SIZE`). Each
-record tracks who was invoked, with which trigger, when it started/completed,
-and what the outcome was. Agents report completion by publishing a
+The hub records every event dispatch to an agent in the `invocations`
+Postgres table (48h retention, aligned with the conversation transcript
+retention, pruned hourly). Each record tracks who was invoked, with which
+trigger, when it started/completed, and what the outcome was. Agents report
+completion by publishing a
 `hub.invocation.completed` event on NATS with the `X-Invocation-ID` header
 they received in the dispatched message.
 

@@ -199,11 +199,10 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
 // any failed task → error, otherwise → matched.
 //
 // When invStore is non-nil, each match is enriched with run-state information
-// (runStatus, durationMs, error) from the corresponding invocation. The
-// invocation store is an in-memory ring buffer, so lookups may miss for
-// evicted or pre-restart records; in that case the match fields are left
-// empty and the UI renders "—".
-func buildActivityEntry(evt eventqueue.Event, tasks []eventqueue.Task, invStore *invocations.Store) activityEntry {
+// (runStatus, durationMs, error) from the corresponding invocation. Records
+// older than the store's retention may have been pruned; in that case the
+// match fields are left empty and the UI renders "—".
+func buildActivityEntry(evt eventqueue.Event, tasks []eventqueue.Task, invStore invocations.Store) activityEntry {
 	entry := activityEntry{
 		ID:        evt.ID,
 		Timestamp: evt.ReceivedAt.UTC().Format(time.RFC3339),

@@ -401,7 +401,7 @@ Update a CronTrigger. All body fields are optional; omitted fields are unchanged
 
 ## Invocations
 
-Invocations record one dispatch of an event to an agent. They are kept in an in-process ring buffer by the hub; the endpoint returns `503 Service Unavailable` when invocation history is not configured.
+Invocations record one dispatch of an event to an agent. They are persisted in the `invocations` Postgres table (48h retention) so they survive hub restarts; the endpoint returns `503 Service Unavailable` when invocation history is not configured.
 
 ### GET /api/v1/invocations
 

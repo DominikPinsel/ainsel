@@ -8,7 +8,7 @@ import (
 )
 
 func TestStore_RecordAssignsIDAndDefaults(t *testing.T) {
-	s := NewStore(10)
+	s := NewMemoryStore(10)
 	rec := s.Record(Invocation{
 		AgentName:   "dev-agent",
 		TriggerName: "issue-assigned",
@@ -28,7 +28,7 @@ func TestStore_RecordAssignsIDAndDefaults(t *testing.T) {
 }
 
 func TestStore_GetReturnsCopy(t *testing.T) {
-	s := NewStore(10)
+	s := NewMemoryStore(10)
 	rec := s.Record(Invocation{AgentName: "a1"})
 	got, ok := s.Get(rec.ID)
 	if !ok {
@@ -46,7 +46,7 @@ func TestStore_GetReturnsCopy(t *testing.T) {
 }
 
 func TestStore_CompleteSetsTerminalFields(t *testing.T) {
-	s := NewStore(10)
+	s := NewMemoryStore(10)
 	rec := s.Record(Invocation{AgentName: "a1"})
 	// Sleep briefly to ensure measurable duration.
 	time.Sleep(2 * time.Millisecond)
@@ -71,7 +71,7 @@ func TestStore_CompleteSetsTerminalFields(t *testing.T) {
 }
 
 func TestStore_CompleteFailureRecordsError(t *testing.T) {
-	s := NewStore(10)
+	s := NewMemoryStore(10)
 	rec := s.Record(Invocation{AgentName: "a1"})
 	end := time.Now().UTC()
 	if !s.Complete(rec.ID, StatusFailure, "boom", end) {
@@ -87,14 +87,14 @@ func TestStore_CompleteFailureRecordsError(t *testing.T) {
 }
 
 func TestStore_CompleteUnknownIDReturnsFalse(t *testing.T) {
-	s := NewStore(10)
+	s := NewMemoryStore(10)
 	if s.Complete("inv-deadbeef", StatusSuccess, "", time.Time{}) {
 		t.Error("expected Complete to return false for unknown ID")
 	}
 }
 
 func TestStore_RingBufferEvictsOldest(t *testing.T) {
-	s := NewStore(3)
+	s := NewMemoryStore(3)
 	r1 := s.Record(Invocation{AgentName: "a1"})
 	r2 := s.Record(Invocation{AgentName: "a2"})
 	r3 := s.Record(Invocation{AgentName: "a3"})
@@ -118,7 +118,7 @@ func TestStore_RingBufferEvictsOldest(t *testing.T) {
 }
 
 func TestStore_ListNewestFirst(t *testing.T) {
-	s := NewStore(10)
+	s := NewMemoryStore(10)
 	for i := 0; i < 5; i++ {
 		s.Record(Invocation{
 			AgentName: fmt.Sprintf("a%d", i),
@@ -137,7 +137,7 @@ func TestStore_ListNewestFirst(t *testing.T) {
 }
 
 func TestStore_ListFiltersAndLimit(t *testing.T) {
-	s := NewStore(10)
+	s := NewMemoryStore(10)
 	now := time.Now().UTC()
 	a := s.Record(Invocation{AgentName: "agent-a", StartTime: now.Add(-30 * time.Minute), Status: StatusRunning})
 	b := s.Record(Invocation{AgentName: "agent-b", StartTime: now.Add(-20 * time.Minute), Status: StatusRunning})
@@ -173,7 +173,7 @@ func TestStore_ListFiltersAndLimit(t *testing.T) {
 }
 
 func TestStore_ListWithTotalReportsPreLimitCount(t *testing.T) {
-	s := NewStore(10)
+	s := NewMemoryStore(10)
 	now := time.Now().UTC()
 	for i := 0; i < 5; i++ {
 		s.Record(Invocation{AgentName: "agent-a", StartTime: now.Add(time.Duration(-i) * time.Minute)})
@@ -206,7 +206,7 @@ func TestStore_ListWithTotalReportsPreLimitCount(t *testing.T) {
 }
 
 func TestStore_ListFilterByTriggerName(t *testing.T) {
-	s := NewStore(10)
+	s := NewMemoryStore(10)
 	now := time.Now().UTC()
 	s.Record(Invocation{AgentName: "agent-a", TriggerName: "trigger-1", StartTime: now.Add(-2 * time.Minute)})
 	s.Record(Invocation{AgentName: "agent-b", TriggerName: "trigger-2", StartTime: now.Add(-1 * time.Minute)})
@@ -229,7 +229,7 @@ func TestStore_ListFilterByTriggerName(t *testing.T) {
 }
 
 func TestStore_ListFilterByUntil(t *testing.T) {
-	s := NewStore(10)
+	s := NewMemoryStore(10)
 	now := time.Now().UTC()
 	s.Record(Invocation{AgentName: "a", StartTime: now.Add(-30 * time.Minute)})
 	s.Record(Invocation{AgentName: "b", StartTime: now.Add(-10 * time.Minute)})
@@ -246,7 +246,7 @@ func TestStore_ListFilterByUntil(t *testing.T) {
 }
 
 func TestStore_ListFilterBySinceAndUntil(t *testing.T) {
-	s := NewStore(10)
+	s := NewMemoryStore(10)
 	now := time.Now().UTC()
 	s.Record(Invocation{AgentName: "old", StartTime: now.Add(-60 * time.Minute)})
 	s.Record(Invocation{AgentName: "mid", StartTime: now.Add(-20 * time.Minute)})
@@ -266,7 +266,7 @@ func TestStore_ListFilterBySinceAndUntil(t *testing.T) {
 }
 
 func TestStore_ListCombinedFilters(t *testing.T) {
-	s := NewStore(20)
+	s := NewMemoryStore(20)
 	now := time.Now().UTC()
 
 	// Create invocations with different combinations.
@@ -289,7 +289,7 @@ func TestStore_ListCombinedFilters(t *testing.T) {
 }
 
 func TestStore_ConcurrentRecordAndComplete(t *testing.T) {
-	s := NewStore(1000)
+	s := NewMemoryStore(1000)
 	var wg sync.WaitGroup
 	const n = 200
 	ids := make(chan string, n)
@@ -325,7 +325,7 @@ func TestStore_ConcurrentRecordAndComplete(t *testing.T) {
 }
 
 func TestStore_ListFilterByEventID(t *testing.T) {
-	s := NewStore(10)
+	s := NewMemoryStore(10)
 	s.Record(Invocation{AgentName: "a", EventID: "evt-1"})
 	s.Record(Invocation{AgentName: "b", EventID: "evt-2"})
 	s.Record(Invocation{AgentName: "c", EventID: "evt-1"})
