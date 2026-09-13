@@ -129,6 +129,16 @@ async function selectPersona(user: ReturnType<typeof userEvent.setup>) {
 
 const next = () => screen.getByRole('button', { name: /^next$/i })
 
+/**
+ * Clicks a step in the stepper and waits for that step's region to render.
+ * Step changes are async (forward jumps validate first), so a synchronous
+ * query right after the click races the navigation.
+ */
+async function goToStep(user: ReturnType<typeof userEvent.setup>, title: string) {
+  await user.click(screen.getByRole('button', { name: new RegExp(title, 'i') }))
+  await screen.findByRole('region', { name: new RegExp(`: ${title}$`, 'i') })
+}
+
 /** Walks identity → runtime → model → persona with valid values. */
 async function fillThroughPersona(user: ReturnType<typeof userEvent.setup>) {
   await user.type(await screen.findByLabelText('Name'), 'my-agent')
@@ -254,15 +264,15 @@ describe('AgentWizard', () => {
 
     await fillThroughPersona(user)
     // Back to the model step to switch provider.
-    await user.click(screen.getByRole('button', { name: /model/i }))
+    await goToStep(user, 'Model')
     await user.selectOptions(await screen.findByLabelText(/^provider$/i), 'custom')
     await user.type(
       await screen.findByLabelText(/provider base url/i),
       'https://api.example.com/v1',
     )
     await user.type(screen.getByLabelText(/^api key$/i), 'sk-test-12345')
-    await user.click(screen.getByRole('button', { name: /review/i }))
-    await user.click(screen.getByRole('button', { name: /create agent/i }))
+    await goToStep(user, 'Review')
+    await user.click(await screen.findByRole('button', { name: /create agent/i }))
 
     await waitFor(() => expect(postBody(fetchMock)).toBeDefined())
     expect(postBody(fetchMock)?.customProvider).toEqual({
