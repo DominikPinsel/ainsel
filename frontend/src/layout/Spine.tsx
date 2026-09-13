@@ -22,6 +22,17 @@ const SECTIONS: { label: string; items: NavItem[] }[] = [
     ],
   },
   {
+    // Shared catalogs an agent draws from. Agent-scoped configuration lives on
+    // the agent itself; these pages manage the reusable building blocks.
+    label: 'Library',
+    items: [
+      { idx: '15', name: 'Images', to: '/agent-images' },
+      { idx: '16', name: 'Personas', to: '/personas' },
+      { idx: '17', name: 'Skills', to: '/skills' },
+      { idx: '18', name: 'MCPs', to: '/settings' },
+    ],
+  },
+  {
     label: 'Docs',
     items: [
       { idx: '10', name: 'Docs', to: '/docs' },
@@ -33,13 +44,6 @@ const SECTIONS: { label: string; items: NavItem[] }[] = [
       { idx: '20', name: 'Users', to: '/users' },
       { idx: '21', name: 'Groups', to: '/groups' },
       { idx: '22', name: 'Connectors', to: '/connectors' },
-    ],
-  },
-  {
-    label: 'Setup',
-    items: [
-      { idx: '15', name: 'MCPs', to: '/settings' },
-      { idx: '16', name: 'Skills', to: '/skills' },
     ],
   },
 ]

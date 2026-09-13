@@ -7,7 +7,7 @@ export function SettingsLayout() {
       <Titleblock
         crumbs={
           <>
-            Setup / <b>Settings</b>
+            Library / <b>MCP Servers</b>
           </>
         }
         title={
