@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useAgent, useDeleteAgent } from '../../api/agents'
 import { ApiError } from '../../api/client'
-import { usePersona } from '../../api/personas'
+import { useAgentPersona } from '../../api/personas'
 import { Button } from '../../primitives/Button'
 import { ConfirmModal } from '../../primitives/ConfirmModal'
 import { Dot } from '../../primitives/Dot'
@@ -156,12 +156,10 @@ export function AgentDetail() {
                 </Panel>
               ) : null}
 
-              {data.persona?.id ? (
-                <PersonaPanel
-                  personaId={data.persona.id}
-                  onConfigure={() => onTabChange('persona')}
-                />
-              ) : null}
+              <PersonaPanel
+                agentId={data.id}
+                onConfigure={() => onTabChange('persona')}
+              />
             </div>
           ) : null}
 
@@ -211,13 +209,17 @@ export function AgentDetail() {
 }
 
 function PersonaPanel({
-  personaId,
+  agentId,
   onConfigure,
 }: {
-  personaId: string
+  agentId: string
   onConfigure: () => void
 }) {
-  const { data, isLoading, error } = usePersona(personaId)
+  // Agent-scoped on purpose: a persona an agent owns has no library permission
+  // record, so reading it through /personas/{id} would be denied for
+  // non-admins. This endpoint is gated by the agent instead, and reports
+  // whether the persona is private to it or a shared template.
+  const { data: view, isLoading } = useAgentPersona(agentId)
 
   if (isLoading) {
     return (
@@ -226,25 +228,38 @@ function PersonaPanel({
       </Panel>
     )
   }
-  if (error instanceof ApiError && error.status === 404) {
+
+  const persona = view?.persona
+
+  if (!persona) {
     return (
       <Panel title="Persona" className="cropped">
-        <p className="label" style={{ color: 'var(--signal)' }}>
-          Persona not found (id: {personaId}).
+        <p style={{ marginTop: 0, color: 'var(--ink-2)' }}>
+          {view?.ref
+            ? `The linked persona (${view.ref}) no longer exists.`
+            : 'No persona yet — this agent runs without one.'}
+        </p>
+        <p style={{ marginTop: 12 }}>
+          <Button variant="ghost" onClick={onConfigure}>
+            Configure persona →
+          </Button>
         </p>
       </Panel>
     )
   }
-  if (!data) return null
 
   // 600 chars keeps the preview tight; full text is one click away.
-  const preview = data.text.length > 600 ? data.text.slice(0, 600) + '…' : data.text
+  const preview =
+    persona.text.length > 600 ? persona.text.slice(0, 600) + '…' : persona.text
 
   return (
-    <Panel title={`Persona · ${data.name}`} className="cropped">
-      {data.description ? (
+    <Panel
+      title={`Persona · ${persona.name}${view?.owned ? ' · own' : ' · shared template'}`}
+      className="cropped"
+    >
+      {persona.description ? (
         <p style={{ marginTop: 0, marginBottom: 12, color: 'var(--ink-2)' }}>
-          {data.description}
+          {persona.description}
         </p>
       ) : null}
       <Markdown source={preview} />

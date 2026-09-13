@@ -3,7 +3,7 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useUpdateAgent, type AgentResponse } from '../../api/agents'
-import { usePersona, usePersonas, useUpdatePersona } from '../../api/personas'
+import { useAgentPersona, usePersonas, useSaveAgentPersona } from '../../api/personas'
 import { ApiError } from '../../api/client'
 import { Button } from '../../primitives/Button'
 import { Field } from '../../primitives/Field'
@@ -13,7 +13,7 @@ import { Select } from '../../primitives/Select'
 import { Textarea } from '../../primitives/Textarea'
 
 const schema = z.object({
-  name: z.string().min(1, 'Name is required').max(200),
+  name: z.string().max(200).optional().default(''),
   description: z.string().max(2000).optional().default(''),
   text: z.string().min(1, 'Persona text is required').max(100_000),
 })
@@ -28,23 +28,28 @@ type AgentPersonaSectionProps = {
 }
 
 /**
- * The Persona tab of the agent detail page. Combines what used to be two
- * separate flows: choosing which persona the agent references (previously a
- * dropdown on the agent edit form) and editing that persona's content
- * (previously the standalone persona pages).
+ * The Persona tab of the agent detail page: which persona the agent uses, and
+ * its content.
  *
- * Personas are still shared hub objects until the backend is streamlined —
- * saving here updates the persona for every agent that references it, which
- * the hints call out explicitly.
+ * The content is agent-owned. Saving writes to the agent's own persona — the
+ * hub forks a private copy the first time an agent that still references a
+ * shared template is edited here, so a template used by other agents is never
+ * rewritten from this page. The hints say which case applies, and a template
+ * can still be selected as the starting point.
  */
 export function AgentPersonaSection({ agent }: AgentPersonaSectionProps) {
-  const personaId = agent.persona?.id
   const personas = usePersonas({ pageSize: 200 })
-  const existing = usePersona(personaId)
-  const updatePersona = useUpdatePersona()
+  const view = useAgentPersona(agent.id)
+  const savePersona = useSaveAgentPersona()
   const updateAgent = useUpdateAgent()
   const [refError, setRefError] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
+
+  const persona = view.data?.persona
+  const ref = view.data?.ref ?? ''
+  const owned = Boolean(view.data?.owned)
+  // A reference that points at a persona which no longer exists.
+  const dangling = Boolean(ref && !persona)
 
   const {
     register,
@@ -56,36 +61,37 @@ export function AgentPersonaSection({ agent }: AgentPersonaSectionProps) {
     defaultValues: { name: '', description: '', text: '' },
   })
 
+  // Prefill from the linked persona; an owned persona that was just created
+  // arrives through the same query, so the form tracks the saved state.
   useEffect(() => {
-    if (existing.data) {
-      reset({
-        name: existing.data.name,
-        description: existing.data.description,
-        text: existing.data.text,
-      })
-    }
-  }, [existing.data, reset])
+    if (!view.data) return
+    reset({
+      name: persona?.name ?? '',
+      description: persona?.description ?? '',
+      text: persona?.text ?? '',
+    })
+  }, [view.data, persona, reset])
 
   const onSwitchPersona = (next: string) => {
-    if (!next || next === personaId) return
+    if (!next || next === ref) return
     setRefError(null)
     updateAgent.mutate(
       { id: agent.id, body: { name: agent.name, persona: { id: next } } },
       {
         onError: (err) =>
           setRefError(err instanceof ApiError ? err.message : 'Failed to switch persona.'),
+        onSuccess: () => view.refetch(),
       },
     )
   }
 
   const onSubmit = handleSubmit(async (values) => {
-    if (!personaId) return
     setSaveError(null)
     try {
-      await updatePersona.mutateAsync({
-        id: personaId,
+      await savePersona.mutateAsync({
+        agentId: agent.id,
         body: {
-          name: values.name,
+          name: values.name || undefined,
           description: values.description || '',
           text: values.text,
         },
@@ -95,24 +101,41 @@ export function AgentPersonaSection({ agent }: AgentPersonaSectionProps) {
     }
   })
 
+  // The owned persona is hidden from the library list, so it needs its own
+  // option to stay selectable while it is linked.
+  const options = (personas.data?.items ?? [])
+    .filter((p) => p.id !== ref)
+    .map((p) => ({ value: p.id, label: p.name }))
+  if (persona) {
+    options.unshift({
+      value: ref,
+      label: owned ? `${persona.name} — this agent's own` : persona.name,
+    })
+  }
+
+  const contentHint = !ref
+    ? 'This agent has no persona yet. Saving creates one that belongs to this agent alone.'
+    : dangling
+      ? `The linked persona (${ref}) no longer exists. Saving creates a new one for this agent.`
+      : owned
+        ? "This persona belongs to this agent — changes stay private to it."
+        : 'This persona is a shared template. Saving creates a private copy for this agent and leaves the template untouched.'
+
   return (
     <div style={{ display: 'grid', gap: 24 }}>
       <Panel title="Linked Persona" className="cropped">
         <div style={{ display: 'grid', gap: 10 }}>
           <Select
             aria-label="Linked persona"
-            value={personaId ?? ''}
+            value={ref}
             onChange={onSwitchPersona}
-            options={(personas.data?.items ?? []).map((p) => ({
-              value: p.id,
-              label: p.name,
-            }))}
-            emptyLabel="Select a persona…"
-            disabled={updateAgent.isPending}
+            options={options}
+            emptyLabel="No persona linked"
+            disabled={updateAgent.isPending || view.isLoading}
           />
           <p className="label" style={{ margin: 0, color: 'var(--ink-3)' }}>
-            Personas are shared objects. Switching only re-points this agent;
-            the previous persona is kept for other agents that reference it.
+            Pick a shared template as the starting point, or edit below to give
+            this agent its own persona.
           </p>
           {refError ? (
             <p className="label" style={{ margin: 0, color: 'var(--signal)' }}>
@@ -122,58 +145,56 @@ export function AgentPersonaSection({ agent }: AgentPersonaSectionProps) {
         </div>
       </Panel>
 
-      {personaId ? (
-        existing.isLoading ? (
-          <Panel title="Persona Content" className="cropped">
-            <p className="label">Loading persona…</p>
-          </Panel>
-        ) : existing.error instanceof ApiError &&
-          existing.error.status === 404 ? (
-          <Panel title="Persona Content" className="cropped">
-            <p className="label" style={{ color: 'var(--signal)' }}>
-              Persona not found (id: {personaId}).
+      <Panel title="Persona Content" className="cropped">
+        {view.isLoading ? (
+          <p className="label">Loading persona…</p>
+        ) : (
+          <form onSubmit={onSubmit} noValidate style={{ display: 'grid', gap: 14 }}>
+            <Field
+              label="Name"
+              htmlFor="persona-name"
+              error={errors.name?.message}
+              hint="Optional — defaults to the agent's name."
+            >
+              <Input id="persona-name" {...register('name')} />
+            </Field>
+            <Field
+              label="Description"
+              htmlFor="persona-description"
+              error={errors.description?.message}
+            >
+              <Input id="persona-description" {...register('description')} />
+            </Field>
+            <Field label="Persona Text" htmlFor="persona-text" error={errors.text?.message}>
+              <Textarea
+                id="persona-text"
+                rows={20}
+                className="mono"
+                spellCheck={false}
+                {...register('text')}
+              />
+            </Field>
+            <p className="label" style={{ margin: 0, color: 'var(--ink-3)' }}>
+              {contentHint}
             </p>
-          </Panel>
-        ) : existing.data ? (
-          <Panel title="Persona Content" className="cropped">
-            <form onSubmit={onSubmit} noValidate style={{ display: 'grid', gap: 14 }}>
-              <Field label="Name" htmlFor="persona-name" error={errors.name?.message}>
-                <Input id="persona-name" {...register('name')} />
-              </Field>
-              <Field
-                label="Description"
-                htmlFor="persona-description"
-                error={errors.description?.message}
-              >
-                <Input id="persona-description" {...register('description')} />
-              </Field>
-              <Field label="Persona Text" htmlFor="persona-text" error={errors.text?.message}>
-                <Textarea
-                  id="persona-text"
-                  rows={20}
-                  className="mono"
-                  spellCheck={false}
-                  {...register('text')}
-                />
-              </Field>
-              <p className="label" style={{ margin: 0, color: 'var(--ink-3)' }}>
-                Saving updates the shared persona for every agent that references
-                it.
+            {saveError ? (
+              <p className="label" style={{ margin: 0, color: 'var(--signal)' }}>
+                {saveError}
               </p>
-              {saveError ? (
-                <p className="label" style={{ margin: 0, color: 'var(--signal)' }}>
-                  {saveError}
-                </p>
+            ) : null}
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+              <Button type="submit" variant="primary" disabled={isSubmitting}>
+                {isSubmitting ? 'Saving…' : !ref || !owned ? 'Save as own persona' : 'Save persona'}
+              </Button>
+              {!owned && ref && !dangling ? (
+                <span className="label" style={{ color: 'var(--ink-3)' }}>
+                  First save forks a private copy.
+                </span>
               ) : null}
-              <div>
-                <Button type="submit" variant="primary" disabled={isSubmitting}>
-                  {isSubmitting ? 'Saving…' : 'Save persona'}
-                </Button>
-              </div>
-            </form>
-          </Panel>
-        ) : null
-      ) : null}
+            </div>
+          </form>
+        )}
+      </Panel>
     </div>
   )
 }
