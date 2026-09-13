@@ -137,12 +137,6 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	}
 	podImage := img.Spec.ImageURL
 
-	// 2.5. Migrate the deprecated spec.enabledMCPs now that the runtime
-	// profile is known.
-	if err := r.migrateLegacyEnabledMCPs(ctx, &agent, &img); err != nil {
-		return ctrl.Result{}, err
-	}
-
 	// 4. Defensive guardrail: the CRD requires spec.persona.id (minLength 1),
 	// but verify here so we surface a controller-side diagnostic if a request
 	// slips through (e.g. via a stale client). The hub renders the
@@ -403,8 +397,7 @@ func (r *AgentReconciler) reconcileDeployment(ctx context.Context, agent *ainsel
 
 	// MCP_SERVERS is built from the agent's own definitions (or its runtime
 	// profile's), plus any sidecar-declared servers and the injected chat
-	// sidecar. The deprecated spec.enabledMCPs field is not read here: the
-	// reconciler migrates it into spec.mcp once, see migrateLegacyEnabledMCPs.
+	// sidecar.
 	var mcpEntries []string
 
 	imagePullPolicy := agent.Spec.Runtime.ImagePullPolicy
@@ -1424,105 +1417,6 @@ func effectiveSkills(agent *ainselv1alpha1.Agent, img *ainselv1alpha1.AgentImage
 		return agent.Spec.Skills.Items
 	}
 	return img.Spec.EnabledSkills
-}
-
-// migrateLegacyEnabledMCPs converts the deprecated spec.enabledMCPs — names of
-// in-cluster "mcp-<name>" Services — into an explicit spec.mcp snapshot and
-// clears the field.
-//
-// An explicit spec.mcp replaces the runtime profile's servers instead of adding
-// to them, so a faithful conversion has to fold the profile's servers in as
-// well: before this migration the agent reached the union of its resolved
-// legacy names and its image's servers, and MCP_SERVERS was built in that
-// order. Migrating only the legacy names would therefore silently drop every
-// server the profile contributed. The trade-off is inherent to making the
-// selection explicit — later edits to the profile no longer propagate to this
-// agent, which is what "the agent owns its configuration" means.
-//
-// Names whose Service does not exist are dropped with a Warning event; they
-// contributed nothing before either, because discovery skipped them the same
-// way. A legacy name that collides with a profile server keeps the resolved
-// Service URL but inherits the profile's token reference: MCP_SERVERS took the
-// URL from discovery while MCP_SERVER_TOKENS was always built from the
-// profile's definitions, so dropping the profile entry would silently
-// un-authenticate the server.
-//
-// Agents that already carry spec.mcp only get the stale field cleared — that
-// field has been authoritative since agent-scoped MCP support landed, so those
-// agents were already ignoring enabledMCPs.
-func (r *AgentReconciler) migrateLegacyEnabledMCPs(ctx context.Context, agent *ainselv1alpha1.Agent, img *ainselv1alpha1.AgentImage) error {
-	if len(agent.Spec.EnabledMCPs) == 0 {
-		return nil
-	}
-
-	log := ctrl.LoggerFrom(ctx)
-
-	if agent.Spec.MCP != nil {
-		patch := client.MergeFrom(agent.DeepCopy())
-		agent.Spec.EnabledMCPs = nil
-		if err := r.Patch(ctx, agent, patch); err != nil {
-			return fmt.Errorf("clearing deprecated enabledMCPs: %w", err)
-		}
-		log.Info("dropped deprecated spec.enabledMCPs, spec.mcp is already set", "agent", agent.Name)
-		return nil
-	}
-
-	resolved, missing, err := mcpservers.Resolve(ctx, r.Client, agent.Namespace, agent.Spec.EnabledMCPs)
-	if err != nil {
-		return fmt.Errorf("resolving legacy enabledMCPs: %w", err)
-	}
-
-	// Profile servers by name, for the collision case below. The first entry
-	// wins, matching how MCP_SERVERS de-duplicates by name.
-	byName := make(map[string]ainselv1alpha1.AgentImageMCPServer, len(img.Spec.MCPServers))
-	for _, s := range img.Spec.MCPServers {
-		if _, dup := byName[s.Name]; !dup {
-			byName[s.Name] = s
-		}
-	}
-
-	servers := make([]ainselv1alpha1.AgentMCPServer, 0, len(resolved)+len(img.Spec.MCPServers))
-	seen := make(map[string]bool, len(resolved))
-	for _, s := range resolved {
-		// Service resolution yields no token reference; carry over the profile's
-		// when this name also appears there. A missing map entry contributes the
-		// zero value, leaving TokenFromEnv empty as before.
-		s.TokenFromEnv = byName[s.Name].TokenFromEnv
-		servers = append(servers, s)
-		seen[s.Name] = true
-	}
-	profileServers := 0
-	for _, s := range img.Spec.MCPServers {
-		if seen[s.Name] {
-			continue
-		}
-		seen[s.Name] = true
-		servers = append(servers, ainselv1alpha1.AgentMCPServer(s))
-		profileServers++
-	}
-
-	patch := client.MergeFrom(agent.DeepCopy())
-	agent.Spec.MCP = &ainselv1alpha1.AgentMCP{Servers: servers}
-	agent.Spec.EnabledMCPs = nil
-	if err := r.Patch(ctx, agent, patch); err != nil {
-		return fmt.Errorf("patching spec.mcp: %w", err)
-	}
-
-	for _, name := range missing {
-		log.Info("legacy MCP name has no Service, dropped during migration", "agent", agent.Name, "mcp", name)
-		if r.Recorder != nil {
-			r.Recorder.Eventf(agent, corev1.EventTypeWarning, "LegacyMCPUnresolved",
-				"enabledMCPs entry %q has no Service mcp-%s and was dropped during migration to spec.mcp", name, name)
-		}
-	}
-	log.Info("migrated spec.enabledMCPs to spec.mcp",
-		"agent", agent.Name, "resolved", len(resolved), "fromProfile", profileServers, "dropped", len(missing))
-	if r.Recorder != nil {
-		r.Recorder.Eventf(agent, corev1.EventTypeNormal, "LegacyMCPMigrated",
-			"Migrated spec.enabledMCPs into spec.mcp: %d resolved from Services, %d carried over from the runtime profile",
-			len(resolved), profileServers)
-	}
-	return nil
 }
 
 // effectiveMCPServers returns the MCP server definitions the agent

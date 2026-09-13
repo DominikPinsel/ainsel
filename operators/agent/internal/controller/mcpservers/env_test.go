@@ -1,113 +1,11 @@
 package mcpservers_test
 
 import (
-	"context"
 	"testing"
-
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/DominikPinsel/ainsel/operators/agent/internal/controller/mcpservers"
 	ainselv1alpha1 "github.com/DominikPinsel/ainsel/shared/api/api/v1alpha1"
 )
-
-func newFake(t *testing.T, services ...*corev1.Service) *fake.ClientBuilder {
-	t.Helper()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	b := fake.NewClientBuilder().WithScheme(scheme)
-	for _, s := range services {
-		b = b.WithObjects(s)
-	}
-	return b
-}
-
-func mcpService(name, ns string, port int32) *corev1.Service {
-	return &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{Name: "mcp-" + name, Namespace: ns},
-		Spec: corev1.ServiceSpec{
-			Ports: []corev1.ServicePort{{Name: "http", Port: port}},
-		},
-	}
-}
-
-func TestResolveReturnsServerDefinitions(t *testing.T) {
-	c := newFake(t, mcpService("example-mcp", "ainsel", 8080)).Build()
-	got, missing, err := mcpservers.Resolve(context.Background(), c, "ainsel", []string{"example-mcp"})
-	if err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
-	if len(got) != 1 {
-		t.Fatalf("got %d servers: %+v", len(got), got)
-	}
-	want := ainselv1alpha1.AgentMCPServer{
-		Name: "example-mcp",
-		URL:  "http://mcp-example-mcp.ainsel.svc.cluster.local:8080/mcp",
-	}
-	if got[0] != want {
-		t.Errorf("got %+v want %+v", got[0], want)
-	}
-	if len(missing) != 0 {
-		t.Errorf("expected no missing, got %v", missing)
-	}
-}
-
-func TestResolvePreservesOrder(t *testing.T) {
-	c := newFake(t,
-		mcpService("example-mcp", "ainsel", 8080),
-		mcpService("github", "ainsel", 8080),
-	).Build()
-	got, _, err := mcpservers.Resolve(context.Background(), c, "ainsel", []string{"github", "example-mcp"})
-	if err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
-	if got[0].Name != "github" || got[1].Name != "example-mcp" {
-		t.Errorf("order broken: %+v", got)
-	}
-}
-
-func TestResolveUsesDefaultPortWhenNoNamedHttpPort(t *testing.T) {
-	svc := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{Name: "mcp-unnamed", Namespace: "ainsel"},
-		Spec:       corev1.ServiceSpec{Ports: []corev1.ServicePort{{Name: "metrics", Port: 9090}}},
-	}
-	c := newFake(t, svc).Build()
-	got, _, err := mcpservers.Resolve(context.Background(), c, "ainsel", []string{"unnamed"})
-	if err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
-	want := "http://mcp-unnamed.ainsel.svc.cluster.local:8080/mcp"
-	if got[0].URL != want {
-		t.Errorf("got %q want %q", got[0].URL, want)
-	}
-}
-
-func TestResolveMissingServiceIsSkippedAndReported(t *testing.T) {
-	c := newFake(t, mcpService("example-mcp", "ainsel", 8080)).Build()
-	got, missing, err := mcpservers.Resolve(context.Background(), c, "ainsel", []string{"example-mcp", "ghost"})
-	if err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
-	if len(got) != 1 {
-		t.Errorf("expected 1 server, got %+v", got)
-	}
-	if len(missing) != 1 || missing[0] != "ghost" {
-		t.Errorf("missing: %+v", missing)
-	}
-}
-
-func TestResolveEmptyListReturnsEmpty(t *testing.T) {
-	c := newFake(t).Build()
-	got, missing, err := mcpservers.Resolve(context.Background(), c, "ainsel", nil)
-	if err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
-	if len(got) != 0 || len(missing) != 0 {
-		t.Errorf("expected empty, got servers=%v missing=%v", got, missing)
-	}
-}
 
 func TestEnvValueJoinsWithCommas(t *testing.T) {
 	v := mcpservers.EnvValue([]string{"a=u1", "b=u2"})
