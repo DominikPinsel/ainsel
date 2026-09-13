@@ -39,7 +39,10 @@ for its container image and tool catalog.
 | `llm.temperature` | float64 | No | LLM sampling temperature |
 | `persona.id` | string | Yes | ULID of a persona managed by the hub. The operator mounts a ConfigMap named `persona-<id>` (rendered by the hub) at `/etc/agent/persona.md` |
 | `enabledTools[]` | []string | No | List of tool names to enable for this agent (e.g. `forgejo`, `git`, `shell`) |
-| `enabledMCPs[]` | []string | No | List of MCPServer registry entry names the agent should connect to at runtime. The operator injects URLs into the agent pod as `MCP_SERVERS` env |
+| `skills.items[]` | []string | No | Agent-scoped skill selection (skill ids). Present = explicit override (`items: []` = no skills at all); absent = inherit the referenced image's `enabledSkills` |
+| `mcp.servers[]` | []AgentMCPServer | No | Agent-scoped MCP servers (`name`, `url`, `tokenFromEnv`), resolved from the hub's MCP registry when the agent is written. Present = explicit override (`servers: []` = connect to none); absent = inherit the image's `mcpServers`. The operator injects `MCP_SERVERS` / `MCP_SERVER_TOKENS` from this list |
+| `env[]` | []AgentEnvVar | No | Per-agent environment variables (`name`, `value`, `secret`) layered on top of the referenced image's `env`: a matching name overrides the image's value and secret flag, a new name is added. The operator writes the effective set to the `<agent>-image-env` Secret and injects each entry into the agent container |
+| `enabledMCPs[]` | []string | No | **Legacy.** List of MCPServer registry entry names the agent should connect to at runtime. Superseded by `mcp.servers`; kept for agents that predate agent-scoped MCP |
 | `scaling.replicas` | int32 | No | Desired replica count for the agent deployment |
 | `memory.enabled` | bool | Yes | Enable shared memory |
 | `memory.provider` | string | No | Memory provider |
@@ -90,8 +93,20 @@ spec:
     - forgejo
     - git
     - shell
-  enabledMCPs:
-    - memory-server
+  skills:
+    items:
+      - git-review
+  mcp:
+    servers:
+      - name: memory-server
+        url: http://memory-server.ainsel.svc.cluster.local:8080/mcp
+  env:
+    # Layered on top of the referenced image's env: LOG_LEVEL overrides the
+    # image's value, FEATURE_FLAGS is added.
+    - name: LOG_LEVEL
+      value: debug
+    - name: FEATURE_FLAGS
+      value: beta
   scaling:
     replicas: 2
   memory:
