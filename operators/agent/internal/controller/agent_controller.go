@@ -1434,11 +1434,8 @@ func effectiveMCPServers(agent *ainselv1alpha1.Agent, img *ainselv1alpha1.AgentI
 	if agent.Spec.MCP != nil {
 		servers := make([]ainselv1alpha1.AgentImageMCPServer, 0, len(agent.Spec.MCP.Servers))
 		for _, s := range agent.Spec.MCP.Servers {
-			servers = append(servers, ainselv1alpha1.AgentImageMCPServer{
-				Name:         s.Name,
-				URL:          s.URL,
-				TokenFromEnv: s.TokenFromEnv,
-			})
+			// The types are field-identical; staticcheck prefers the conversion.
+			servers = append(servers, ainselv1alpha1.AgentImageMCPServer(s))
 		}
 		return servers
 	}

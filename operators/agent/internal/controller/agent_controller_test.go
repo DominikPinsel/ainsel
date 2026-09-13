@@ -1599,7 +1599,7 @@ var _ = Describe("Agent Controller", func() {
 
 			Expect(updateAgentWithRetry(func(a *ainselv1alpha1.Agent) {
 				a.Spec.MCP = &ainselv1alpha1.AgentMCP{Servers: []ainselv1alpha1.AgentMCPServer{
-					{Name: "agent-mcp", URL: "http://agent.example/mcp", TokenFromEnv: "AGENT_MCP_TOKEN"},
+					{Name: "agent-mcp", URL: "http://agent.example/mcp", TokenFromEnv: "AGENT_MCP_TOKEN"}, // #nosec G101 -- test fixture: env var name, not a credential
 				}}
 			})).To(Succeed())
 
