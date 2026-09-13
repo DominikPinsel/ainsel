@@ -42,7 +42,7 @@ for its container image and tool catalog.
 | `skills.items[]` | []string | No | Agent-scoped skill selection (skill ids). Present = explicit override (`items: []` = no skills at all); absent = inherit the referenced image's `enabledSkills` |
 | `mcp.servers[]` | []AgentMCPServer | No | Agent-scoped MCP servers (`name`, `url`, `tokenFromEnv`), resolved from the hub's MCP registry when the agent is written. Present = explicit override (`servers: []` = connect to none); absent = inherit the image's `mcpServers`. The operator injects `MCP_SERVERS` / `MCP_SERVER_TOKENS` from this list |
 | `env[]` | []AgentEnvVar | No | Per-agent environment variables (`name`, `value`, `secret`) layered on top of the referenced image's `env`: a matching name overrides the image's value and secret flag, a new name is added. The operator writes the effective set to the `<agent>-image-env` Secret and injects each entry into the agent container |
-| `enabledMCPs[]` | []string | No | **Legacy.** List of MCPServer registry entry names the agent should connect to at runtime. Superseded by `mcp.servers`; kept for agents that predate agent-scoped MCP |
+| `enabledMCPs[]` | []string | No | **Deprecated, ignored by the operator.** Formerly a list of in-cluster `mcp-<name>` Service names. The operator migrates it into `mcp.servers` on first reconcile and clears it; the field exists only so stored values survive to be migrated and is scheduled for removal. Use `mcp.servers` |
 | `scaling.replicas` | int32 | No | Desired replica count for the agent deployment |
 | `memory.enabled` | bool | Yes | Enable shared memory |
 | `memory.provider` | string | No | Memory provider |
