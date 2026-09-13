@@ -19,6 +19,10 @@ export type AgentMCPServer = {
 /** Agent-scoped MCP selection: present = explicit override (empty servers
  *  = no connections), absent = inherit the image's mcpServers. */
 export type AgentMCP = { servers: AgentMCPServer[] }
+/** One of an agent's own environment variables, layered on top of the runtime
+ *  image's env. The hub masks secret values, so a secret entry always reads
+ *  back with an empty value. */
+export type AgentEnvVar = { name: string; value: string; secret?: boolean }
 export type AgentOllamaCloud = { apiKey?: string }
 export type AgentOpenCode = { apiKey?: string }
 export type AgentAlibabaCloud = { apiKey?: string }
@@ -44,17 +48,26 @@ export type AgentResponse = AgentSummary & {
   enabledTools?: string[]
   skills?: AgentSkills
   mcp?: AgentMCP
+  /** This agent's env overrides; absent = it runs on the image env alone. */
+  env?: AgentEnvVar[]
   ollamaCloud?: AgentOllamaCloud
   openCode?: AgentOpenCode
   alibabaCloud?: AgentAlibabaCloud
   customProvider?: AgentCustomProvider
 }
 
-export type AgentRequest = Omit<AgentResponse, 'id' | 'status' | 'mcp'> & {
+export type AgentRequest = Omit<
+  AgentResponse,
+  'id' | 'status' | 'mcp' | 'env'
+> & {
   groupId?: string
   /** Write-side MCP selection: registry names, resolved by the hub to
    *  full definitions when writing the agent. */
   mcp?: { servers: string[] }
+  /** Write-side env overrides: replaces this agent's list. Present-but-empty
+   *  clears the overrides so the agent runs on the image env again; a secret
+   *  entry submitted with an empty value keeps its stored value. */
+  env?: AgentEnvVar[]
 }
 
 export type ListAgentsParams = {
