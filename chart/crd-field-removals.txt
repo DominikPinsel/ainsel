@@ -1,0 +1,14 @@
+# Intentional CRD spec-field removals, one "<crd> <field>" per line.
+#
+# The dev deploy pipeline refuses to apply a CRD whose spec schema is smaller
+# than the live one, because client-side apply then prunes that field from
+# every stored CR on its next write - silently, with nothing reported anywhere.
+# A removal that is deliberate is declared here so the guard can tell it apart
+# from deploying an out-of-date chart.
+#
+# Delete the entry once every environment has been upgraded past the removal.
+
+# 0.1.4: superseded by spec.mcp. The operator converted spec.enabledMCPs into
+# an equivalent spec.mcp snapshot during 0.1.3, folding in the servers the
+# agent's runtime profile contributed, so no stored value is left to prune.
+agents.ainsel.dev enabledMCPs

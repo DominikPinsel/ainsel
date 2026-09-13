@@ -556,11 +556,6 @@ func (in *AgentSpec) DeepCopyInto(out *AgentSpec) {
 		*out = make([]AgentEnvVar, len(*in))
 		copy(*out, *in)
 	}
-	if in.EnabledMCPs != nil {
-		in, out := &in.EnabledMCPs, &out.EnabledMCPs
-		*out = make([]string, len(*in))
-		copy(*out, *in)
-	}
 	if in.Scaling != nil {
 		in, out := &in.Scaling, &out.Scaling
 		*out = new(AgentScaling)
