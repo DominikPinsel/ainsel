@@ -685,12 +685,15 @@ var _ = Describe("Agent Controller", func() {
 			Expect(tokensEnv.Value).To(ContainSubstring("forgejo-mcp-server=$(FORGEJO_PAT)"))
 		})
 
-		It("should prefer the resolved Service URL when a legacy name collides with a profile server", func() {
-			By("Giving the profile a server with the same name as the legacy entry")
+		It("should keep the resolved URL and the profile's token when a legacy name collides", func() {
+			By("Giving the profile a server with the same name as the legacy entry, plus its token")
 			img := &ainselv1alpha1.AgentImage{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testImageName, Namespace: "default"}, img)).To(Succeed())
+			img.Spec.Env = []ainselv1alpha1.AgentImageEnvVar{
+				{Name: "FORGEJO_PAT", Value: "secret-token-123", Secret: true},
+			}
 			img.Spec.MCPServers = []ainselv1alpha1.AgentImageMCPServer{
-				{Name: "example-mcp", URL: "http://stale.example/mcp"},
+				{Name: "example-mcp", URL: "http://stale.example/mcp", TokenFromEnv: "FORGEJO_PAT"},
 			}
 			Expect(k8sClient.Update(ctx, img)).To(Succeed())
 
@@ -715,12 +718,34 @@ var _ = Describe("Agent Controller", func() {
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Verifying the name appears once, resolved from the Service")
+			By("Verifying the name appears once, with the Service URL and the profile's token")
 			migrated := &ainselv1alpha1.Agent{}
 			Expect(k8sClient.Get(ctx, typeNamespacedName, migrated)).To(Succeed())
 			Expect(migrated.Spec.MCP.Servers).To(Equal([]ainselv1alpha1.AgentMCPServer{
-				{Name: "example-mcp", URL: "http://mcp-example-mcp.default.svc.cluster.local:8080/mcp"},
-			}), "the resolved entry must win, matching how MCP_SERVERS was always de-duplicated")
+				{
+					Name:         "example-mcp",
+					URL:          "http://mcp-example-mcp.default.svc.cluster.local:8080/mcp",
+					TokenFromEnv: "FORGEJO_PAT",
+				},
+			}), "the resolved URL wins, and the profile's token reference must survive the collision")
+
+			By("Verifying the runtime env reflects both halves")
+			deploy := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      "agent-" + resourceName,
+				Namespace: "default",
+			}, deploy)).To(Succeed())
+			container := deploy.Spec.Template.Spec.Containers[0]
+			mcpEnv := findEnvVar(container.Env, "MCP_SERVERS")
+			Expect(mcpEnv).NotTo(BeNil())
+			Expect(mcpEnv.Value).To(ContainSubstring(
+				"example-mcp=http://mcp-example-mcp.default.svc.cluster.local:8080/mcp"))
+			Expect(mcpEnv.Value).NotTo(ContainSubstring("http://stale.example/mcp"),
+				"the profile's URL must not win the collision")
+			tokensEnv := findEnvVar(container.Env, "MCP_SERVER_TOKENS")
+			Expect(tokensEnv).NotTo(BeNil())
+			Expect(tokensEnv.Value).To(ContainSubstring("example-mcp=$(FORGEJO_PAT)"),
+				"MCP_SERVER_TOKENS was always built from the profile's definitions")
 		})
 
 		It("should build MCP_SERVER_TOKENS from AgentImage tokenFromEnv entries", func() {

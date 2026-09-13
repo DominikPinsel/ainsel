@@ -1442,7 +1442,10 @@ func effectiveSkills(agent *ainselv1alpha1.Agent, img *ainselv1alpha1.AgentImage
 // Names whose Service does not exist are dropped with a Warning event; they
 // contributed nothing before either, because discovery skipped them the same
 // way. A legacy name that collides with a profile server keeps the resolved
-// entry, matching the de-duplication MCP_SERVERS always applied.
+// Service URL but inherits the profile's token reference: MCP_SERVERS took the
+// URL from discovery while MCP_SERVER_TOKENS was always built from the
+// profile's definitions, so dropping the profile entry would silently
+// un-authenticate the server.
 //
 // Agents that already carry spec.mcp only get the stale field cleared — that
 // field has been authoritative since agent-scoped MCP support landed, so those
@@ -1469,10 +1472,23 @@ func (r *AgentReconciler) migrateLegacyEnabledMCPs(ctx context.Context, agent *a
 		return fmt.Errorf("resolving legacy enabledMCPs: %w", err)
 	}
 
+	// Profile servers by name, for the collision case below. The first entry
+	// wins, matching how MCP_SERVERS de-duplicates by name.
+	byName := make(map[string]ainselv1alpha1.AgentImageMCPServer, len(img.Spec.MCPServers))
+	for _, s := range img.Spec.MCPServers {
+		if _, dup := byName[s.Name]; !dup {
+			byName[s.Name] = s
+		}
+	}
+
 	servers := make([]ainselv1alpha1.AgentMCPServer, 0, len(resolved)+len(img.Spec.MCPServers))
-	servers = append(servers, resolved...)
 	seen := make(map[string]bool, len(resolved))
 	for _, s := range resolved {
+		// Service resolution yields no token reference; carry over the profile's
+		// when this name also appears there. A missing map entry contributes the
+		// zero value, leaving TokenFromEnv empty as before.
+		s.TokenFromEnv = byName[s.Name].TokenFromEnv
+		servers = append(servers, s)
 		seen[s.Name] = true
 	}
 	profileServers := 0
