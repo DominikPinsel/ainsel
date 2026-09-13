@@ -83,11 +83,13 @@ editing the registry never rewrites running agents. The bundled MCP server
 today is configured as a generic MCP server in the frontend; you can
 register more.
 
-> The older `Agent.spec.enabledMCPs` field (names of in-cluster
-> `mcp-<name>` Services) is deprecated and ignored by the operator. On the
-> first reconcile after an upgrade the agent operator converts it into an
-> equivalent `spec.mcp` snapshot and clears it — no manual step, and the
-> servers an agent reaches do not change.
+> **Removed:** `Agent.spec.enabledMCPs`, the older list of in-cluster
+> `mcp-<name>` Service names. For one release beforehand the operator
+> converted it into an equivalent `spec.mcp` snapshot on reconcile, folding in
+> the servers the agent's runtime profile contributed so nothing changed at
+> runtime. The field is now gone from the schema: any value still stored on a
+> CR that was never reconciled in between is pruned by the API server, so
+> re-select those servers on the **Tools** tab.
 
 ## 3. The end-to-end admin journey
 
