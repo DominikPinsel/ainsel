@@ -139,6 +139,42 @@ spec:
                 items:
                   type: string
                 type: array
+              env:
+                description: |-
+                  Env holds this agent's environment variable overrides, applied on top of
+                  the referenced image's Env — the shared runtime profile's defaults. An
+                  entry whose Name matches a profile entry overrides its value; any other
+                  name is added for this agent only. Platform-managed names are ignored by
+                  the operator. Absent or empty means the agent runs on the profile's
+                  defaults alone.
+                items:
+                  description: |-
+                    AgentEnvVar is one per-agent environment variable override.
+
+                    Unlike Skills and MCP, agent env is a plain list rather than a wrapper with
+                    nil/empty distinction: entries *merge* over the referenced image's Env by
+                    name instead of replacing it, so "not configured" and "explicitly none"
+                    mean the same thing — run on the profile's defaults.
+                  properties:
+                    name:
+                      description: |-
+                        Name is the environment variable name. Matching a name in the
+                        referenced image's Env overrides that value for this agent.
+                      type: string
+                    secret:
+                      description: |-
+                        Secret marks Value as sensitive: the hub API masks it on read, and an
+                        empty Value on write means "keep the existing value" — the same
+                        contract as AgentImageEnvVar.
+                      type: boolean
+                    value:
+                      description: Value is the variable's value.
+                      type: string
+                  required:
+                  - name
+                  - value
+                  type: object
+                type: array
               imageRef:
                 description: AgentImageRef references an AgentImage by metadata name
                   in the same namespace.
