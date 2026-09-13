@@ -620,6 +620,109 @@ var _ = Describe("Agent Controller", func() {
 				"the deprecated field must not contribute servers")
 		})
 
+		It("should carry the runtime profile's MCP servers into spec.mcp when migrating", func() {
+			By("Giving the runtime profile an MCP server with a token reference")
+			img := &ainselv1alpha1.AgentImage{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testImageName, Namespace: "default"}, img)).To(Succeed())
+			img.Spec.Env = []ainselv1alpha1.AgentImageEnvVar{
+				{Name: "FORGEJO_PAT", Value: "secret-token-123", Secret: true},
+			}
+			img.Spec.MCPServers = []ainselv1alpha1.AgentImageMCPServer{
+				{Name: "forgejo-mcp-server", URL: "http://forgejo-mcp.workloads.svc.cluster.local:8080/mcp", TokenFromEnv: "FORGEJO_PAT"},
+			}
+			Expect(k8sClient.Update(ctx, img)).To(Succeed())
+
+			By("Pre-creating the legacy mcp-example-mcp Service")
+			svc := &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{Name: "mcp-example-mcp", Namespace: "default"},
+				Spec:       corev1.ServiceSpec{Ports: []corev1.ServicePort{{Name: "http", Port: 8080}}},
+			}
+			Expect(k8sClient.Create(ctx, svc)).To(Succeed())
+			defer func() {
+				_ = k8sClient.Delete(ctx, svc)
+			}()
+
+			By("Setting the deprecated spec.enabledMCPs")
+			agent := &ainselv1alpha1.Agent{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, agent)).To(Succeed())
+			agent.Spec.EnabledMCPs = []string{"example-mcp"}
+			Expect(k8sClient.Update(ctx, agent)).To(Succeed())
+
+			By("Reconciling")
+			controllerReconciler := &AgentReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying spec.mcp holds the resolved entry first, then the profile's servers")
+			migrated := &ainselv1alpha1.Agent{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, migrated)).To(Succeed())
+			Expect(migrated.Spec.EnabledMCPs).To(BeEmpty())
+			Expect(migrated.Spec.MCP).NotTo(BeNil())
+			Expect(migrated.Spec.MCP.Servers).To(Equal([]ainselv1alpha1.AgentMCPServer{
+				{Name: "example-mcp", URL: "http://mcp-example-mcp.default.svc.cluster.local:8080/mcp"},
+				{Name: "forgejo-mcp-server", URL: "http://forgejo-mcp.workloads.svc.cluster.local:8080/mcp", TokenFromEnv: "FORGEJO_PAT"},
+			}), "an explicit selection replaces the profile's, so the migration must fold the profile in")
+
+			By("Verifying MCP_SERVERS keeps both servers in the pre-migration order")
+			deploy := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      "agent-" + resourceName,
+				Namespace: "default",
+			}, deploy)).To(Succeed())
+			container := deploy.Spec.Template.Spec.Containers[0]
+			mcpEnv := findEnvVar(container.Env, "MCP_SERVERS")
+			Expect(mcpEnv).NotTo(BeNil())
+			Expect(mcpEnv.Value).To(HavePrefix(
+				"example-mcp=http://mcp-example-mcp.default.svc.cluster.local:8080/mcp," +
+					"forgejo-mcp-server=http://forgejo-mcp.workloads.svc.cluster.local:8080/mcp"))
+
+			By("Verifying the profile server's token reference survives")
+			tokensEnv := findEnvVar(container.Env, "MCP_SERVER_TOKENS")
+			Expect(tokensEnv).NotTo(BeNil())
+			Expect(tokensEnv.Value).To(ContainSubstring("forgejo-mcp-server=$(FORGEJO_PAT)"))
+		})
+
+		It("should prefer the resolved Service URL when a legacy name collides with a profile server", func() {
+			By("Giving the profile a server with the same name as the legacy entry")
+			img := &ainselv1alpha1.AgentImage{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testImageName, Namespace: "default"}, img)).To(Succeed())
+			img.Spec.MCPServers = []ainselv1alpha1.AgentImageMCPServer{
+				{Name: "example-mcp", URL: "http://stale.example/mcp"},
+			}
+			Expect(k8sClient.Update(ctx, img)).To(Succeed())
+
+			svc := &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{Name: "mcp-example-mcp", Namespace: "default"},
+				Spec:       corev1.ServiceSpec{Ports: []corev1.ServicePort{{Name: "http", Port: 8080}}},
+			}
+			Expect(k8sClient.Create(ctx, svc)).To(Succeed())
+			defer func() {
+				_ = k8sClient.Delete(ctx, svc)
+			}()
+
+			agent := &ainselv1alpha1.Agent{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, agent)).To(Succeed())
+			agent.Spec.EnabledMCPs = []string{"example-mcp"}
+			Expect(k8sClient.Update(ctx, agent)).To(Succeed())
+
+			controllerReconciler := &AgentReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying the name appears once, resolved from the Service")
+			migrated := &ainselv1alpha1.Agent{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, migrated)).To(Succeed())
+			Expect(migrated.Spec.MCP.Servers).To(Equal([]ainselv1alpha1.AgentMCPServer{
+				{Name: "example-mcp", URL: "http://mcp-example-mcp.default.svc.cluster.local:8080/mcp"},
+			}), "the resolved entry must win, matching how MCP_SERVERS was always de-duplicated")
+		})
+
 		It("should build MCP_SERVER_TOKENS from AgentImage tokenFromEnv entries", func() {
 			By("Updating the AgentImage with an MCP server that has tokenFromEnv")
 			img := &ainselv1alpha1.AgentImage{}
