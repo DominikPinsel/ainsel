@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"slices"
 	"testing"
 
 	ainselv1alpha1 "github.com/DominikPinsel/ainsel/shared/api/api/v1alpha1"
@@ -14,18 +15,6 @@ func envPairs(in []ainselv1alpha1.AgentImageEnvVar) []string {
 		out = append(out, e.Name+"="+e.Value)
 	}
 	return out
-}
-
-func equalPairs(got, want []string) bool {
-	if len(got) != len(want) {
-		return false
-	}
-	for i := range got {
-		if got[i] != want[i] {
-			return false
-		}
-	}
-	return true
 }
 
 func TestEffectiveEnv(t *testing.T) {
@@ -43,7 +32,7 @@ func TestEffectiveEnv(t *testing.T) {
 
 	t.Run("no overrides returns the image env unchanged", func(t *testing.T) {
 		got := effectiveEnv(&ainselv1alpha1.Agent{}, image)
-		if !equalPairs(envPairs(got), []string{"LOG_LEVEL=info", "SHARED_ONLY=yes"}) {
+		if !slices.Equal(envPairs(got), []string{"LOG_LEVEL=info", "SHARED_ONLY=yes"}) {
 			t.Errorf("got %v", envPairs(got))
 		}
 	})
@@ -53,7 +42,7 @@ func TestEffectiveEnv(t *testing.T) {
 			ainselv1alpha1.AgentEnvVar{Name: "LOG_LEVEL", Value: "debug"},
 		), image)
 		// Order follows the image so the rendered Secret stays stable.
-		if !equalPairs(envPairs(got), []string{"LOG_LEVEL=debug", "SHARED_ONLY=yes"}) {
+		if !slices.Equal(envPairs(got), []string{"LOG_LEVEL=debug", "SHARED_ONLY=yes"}) {
 			t.Errorf("got %v", envPairs(got))
 		}
 	})
@@ -63,7 +52,7 @@ func TestEffectiveEnv(t *testing.T) {
 			ainselv1alpha1.AgentEnvVar{Name: "AGENT_B", Value: "b"},
 			ainselv1alpha1.AgentEnvVar{Name: "AGENT_A", Value: "a"},
 		), image)
-		if !equalPairs(envPairs(got), []string{
+		if !slices.Equal(envPairs(got), []string{
 			"LOG_LEVEL=info", "SHARED_ONLY=yes", "AGENT_B=b", "AGENT_A=a",
 		}) {
 			t.Errorf("got %v", envPairs(got))
@@ -75,7 +64,7 @@ func TestEffectiveEnv(t *testing.T) {
 			ainselv1alpha1.AgentEnvVar{Name: "SHARED_ONLY", Value: "no"},
 			ainselv1alpha1.AgentEnvVar{Name: "AGENT_ONLY", Value: "1"},
 		), image)
-		if !equalPairs(envPairs(got), []string{
+		if !slices.Equal(envPairs(got), []string{
 			"LOG_LEVEL=info", "SHARED_ONLY=no", "AGENT_ONLY=1",
 		}) {
 			t.Errorf("got %v", envPairs(got))
@@ -87,7 +76,7 @@ func TestEffectiveEnv(t *testing.T) {
 			ainselv1alpha1.AgentEnvVar{Name: "LOG_LEVEL", Value: "warn"},
 			ainselv1alpha1.AgentEnvVar{Name: "LOG_LEVEL", Value: "debug"},
 		), image)
-		if !equalPairs(envPairs(got), []string{"LOG_LEVEL=debug", "SHARED_ONLY=yes"}) {
+		if !slices.Equal(envPairs(got), []string{"LOG_LEVEL=debug", "SHARED_ONLY=yes"}) {
 			t.Errorf("got %v", envPairs(got))
 		}
 	})
@@ -106,7 +95,7 @@ func TestEffectiveEnv(t *testing.T) {
 		got := effectiveEnv(agentWith(
 			ainselv1alpha1.AgentEnvVar{Name: "AGENT_ONLY", Value: "1"},
 		), empty)
-		if !equalPairs(envPairs(got), []string{"AGENT_ONLY=1"}) {
+		if !slices.Equal(envPairs(got), []string{"AGENT_ONLY=1"}) {
 			t.Errorf("got %v", envPairs(got))
 		}
 	})
