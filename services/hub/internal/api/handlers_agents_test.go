@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	agentv1alpha1 "github.com/DominikPinsel/ainsel/shared/api/api/v1alpha1"
+	"github.com/DominikPinsel/ainsel/services/hub/internal/mcpservers"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/skills"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -1060,5 +1061,114 @@ func TestAgents_SkillsScoped(t *testing.T) {
 	})
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for unknown skill on create, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAgents_MCPScoped(t *testing.T) {
+	img := testAgentImage("img-mcp", "git")
+	s := testServer(t, img)
+	s.mcp = mcpServiceForTest(t)
+	ctx := t.Context()
+	if err := s.mcp.Create(ctx, &mcpservers.MCPServer{Name: "github", DisplayName: "GitHub", URL: "https://mcp.github.com/sse", TokenFromEnv: "GITHUB_TOKEN"}); err != nil { // #nosec G101 -- test data, not a credential
+		t.Fatalf("create registry server: %v", err)
+	}
+	if err := s.mcp.Create(ctx, &mcpservers.MCPServer{Name: "linear", DisplayName: "Linear", URL: "https://mcp.linear.app/sse"}); err != nil {
+		t.Fatalf("create registry server: %v", err)
+	}
+	s.mux.HandleFunc("/api/v1/agents", s.handleAgents)
+	s.mux.HandleFunc("/api/v1/agents/", s.handleAgent)
+
+	do := func(method, path string, body any) *httptest.ResponseRecorder {
+		b, _ := json.Marshal(body)
+		req := httptest.NewRequest(method, path, bytes.NewReader(b))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		s.mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// Create with an explicit MCP selection: names resolve to full defs.
+	rec := do(http.MethodPost, "/api/v1/agents", SimpleAgentCreateRequest{
+		Name:     "MCP Agent",
+		ImageRef: AgentImageRefInfo{Name: "img-mcp"},
+		LLM:      AgentLLMInfo{Model: "glm-5.1:cloud"},
+		MCP:      &AgentMCPRequest{Servers: []string{"github"}},
+	})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var created SimpleAgentResponse
+	if err := json.NewDecoder(rec.Body).Decode(&created); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if created.MCP == nil || len(created.MCP.Servers) != 1 {
+		t.Fatalf("expected explicit mcp on create response, got %+v", created.MCP)
+	}
+	srv := created.MCP.Servers[0]
+	if srv.Name != "github" || srv.URL != "https://mcp.github.com/sse" || srv.TokenFromEnv != "GITHUB_TOKEN" {
+		t.Fatalf("expected resolved definition, got %+v", srv)
+	}
+
+	var stored agentv1alpha1.Agent
+	if err := s.client.Get(ctx, types.NamespacedName{Name: created.ID, Namespace: "test-ns"}, &stored); err != nil {
+		t.Fatalf("get stored: %v", err)
+	}
+	if stored.Spec.MCP == nil || len(stored.Spec.MCP.Servers) != 1 || stored.Spec.MCP.Servers[0].URL != "https://mcp.github.com/sse" {
+		t.Fatalf("expected resolved spec.mcp on stored CR, got %+v", stored.Spec.MCP)
+	}
+
+	// Registry edits do not rewrite existing agents: the CR holds a
+	// snapshot of the definition at write time.
+	updated0, err := s.mcp.Get(ctx, "github")
+	if err != nil {
+		t.Fatalf("get registry server: %v", err)
+	}
+	updated0.URL = "https://moved.example.com/sse"
+	if err := s.mcp.Update(ctx, updated0); err != nil {
+		t.Fatalf("update registry server: %v", err)
+	}
+	rec = do(http.MethodGet, "/api/v1/agents/"+created.ID, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var refetched SimpleAgentResponse
+	if err := json.NewDecoder(rec.Body).Decode(&refetched); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if refetched.MCP == nil || refetched.MCP.Servers[0].URL != "https://mcp.github.com/sse" {
+		t.Fatalf("expected snapshotted url to survive registry edit, got %+v", refetched.MCP)
+	}
+
+	// Update to an explicit empty selection — distinct from "unset"
+	// (nil = inherit the image's mcpServers).
+	rec = do(http.MethodPut, "/api/v1/agents/"+created.ID, SimpleAgentUpdateRequest{
+		MCP: &AgentMCPRequest{Servers: []string{}},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var updated SimpleAgentResponse
+	if err := json.NewDecoder(rec.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if updated.MCP == nil || len(updated.MCP.Servers) != 0 {
+		t.Fatalf("expected explicit empty mcp, got %+v", updated.MCP)
+	}
+
+	// Unknown registry names are rejected on update and create.
+	rec = do(http.MethodPut, "/api/v1/agents/"+created.ID, SimpleAgentUpdateRequest{
+		MCP: &AgentMCPRequest{Servers: []string{"nope"}},
+	})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for unknown mcp server, got %d: %s", rec.Code, rec.Body.String())
+	}
+	rec = do(http.MethodPost, "/api/v1/agents", SimpleAgentCreateRequest{
+		Name:     "Bad MCP",
+		ImageRef: AgentImageRefInfo{Name: "img-mcp"},
+		LLM:      AgentLLMInfo{Model: "glm-5.1:cloud"},
+		MCP:      &AgentMCPRequest{Servers: []string{"nope"}},
+	})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for unknown mcp server on create, got %d: %s", rec.Code, rec.Body.String())
 	}
 }

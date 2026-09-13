@@ -313,7 +313,42 @@ describe('AgentDetail', () => {
     })
   })
 
-  it('opens the Tools tab with only the tools side of the image', async () => {
+  it('opens the Tools tab with the image catalog and an agent-scoped MCP selection', async () => {
+    const putCalls: Array<{ url: string; body?: string }> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) => {
+        if (init?.method === 'PUT') {
+          putCalls.push({ url, body: init.body ? String(init.body) : undefined })
+        }
+        if (url.includes('/mcp-servers')) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify([
+                {
+                  name: 'github',
+                  displayName: 'GitHub',
+                  url: 'https://mcp.github.com/sse',
+                  tokenFromEnv: 'GITHUB_TOKEN',
+                  createdAt: '2026-06-01T00:00:00Z',
+                  updatedAt: '2026-06-01T00:00:00Z',
+                },
+                {
+                  name: 'linear',
+                  displayName: 'Linear',
+                  url: 'https://mcp.linear.app/sse',
+                  createdAt: '2026-06-01T00:00:00Z',
+                  updatedAt: '2026-06-01T00:00:00Z',
+                },
+              ]),
+              { status: 200 },
+            ),
+          )
+        }
+        return Promise.resolve(defaultFetch(url, init))
+      }),
+    )
+
     renderWithProviders(
       <Routes>
         <Route path="/agents/:id" element={<AgentDetail />} />
@@ -323,12 +358,18 @@ describe('AgentDetail', () => {
     await screen.findAllByText('doc-writer')
     await userEvent.click(screen.getByRole('tab', { name: /^tools$/i }))
 
-    // MCP servers and the tool list render for the referenced image.
-    expect(
-      await screen.findByRole('heading', { name: 'MCP Servers' }),
-    ).toBeInTheDocument()
+    // The image tool catalog still renders (with its own save button),
+    // and the MCP section is now the agent's own selection.
     expect((await screen.findAllByText('read_file')).length).toBeGreaterThan(0)
-    expect(screen.getByRole('button', { name: /^save$/i })).toBeInTheDocument()
+    expect(
+      await screen.findByRole('button', {
+        name: /add selected to enabled on this agent/i,
+      }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: /github/i })).toBeInTheDocument()
+    expect(
+      screen.getByText(/inherited from the runtime image/i),
+    ).toBeInTheDocument()
 
     // No image-side, skills, or picker sections on this tab.
     expect(screen.queryByLabelText('Image URL')).not.toBeInTheDocument()
@@ -339,6 +380,20 @@ describe('AgentDetail', () => {
       screen.queryByRole('heading', { name: 'Skills' }),
     ).not.toBeInTheDocument()
     expect(screen.queryByLabelText('Agent image')).not.toBeInTheDocument()
+
+    // Enabling an MCP server pins the selection to the agent.
+    await userEvent.click(screen.getByRole('option', { name: /github/i }))
+    await userEvent.click(
+      screen.getByRole('button', { name: /add selected to enabled on this agent/i }),
+    )
+    await waitFor(() => {
+      const call = putCalls.find((c) => c.url.includes('/api/v1/agents/a1'))
+      expect(call).toBeDefined()
+      expect(JSON.parse(call!.body!)).toEqual({
+        name: 'doc-writer',
+        mcp: { servers: ['github'] },
+      })
+    })
   })
 
   it('opens the Skills tab as an agent-scoped selection and pins it on change', async () => {
