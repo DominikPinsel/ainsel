@@ -486,7 +486,7 @@ var _ = Describe("Agent Controller", func() {
 				"Deployment replicas must default to 1 when spec.scaling is nil")
 		})
 
-		It("should inject MCP_SERVERS from spec.enabledMCPs when the Service exists", func() {
+		It("should migrate spec.enabledMCPs into spec.mcp without changing MCP_SERVERS", func() {
 			By("Pre-creating an mcp-example-mcp Service in the agent's namespace")
 			svc := &corev1.Service{
 				ObjectMeta: metav1.ObjectMeta{
@@ -502,7 +502,7 @@ var _ = Describe("Agent Controller", func() {
 				_ = k8sClient.Delete(ctx, svc)
 			}()
 
-			By("Adding example-mcp to spec.enabledMCPs")
+			By("Adding example-mcp to the deprecated spec.enabledMCPs")
 			agent := &ainselv1alpha1.Agent{}
 			Expect(k8sClient.Get(ctx, typeNamespacedName, agent)).To(Succeed())
 			agent.Spec.EnabledMCPs = []string{"example-mcp"}
@@ -516,7 +516,19 @@ var _ = Describe("Agent Controller", func() {
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Verifying MCP_SERVERS has the resolved URL")
+			wantURL := "http://mcp-example-mcp.default.svc.cluster.local:8080/mcp"
+
+			By("Verifying the CR now carries an explicit spec.mcp and no enabledMCPs")
+			migrated := &ainselv1alpha1.Agent{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, migrated)).To(Succeed())
+			Expect(migrated.Spec.EnabledMCPs).To(BeEmpty(),
+				"the deprecated field must be cleared once migrated")
+			Expect(migrated.Spec.MCP).NotTo(BeNil())
+			Expect(migrated.Spec.MCP.Servers).To(Equal([]ainselv1alpha1.AgentMCPServer{
+				{Name: "example-mcp", URL: wantURL},
+			}))
+
+			By("Verifying MCP_SERVERS is unchanged by the migration")
 			deploy := &appsv1.Deployment{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{
 				Name:      "agent-" + resourceName,
@@ -524,10 +536,18 @@ var _ = Describe("Agent Controller", func() {
 			}, deploy)).To(Succeed())
 			mcpEnv := findEnvVar(deploy.Spec.Template.Spec.Containers[0].Env, "MCP_SERVERS")
 			Expect(mcpEnv).NotTo(BeNil())
-			Expect(mcpEnv.Value).To(Equal("example-mcp=http://mcp-example-mcp.default.svc.cluster.local:8080/mcp"))
+			Expect(mcpEnv.Value).To(Equal("example-mcp=" + wantURL))
+
+			By("Reconciling again to confirm the migration is idempotent")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			again := &ainselv1alpha1.Agent{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, again)).To(Succeed())
+			Expect(again.Spec.EnabledMCPs).To(BeEmpty())
+			Expect(again.Spec.MCP.Servers).To(HaveLen(1))
 		})
 
-		It("should not fail when an enabled MCP Service is missing and should set MCP_SERVERS to empty", func() {
+		It("should drop legacy MCP names with no Service and record an explicit empty selection", func() {
 			By("Adding a non-existent MCP name to spec.enabledMCPs")
 			agent := &ainselv1alpha1.Agent{}
 			Expect(k8sClient.Get(ctx, typeNamespacedName, agent)).To(Succeed())
@@ -542,6 +562,14 @@ var _ = Describe("Agent Controller", func() {
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 
+			By("Verifying spec.mcp is explicit and empty, matching what the agent reached before")
+			migrated := &ainselv1alpha1.Agent{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, migrated)).To(Succeed())
+			Expect(migrated.Spec.EnabledMCPs).To(BeEmpty())
+			Expect(migrated.Spec.MCP).NotTo(BeNil(),
+				"an unresolvable name must still leave an explicit selection, not fall back to the profile")
+			Expect(migrated.Spec.MCP.Servers).To(BeEmpty())
+
 			By("Verifying MCP_SERVERS is present but empty")
 			deploy := &appsv1.Deployment{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{
@@ -551,6 +579,45 @@ var _ = Describe("Agent Controller", func() {
 			mcpEnv := findEnvVar(deploy.Spec.Template.Spec.Containers[0].Env, "MCP_SERVERS")
 			Expect(mcpEnv).NotTo(BeNil())
 			Expect(mcpEnv.Value).To(Equal(""))
+		})
+
+		It("should drop spec.enabledMCPs when spec.mcp is already set", func() {
+			By("Setting both spec.mcp and the deprecated spec.enabledMCPs")
+			agent := &ainselv1alpha1.Agent{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, agent)).To(Succeed())
+			agent.Spec.MCP = &ainselv1alpha1.AgentMCP{Servers: []ainselv1alpha1.AgentMCPServer{
+				{Name: "explicit", URL: "http://explicit.example/mcp"},
+			}}
+			agent.Spec.EnabledMCPs = []string{"example-mcp"}
+			Expect(k8sClient.Update(ctx, agent)).To(Succeed())
+
+			By("Reconciling")
+			controllerReconciler := &AgentReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying spec.mcp is untouched and the deprecated field is gone")
+			after := &ainselv1alpha1.Agent{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, after)).To(Succeed())
+			Expect(after.Spec.EnabledMCPs).To(BeEmpty())
+			Expect(after.Spec.MCP.Servers).To(Equal([]ainselv1alpha1.AgentMCPServer{
+				{Name: "explicit", URL: "http://explicit.example/mcp"},
+			}), "an explicit spec.mcp must not be rewritten by the migration")
+
+			By("Verifying MCP_SERVERS comes from spec.mcp alone")
+			deploy := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      "agent-" + resourceName,
+				Namespace: "default",
+			}, deploy)).To(Succeed())
+			mcpEnv := findEnvVar(deploy.Spec.Template.Spec.Containers[0].Env, "MCP_SERVERS")
+			Expect(mcpEnv).NotTo(BeNil())
+			Expect(mcpEnv.Value).To(ContainSubstring("explicit=http://explicit.example/mcp"))
+			Expect(mcpEnv.Value).NotTo(ContainSubstring("example-mcp"),
+				"the deprecated field must not contribute servers")
 		})
 
 		It("should build MCP_SERVER_TOKENS from AgentImage tokenFromEnv entries", func() {

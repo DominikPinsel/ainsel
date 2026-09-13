@@ -115,6 +115,12 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, nil
 	}
 
+	// 1.6. One-time migration of the deprecated spec.enabledMCPs into an
+	// explicit spec.mcp snapshot, before anything reads the agent's servers.
+	if err := r.migrateLegacyEnabledMCPs(ctx, &agent); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	agentName := fmt.Sprintf("agent-%s", agent.Name)
 
 	// 2. Resolve the AgentImage referenced by spec.imageRef.name.
@@ -381,8 +387,6 @@ func desiredReplicas(agent *ainselv1alpha1.Agent) int32 {
 }
 
 func (r *AgentReconciler) reconcileDeployment(ctx context.Context, agent *ainselv1alpha1.Agent, agentName string, img *ainselv1alpha1.AgentImage, podImage string) (*appsv1.Deployment, []mcpservers.MissingEnvEntry, error) {
-	log := logf.FromContext(ctx)
-
 	// missingEnv captures MCP servers whose tokenFromEnv references an
 	// env var not defined on the AgentImage. It is populated inside the
 	// CreateOrUpdate closure and returned to the caller so the Reconcile
@@ -397,24 +401,11 @@ func (r *AgentReconciler) reconcileDeployment(ctx context.Context, agent *ainsel
 		"ainsel.dev/agent":             agent.Name,
 	}
 
-	// Resolve each enabled MCP name to a runtime URL by looking up its
-	// Service in the agent's namespace. Missing Services are logged and
-	// skipped — the agent still rolls out.
-	// Agent-scoped MCP definitions (spec.mcp) carry their URLs already, so
-	// Service discovery is the legacy path only: when spec.mcp is set it is
-	// authoritative and enabledMCPs is ignored.
-	var mcpEntries, mcpMissing []string
-	if agent.Spec.MCP == nil {
-		discovered, missing, err := mcpservers.Discover(ctx, r.Client, agent.Namespace, agent.Spec.EnabledMCPs)
-		if err != nil {
-			log.Error(err, "discover MCP services")
-			return nil, nil, err
-		}
-		mcpEntries, mcpMissing = discovered, missing
-	}
-	for _, n := range mcpMissing {
-		log.Info("MCP service not found, skipping", "agent", agent.Name, "mcp", n)
-	}
+	// MCP_SERVERS is built from the agent's own definitions (or its runtime
+	// profile's), plus any sidecar-declared servers and the injected chat
+	// sidecar. The deprecated spec.enabledMCPs field is not read here: the
+	// reconciler migrates it into spec.mcp once, see migrateLegacyEnabledMCPs.
+	var mcpEntries []string
 
 	imagePullPolicy := agent.Spec.Runtime.ImagePullPolicy
 	if imagePullPolicy == "" {
@@ -1427,7 +1418,7 @@ func (r *AgentReconciler) computePersonaHash(ctx context.Context, namespace, per
 
 // effectiveSkills returns the skill ids an agent mounts: the agent's own
 // spec.skills when set (an explicit override, possibly empty), otherwise
-// the referenced image's EnabledSkills (legacy behavior).
+// the referenced image's EnabledSkills (the profile's defaults).
 func effectiveSkills(agent *ainselv1alpha1.Agent, img *ainselv1alpha1.AgentImage) []string {
 	if agent.Spec.Skills != nil {
 		return agent.Spec.Skills.Items
@@ -1435,11 +1426,67 @@ func effectiveSkills(agent *ainselv1alpha1.Agent, img *ainselv1alpha1.AgentImage
 	return img.Spec.EnabledSkills
 }
 
+// migrateLegacyEnabledMCPs converts the deprecated spec.enabledMCPs — names of
+// in-cluster "mcp-<name>" Services — into an explicit spec.mcp snapshot and
+// clears the field. It is a one-shot, behaviour-preserving migration: the
+// resolved URLs are exactly the entries the removed discovery path injected
+// into MCP_SERVERS, so agents keep reaching the same servers. Names whose
+// Service does not exist are dropped with a Warning event; they contributed
+// nothing before either, because discovery skipped them the same way.
+//
+// Agents that already carry spec.mcp only get the stale field cleared — that
+// field has been authoritative since agent-scoped MCP support landed, so those
+// agents were already ignoring enabledMCPs.
+func (r *AgentReconciler) migrateLegacyEnabledMCPs(ctx context.Context, agent *ainselv1alpha1.Agent) error {
+	if len(agent.Spec.EnabledMCPs) == 0 {
+		return nil
+	}
+
+	log := ctrl.LoggerFrom(ctx)
+
+	if agent.Spec.MCP != nil {
+		patch := client.MergeFrom(agent.DeepCopy())
+		agent.Spec.EnabledMCPs = nil
+		if err := r.Patch(ctx, agent, patch); err != nil {
+			return fmt.Errorf("clearing deprecated enabledMCPs: %w", err)
+		}
+		log.Info("dropped deprecated spec.enabledMCPs, spec.mcp is already set", "agent", agent.Name)
+		return nil
+	}
+
+	servers, missing, err := mcpservers.Resolve(ctx, r.Client, agent.Namespace, agent.Spec.EnabledMCPs)
+	if err != nil {
+		return fmt.Errorf("resolving legacy enabledMCPs: %w", err)
+	}
+
+	patch := client.MergeFrom(agent.DeepCopy())
+	agent.Spec.MCP = &ainselv1alpha1.AgentMCP{Servers: servers}
+	agent.Spec.EnabledMCPs = nil
+	if err := r.Patch(ctx, agent, patch); err != nil {
+		return fmt.Errorf("patching spec.mcp: %w", err)
+	}
+
+	for _, name := range missing {
+		log.Info("legacy MCP name has no Service, dropped during migration", "agent", agent.Name, "mcp", name)
+		if r.Recorder != nil {
+			r.Recorder.Eventf(agent, corev1.EventTypeWarning, "LegacyMCPUnresolved",
+				"enabledMCPs entry %q has no Service mcp-%s and was dropped during migration to spec.mcp", name, name)
+		}
+	}
+	log.Info("migrated spec.enabledMCPs to spec.mcp",
+		"agent", agent.Name, "servers", len(servers), "dropped", len(missing))
+	if r.Recorder != nil {
+		r.Recorder.Eventf(agent, corev1.EventTypeNormal, "LegacyMCPMigrated",
+			"Migrated %d spec.enabledMCPs entries into spec.mcp", len(servers))
+	}
+	return nil
+}
+
 // effectiveMCPServers returns the MCP server definitions the agent
 // connects to: the agent's own selection when set (explicit override, empty
-// = no servers), falling back to the referenced image's servers (legacy
-// behavior). Agent definitions are snapshots resolved by the hub at write
-// time, so registry edits never rewrite running agents.
+// = no servers), falling back to the referenced image's servers (the shared
+// runtime profile's defaults). Agent definitions are snapshots resolved by
+// the hub at write time, so registry edits never rewrite running agents.
 func effectiveMCPServers(agent *ainselv1alpha1.Agent, img *ainselv1alpha1.AgentImage) []ainselv1alpha1.AgentImageMCPServer {
 	if agent.Spec.MCP != nil {
 		servers := make([]ainselv1alpha1.AgentImageMCPServer, 0, len(agent.Spec.MCP.Servers))
