@@ -98,6 +98,13 @@ Every resource (agent, agent-image, connector, trigger, cron-trigger,
 MCP server, persona, skill) belongs to exactly one group. You choose the
 group when creating the resource, from the groups you are a member of.
 
+One exception: a persona an **agent owns** is not a group resource of its own.
+The hub creates it on the agent's behalf when that agent's persona is edited
+inline, and it is read and written through `/api/v1/agents/{name}/persona` — so
+the *agent's* group decides access, there is nothing extra to grant, and the
+persona does not appear in the persona library. Shared persona templates remain
+ordinary group resources.
+
 ```bash
 curl -X POST https://ainsel.example.com/api/v1/agents \
   -H "Authorization: Bearer <token>" \
