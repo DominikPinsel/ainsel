@@ -57,6 +57,7 @@ List all Agents in the configured namespace, sorted by resource name.
       "status": {"ready": true, "replicas": 1},
       "skills": {"items": ["git-review"]},
       "mcp": {"servers": [{"name": "github", "url": "https://mcp.github.com/sse", "tokenFromEnv": "GITHUB_TOKEN"}]},
+      "env": [{"name": "LOG_LEVEL", "value": "debug"}, {"name": "API_TOKEN", "value": "", "secret": true}],
       "updatedAt": "2026-06-22T00:05:00Z"
     }
   ],
@@ -69,6 +70,8 @@ Agents carry an `updatedAt` timestamp (RFC3339) in both list and detail response
 Agents also carry an agent-scoped skill selection in `skills`: **present = explicit override** (`{"items": []}` means no skills at all), **absent = inherit** the referenced image's `enabledSkills` (legacy behavior). Every id must exist in the skill library (`/skills`); unknown ids are rejected with `400`. Once set, the selection is explicit — the API does not currently offer a reset-to-inherit.
 
 The same wrapper semantics apply to the agent-scoped MCP selection in `mcp`, with one asymmetry: **requests carry registry names** (`{"servers": ["github"]}`), and the hub resolves each name to its full definition from the MCP registry (`/mcp-servers`, unknown names → `400`) when writing — **responses return the resolved definitions** (`name`, `url`, `tokenFromEnv`). The agent CR holds a snapshot: later registry edits do not rewrite existing agents. Absent `mcp` inherits the referenced image's `mcpServers` (legacy); `{"servers": []}` explicitly connects to none.
+
+Agents may also carry their own environment variables in `env`: a list of `{"name", "value", "secret"}` layered **on top of** the referenced image's `env`. Entries whose name matches an image variable override its value (and its `secret` flag); new names are added. Absent `env` means the agent runs on the image's variables alone. Names must be valid environment variable names and unique within the list (`400` otherwise). Values of entries with `secret: true` are never returned — they read back as `""`, matching the image `env` contract — and submitting a secret entry with an empty value on update keeps the stored value.
 
 ### POST /api/v1/agents
 
@@ -86,6 +89,7 @@ Create a new Agent. The hub generates the resource name (`a-<short id>`); the re
   "enabledTools": ["read", "edit"],
   "scaling": {"minReplicas": 0, "maxReplicas": 3, "cooldownPeriod": 300, "lagThreshold": 5},
   "memory": {"enabled": true, "provider": "example"},
+  "env": [{"name": "LOG_LEVEL", "value": "debug"}],
   "ollamaCloud": {"apiKey": "<consumed-once>"}
 }
 ```
@@ -103,6 +107,8 @@ Fetch one Agent by resource name.
 ### PUT /api/v1/agents/{name}
 
 Update an Agent. Body fields are all optional; only fields that are present are applied. When `imageRef` or `enabledTools` changes, the new combination is re-validated against the referenced `AgentImage`.
+
+`env` **replaces** this agent's override list when present: `{"env": []}` clears the overrides so the agent runs on the image's variables again. A secret entry submitted with an empty `value` keeps its stored value, so a client that never received the secret can round-trip the list safely.
 
 Re-pointing `persona` away from a persona this agent owns deletes that owned persona afterwards: owned personas are invisible to the persona library, so nothing else would reclaim them. The cleanup is best-effort and never fails the request.
 

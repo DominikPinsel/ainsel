@@ -30,6 +30,17 @@ func findEnvVar(envs []corev1.EnvVar, name string) *corev1.EnvVar {
 	return nil
 }
 
+// mustDeployment fetches an agent's Deployment via the suite client, failing
+// the spec when it is missing.
+func mustDeployment(name string) *appsv1.Deployment {
+	deploy := &appsv1.Deployment{}
+	ExpectWithOffset(1, k8sClient.Get(ctx, types.NamespacedName{
+		Name:      name,
+		Namespace: "default",
+	}, deploy)).To(Succeed())
+	return deploy
+}
+
 var _ = Describe("Agent Controller", func() {
 	Context("When reconciling a resource", func() {
 		const resourceName = "test-agent"
@@ -2091,6 +2102,147 @@ var _ = Describe("Agent Controller", func() {
 			setupInit := initContainers[0]
 			Expect(setupInit.SecurityContext).To(BeNil())
 			Expect(setupInit.Command[2]).To(ContainSubstring("chown"))
+		})
+
+		It("should apply agent env overrides on top of the image env", func() {
+			By("Declaring shared defaults on the image, an override and an addition on the agent")
+			img := &ainselv1alpha1.AgentImage{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testImageName, Namespace: "default"}, img)).To(Succeed())
+			img.Spec.Env = []ainselv1alpha1.AgentImageEnvVar{
+				{Name: "LOG_LEVEL", Value: "info"},
+				{Name: "SHARED_ONLY", Value: "yes"},
+			}
+			Expect(k8sClient.Update(ctx, img)).To(Succeed())
+
+			Expect(updateAgentWithRetry(func(a *ainselv1alpha1.Agent) {
+				a.Spec.Env = []ainselv1alpha1.AgentEnvVar{
+					{Name: "LOG_LEVEL", Value: "debug"},
+					{Name: "AGENT_ONLY", Value: "agent-value"},
+				}
+			})).To(Succeed())
+
+			controllerReconciler := &AgentReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			agentName := "agent-" + resourceName
+
+			By("Verifying the env Secret merges image defaults with the agent's overrides")
+			secret := &corev1.Secret{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      agentName + "-image-env",
+				Namespace: "default",
+			}, secret)).To(Succeed())
+			Expect(secret.Data).To(HaveKeyWithValue("LOG_LEVEL", []byte("debug")),
+				"the agent's value must win over the image default")
+			Expect(secret.Data).To(HaveKeyWithValue("SHARED_ONLY", []byte("yes")),
+				"image defaults the agent does not override must survive")
+			Expect(secret.Data).To(HaveKeyWithValue("AGENT_ONLY", []byte("agent-value")),
+				"agent-only variables must be added")
+
+			By("Verifying the Deployment exposes every effective variable")
+			deploy := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      agentName,
+				Namespace: "default",
+			}, deploy)).To(Succeed())
+			for _, name := range []string{"LOG_LEVEL", "SHARED_ONLY", "AGENT_ONLY"} {
+				e := findEnvVar(deploy.Spec.Template.Spec.Containers[0].Env, name)
+				Expect(e).NotTo(BeNil(), "missing env entry %s", name)
+				Expect(e.ValueFrom).NotTo(BeNil())
+				Expect(e.ValueFrom.SecretKeyRef.Name).To(Equal(agentName + "-image-env"))
+				Expect(e.ValueFrom.SecretKeyRef.Key).To(Equal(name))
+			}
+		})
+
+		It("should create the env Secret when only the agent defines env vars", func() {
+			By("Clearing the image env so the agent's own vars are the only source")
+			img := &ainselv1alpha1.AgentImage{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testImageName, Namespace: "default"}, img)).To(Succeed())
+			img.Spec.Env = nil
+			Expect(k8sClient.Update(ctx, img)).To(Succeed())
+
+			Expect(updateAgentWithRetry(func(a *ainselv1alpha1.Agent) {
+				a.Spec.Env = []ainselv1alpha1.AgentEnvVar{
+					{Name: "AGENT_ONLY", Value: "agent-value"},
+				}
+			})).To(Succeed())
+
+			controllerReconciler := &AgentReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			agentName := "agent-" + resourceName
+			secret := &corev1.Secret{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      agentName + "-image-env",
+				Namespace: "default",
+			}, secret)).To(Succeed(), "agent env alone must still produce the Secret")
+			Expect(secret.Data).To(HaveKeyWithValue("AGENT_ONLY", []byte("agent-value")))
+			Expect(findEnvVar(
+				mustDeployment(agentName).Spec.Template.Spec.Containers[0].Env,
+				"AGENT_ONLY",
+			)).NotTo(BeNil())
+		})
+
+		It("should not allow agent env to override platform-managed auth env vars", func() {
+			const platformToken = "platform-internal-token"
+			originalToken := os.Getenv("HUB_INTERNAL_VALIDATE_SECRET")
+			Expect(os.Setenv("HUB_INTERNAL_VALIDATE_SECRET", platformToken)).To(Succeed())
+			DeferCleanup(func() error {
+				if originalToken == "" {
+					return os.Unsetenv("HUB_INTERNAL_VALIDATE_SECRET")
+				}
+				return os.Setenv("HUB_INTERNAL_VALIDATE_SECRET", originalToken)
+			})
+
+			By("Declaring a mis-set value for the platform-owned name as an agent override")
+			Expect(updateAgentWithRetry(func(a *ainselv1alpha1.Agent) {
+				a.Spec.Env = []ainselv1alpha1.AgentEnvVar{
+					{Name: "HUB_INTERNAL_VALIDATE_SECRET", Value: "wrong-token"}, // #nosec G101 -- test fixture: asserts the value is NOT used
+				}
+			})).To(Succeed())
+
+			controllerReconciler := &AgentReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			agentName := "agent-" + resourceName
+			secret := &corev1.Secret{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      agentName + "-image-env",
+				Namespace: "default",
+			}, secret)).To(Succeed())
+			Expect(secret.Data).To(HaveKeyWithValue("HUB_INTERNAL_VALIDATE_SECRET", []byte(platformToken)),
+				"the canonical platform value must win over an agent override")
+
+			By("Verifying the agent container gets exactly one platform-owned entry, as a literal")
+			container := mustDeployment(agentName).Spec.Template.Spec.Containers[0]
+			var internalToken *corev1.EnvVar
+			for i := range container.Env {
+				if container.Env[i].Name == "HUB_INTERNAL_VALIDATE_SECRET" {
+					Expect(internalToken).To(BeNil(), "expected exactly one HUB_INTERNAL_VALIDATE_SECRET entry")
+					internalToken = &container.Env[i]
+				}
+			}
+			Expect(internalToken).NotTo(BeNil())
+			Expect(internalToken.Value).To(Equal(platformToken))
+			Expect(internalToken.ValueFrom).To(BeNil(), "platform-owned values are injected as literals")
 		})
 	})
 })

@@ -371,7 +371,7 @@ describe('AgentDetail', () => {
     })
   })
 
-  it('opens the Image tab with image identity and env, and switches images', async () => {
+  it('opens the Runtime tab with image identity and env, and switches images', async () => {
     const putCalls: Array<{ url: string; body?: string }> = []
     vi.stubGlobal(
       'fetch',
@@ -390,7 +390,7 @@ describe('AgentDetail', () => {
       { route: '/agents/a1' },
     )
     await screen.findAllByText('doc-writer')
-    await userEvent.click(screen.getByRole('tab', { name: /^image$/i }))
+    await userEvent.click(screen.getByRole('tab', { name: /^runtime$/i }))
 
     // The embedded editor loads the referenced image's identity and env.
     const urlInput = await screen.findByLabelText('Image URL')
@@ -423,6 +423,35 @@ describe('AgentDetail', () => {
         imageRef: { name: 'minimal:1.0' },
       })
     })
+  })
+
+  it('offers agent-scoped env overrides next to the shared image profile', async () => {
+    renderWithProviders(
+      <Routes>
+        <Route path="/agents/:id" element={<AgentDetail />} />
+      </Routes>,
+      { route: '/agents/a1' },
+    )
+    await screen.findAllByText('doc-writer')
+    await userEvent.click(screen.getByRole('tab', { name: /^runtime$/i }))
+
+    // The shared image profile keeps its own editor and heading ...
+    expect(await screen.findByLabelText('Image URL')).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { name: 'Environment Variables' }),
+    ).toBeInTheDocument()
+
+    // ... and the agent's own override list sits beside it, framed as
+    // inherited until the first change pins it.
+    expect(
+      screen.getByRole('heading', { name: /^environment$/i }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/Currently inherited from the runtime image/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /save overrides/i }),
+    ).toBeDisabled()
   })
 
   it('opens the Tools tab with the image catalog and an agent-scoped MCP selection', async () => {

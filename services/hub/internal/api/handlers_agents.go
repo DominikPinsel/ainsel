@@ -17,6 +17,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	validation "k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -89,17 +90,65 @@ func (s *Server) resolveMCPRequest(ctx context.Context, w http.ResponseWriter, r
 	return mcp, nil
 }
 
+// agentEnvFromRequest validates the requested env overrides and converts them
+// to CR entries. existing supplies the values of secret entries whose request
+// value is empty ("keep the existing value"), mirroring the image env contract.
+// A nil result means "no overrides", which is also what an empty request list
+// produces — clearing an agent's overrides returns it to the image defaults.
+func agentEnvFromRequest(w http.ResponseWriter, in []AgentImageEnvVarInfo, existing []agentv1alpha1.AgentEnvVar) ([]agentv1alpha1.AgentEnvVar, error) {
+	if len(in) == 0 {
+		return nil, nil
+	}
+	secretValues := make(map[string]string, len(existing))
+	for _, e := range existing {
+		if e.Secret {
+			secretValues[e.Name] = e.Value
+		}
+	}
+
+	out := make([]agentv1alpha1.AgentEnvVar, 0, len(in))
+	seen := make(map[string]bool, len(in))
+	for _, e := range in {
+		name := strings.TrimSpace(e.Name)
+		if name == "" {
+			writeError(w, http.StatusBadRequest, "env name is required")
+			return nil, fmt.Errorf("env name is required")
+		}
+		if errs := validation.IsEnvVarName(name); len(errs) > 0 {
+			writeError(w, http.StatusBadRequest, "invalid env name "+name+": "+errs[0])
+			return nil, fmt.Errorf("invalid env name %q", name)
+		}
+		if seen[name] {
+			// The operator merges by name, so duplicates would silently keep
+			// only one value. Reject instead of guessing.
+			writeError(w, http.StatusBadRequest, "duplicate env name: "+name)
+			return nil, fmt.Errorf("duplicate env name %q", name)
+		}
+		seen[name] = true
+
+		value := e.Value
+		if e.Secret && value == "" {
+			value = secretValues[name]
+		}
+		out = append(out, agentv1alpha1.AgentEnvVar{Name: name, Value: value, Secret: e.Secret})
+	}
+	return out, nil
+}
+
 // SimpleAgentResponse is the simplified API representation of an Agent.
 type SimpleAgentResponse struct {
-	ID             string                   `json:"id"`
-	Name           string                   `json:"name"`
-	Description    string                   `json:"description,omitempty"`
-	ImageRef       AgentImageRefInfo        `json:"imageRef"`
-	LLM            AgentLLMInfo             `json:"llm"`
-	Persona        *AgentPersonaInfo        `json:"persona,omitempty"`
-	EnabledTools   []string                 `json:"enabledTools,omitempty"`
-	Skills         *AgentSkillsInfo         `json:"skills,omitempty"`
-	MCP            *AgentMCPInfo            `json:"mcp,omitempty"`
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	Description  string            `json:"description,omitempty"`
+	ImageRef     AgentImageRefInfo `json:"imageRef"`
+	LLM          AgentLLMInfo      `json:"llm"`
+	Persona      *AgentPersonaInfo `json:"persona,omitempty"`
+	EnabledTools []string          `json:"enabledTools,omitempty"`
+	Skills       *AgentSkillsInfo  `json:"skills,omitempty"`
+	MCP          *AgentMCPInfo     `json:"mcp,omitempty"`
+	// Env lists this agent's environment overrides on top of the referenced
+	// image's env. Values of entries marked Secret are never returned.
+	Env            []AgentImageEnvVarInfo   `json:"env,omitempty"`
 	Replicas       *int32                   `json:"replicas,omitempty"`
 	Memory         *AgentMemoryInfo         `json:"memory,omitempty"`
 	OllamaCloud    *AgentOllamaCloudInfo    `json:"ollamaCloud,omitempty"`
@@ -162,15 +211,18 @@ type SimpleAgentStatus struct {
 
 // SimpleAgentCreateRequest is used to create a new Agent.
 type SimpleAgentCreateRequest struct {
-	Name           string                   `json:"name"`
-	GroupID        string                   `json:"groupId"`
-	Description    string                   `json:"description,omitempty"`
-	ImageRef       AgentImageRefInfo        `json:"imageRef"`
-	LLM            AgentLLMInfo             `json:"llm"`
-	Persona        *AgentPersonaInfo        `json:"persona,omitempty"`
-	EnabledTools   []string                 `json:"enabledTools,omitempty"`
-	Skills         *AgentSkillsInfo         `json:"skills,omitempty"`
-	MCP            *AgentMCPRequest         `json:"mcp,omitempty"`
+	Name         string            `json:"name"`
+	GroupID      string            `json:"groupId"`
+	Description  string            `json:"description,omitempty"`
+	ImageRef     AgentImageRefInfo `json:"imageRef"`
+	LLM          AgentLLMInfo      `json:"llm"`
+	Persona      *AgentPersonaInfo `json:"persona,omitempty"`
+	EnabledTools []string          `json:"enabledTools,omitempty"`
+	Skills       *AgentSkillsInfo  `json:"skills,omitempty"`
+	MCP          *AgentMCPRequest  `json:"mcp,omitempty"`
+	// Env sets this agent's environment overrides. For an entry marked
+	// Secret, an empty Value means "keep the existing value".
+	Env            []AgentImageEnvVarInfo   `json:"env,omitempty"`
 	Replicas       *int32                   `json:"replicas,omitempty"`
 	Memory         *AgentMemoryInfo         `json:"memory,omitempty"`
 	OllamaCloud    *AgentOllamaCloudInfo    `json:"ollamaCloud,omitempty"`
@@ -181,14 +233,18 @@ type SimpleAgentCreateRequest struct {
 
 // SimpleAgentUpdateRequest is used to update an existing Agent. All fields are optional.
 type SimpleAgentUpdateRequest struct {
-	Name           *string                  `json:"name,omitempty"`
-	Description    *string                  `json:"description,omitempty"`
-	ImageRef       *AgentImageRefInfo       `json:"imageRef,omitempty"`
-	LLM            *AgentLLMInfo            `json:"llm,omitempty"`
-	Persona        *AgentPersonaInfo        `json:"persona,omitempty"`
-	EnabledTools   *[]string                `json:"enabledTools,omitempty"`
-	Skills         *AgentSkillsInfo         `json:"skills,omitempty"`
-	MCP            *AgentMCPRequest         `json:"mcp,omitempty"`
+	Name         *string            `json:"name,omitempty"`
+	Description  *string            `json:"description,omitempty"`
+	ImageRef     *AgentImageRefInfo `json:"imageRef,omitempty"`
+	LLM          *AgentLLMInfo      `json:"llm,omitempty"`
+	Persona      *AgentPersonaInfo  `json:"persona,omitempty"`
+	EnabledTools *[]string          `json:"enabledTools,omitempty"`
+	Skills       *AgentSkillsInfo   `json:"skills,omitempty"`
+	MCP          *AgentMCPRequest   `json:"mcp,omitempty"`
+	// Env replaces this agent's environment overrides; present-but-empty
+	// clears them, so the agent runs on the image defaults again. For an
+	// entry marked Secret, an empty Value means "keep the existing value".
+	Env            *[]AgentImageEnvVarInfo  `json:"env,omitempty"`
 	Replicas       *int32                   `json:"replicas,omitempty"`
 	Memory         *AgentMemoryInfo         `json:"memory,omitempty"`
 	OllamaCloud    *AgentOllamaCloudInfo    `json:"ollamaCloud,omitempty"`
@@ -251,6 +307,19 @@ func toSimpleAgentResponse(a agentv1alpha1.Agent, imageDisplayName string) Simpl
 			})
 		}
 		resp.MCP = mcpInfo
+	}
+
+	// Env overrides: secret values are masked, matching the image env
+	// contract, so a response can never expose them.
+	if len(a.Spec.Env) > 0 {
+		resp.Env = make([]AgentImageEnvVarInfo, 0, len(a.Spec.Env))
+		for _, e := range a.Spec.Env {
+			info := AgentImageEnvVarInfo{Name: e.Name, Secret: e.Secret}
+			if !e.Secret {
+				info.Value = e.Value
+			}
+			resp.Env = append(resp.Env, info)
+		}
 	}
 
 	// Replicas
@@ -546,6 +615,10 @@ func (s *Server) createAgent(ctx context.Context, w http.ResponseWriter, r *http
 	if err != nil {
 		return
 	}
+	agentEnv, err := agentEnvFromRequest(w, req.Env, nil)
+	if err != nil {
+		return
+	}
 
 	id := generateID("a")
 
@@ -583,6 +656,9 @@ func (s *Server) createAgent(ctx context.Context, w http.ResponseWriter, r *http
 	}
 	if mcpSelection != nil {
 		agent.Spec.MCP = mcpSelection
+	}
+	if len(agentEnv) > 0 {
+		agent.Spec.Env = agentEnv
 	}
 	if req.Replicas != nil {
 		agent.Spec.Scaling = &agentv1alpha1.AgentScaling{
@@ -763,6 +839,15 @@ func (s *Server) updateAgent(ctx context.Context, w http.ResponseWriter, r *http
 	if err != nil {
 		return
 	}
+	// Env overrides are resolved against the current spec so a secret entry
+	// submitted with an empty value keeps its stored value.
+	var agentEnv []agentv1alpha1.AgentEnvVar
+	if req.Env != nil {
+		agentEnv, err = agentEnvFromRequest(w, *req.Env, existing.Spec.Env)
+		if err != nil {
+			return
+		}
+	}
 
 	if req.Name != nil {
 		existing.Spec.DisplayName = *req.Name
@@ -783,6 +868,11 @@ func (s *Server) updateAgent(ctx context.Context, w http.ResponseWriter, r *http
 	}
 	if mcpSelection != nil {
 		existing.Spec.MCP = mcpSelection
+	}
+	if req.Env != nil {
+		// Present-but-empty clears the overrides: the agent then runs on the
+		// referenced image's env alone.
+		existing.Spec.Env = agentEnv
 	}
 	if req.LLM != nil {
 		if req.LLM.Model != "" {

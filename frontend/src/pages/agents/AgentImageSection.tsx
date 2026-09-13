@@ -14,7 +14,7 @@ type AgentImageSectionProps = {
 }
 
 /**
- * Shared image-reference picker shown on the Image tab of the agent detail
+ * Shared image-reference picker shown on the Runtime tab of the agent detail
  * page: a dropdown that re-points the agent at another image. The referenced
  * image is what carries the runtime (container image, env, tools, skills,
  * MCP servers) — until the backend is streamlined, every tab edits the same
@@ -77,7 +77,7 @@ function NoImagePanel({ what, hint }: { what: string; hint: string }) {
 }
 
 /**
- * The Image tab of the agent detail page: image picker plus the image side
+ * The Runtime tab of the agent detail page: image picker plus the image side
  * of the referenced image (identity: display name, container URL,
  * description — and environment variables).
  */
@@ -103,7 +103,7 @@ export function AgentImageSection({ agent }: AgentImageSectionProps) {
  * referenced image (discovery requires a container context, so tools stay
  * image-scoped for now — see the M4 plan); the MCP section below is the
  * agent's own. The embedded header shows which image is being edited;
- * switching images happens on the Image tab.
+ * switching images happens on the Runtime tab.
  */
 export function AgentToolsSection({ agent }: AgentImageSectionProps) {
   const imageName = agent.imageRef?.name
@@ -112,7 +112,7 @@ export function AgentToolsSection({ agent }: AgentImageSectionProps) {
   ) : (
     <NoImagePanel
       what="Tools"
-      hint="No image linked yet — pick one on the Image tab to configure its tools."
+      hint="No image linked yet — pick one on the Runtime tab to configure its tools."
     />
   )
 }
@@ -153,7 +153,7 @@ export function AgentMCPSection({ agent }: AgentImageSectionProps) {
     return (
       <NoImagePanel
         what="MCP Servers"
-        hint="No image linked yet — pick one on the Image tab to configure MCP servers."
+        hint="No image linked yet — pick one on the Runtime tab to configure MCP servers."
       />
     )
   }
@@ -235,7 +235,7 @@ export function AgentSkillsSection({ agent }: AgentImageSectionProps) {
     return (
       <NoImagePanel
         what="Skills"
-        hint="No image linked yet — pick one on the Image tab to configure its skills."
+        hint="No image linked yet — pick one on the Runtime tab to configure its skills."
       />
     )
   }

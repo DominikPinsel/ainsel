@@ -20,11 +20,12 @@ import {
   AgentMCPSection,
   AgentSkillsSection,
 } from './AgentImageSection'
+import { AgentEnvSection } from './AgentEnvSection'
 
 const TABS = [
   { value: 'overview', label: 'Overview' },
   { value: 'persona', label: 'Persona' },
-  { value: 'image', label: 'Image' },
+  { value: 'runtime', label: 'Runtime' },
   { value: 'tools', label: 'Tools' },
   { value: 'skills', label: 'Skills' },
   { value: 'triggers', label: 'Triggers' },
@@ -112,7 +113,7 @@ export function AgentDetail() {
                     <div className="k">Image</div>
                     <div className="v">
                       {data.imageRef ? (
-                        <Button variant="ghost" onClick={() => onTabChange('image')}>
+                        <Button variant="ghost" onClick={() => onTabChange('runtime')}>
                           {data.imageRef.displayName ?? data.imageRef.name}
                         </Button>
                       ) : (
@@ -165,7 +166,12 @@ export function AgentDetail() {
 
           {data && tab === 'persona' ? <AgentPersonaSection agent={data} /> : null}
 
-          {data && tab === 'image' ? <AgentImageSection agent={data} /> : null}
+          {data && tab === 'runtime' ? (
+            <>
+              <AgentImageSection agent={data} />
+              <AgentEnvSection agent={data} />
+            </>
+          ) : null}
 
           {data && tab === 'tools' ? (
             <>
