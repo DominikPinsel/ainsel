@@ -63,7 +63,7 @@ type Server struct {
 	observabilityCache     *promCache
 	invocations            invocations.Store
 	mcp                    *mcpservers.Service
-	personas               *personas.Service
+	personas               PersonaService
 	skills                 SkillService
 	triggerStore           *triggers.Store
 	chat                   *chat.Store
@@ -173,7 +173,7 @@ type Config struct {
 
 // New creates a new API server with routes registered.
 func New(c client.Client, namespace string, connectorCfg ConnectorConfig, promClient *prometheus.Client, invStore invocations.Store, mcp *mcpservers.Service, personaSvc *personas.Service, skillSvc SkillService, cfg *Config) *Server {
-	s := &Server{client: c, mux: http.NewServeMux(), ns: namespace, connectorCfg: connectorCfg, prom: promClient, invocations: invStore, mcp: mcp, personas: personaSvc, skills: skillSvc}
+	s := &Server{client: c, mux: http.NewServeMux(), ns: namespace, connectorCfg: connectorCfg, prom: promClient, invocations: invStore, mcp: mcp, skills: skillSvc}
 	s.wsHub = newWsHub()
 	s.observabilityCache = newPromCache(observabilityCacheTTL)
 	s.identityTracker = newIdentityPersistTracker()
@@ -236,6 +236,9 @@ func New(c client.Client, namespace string, connectorCfg ConnectorConfig, promCl
 	s.mux.HandleFunc("/api/v1/chat/sessions", s.handleChatSessions)
 	s.mux.HandleFunc("/api/v1/chat/sessions/", s.handleChatSession)
 	if personaSvc != nil {
+		// Assigned only when non-nil: a typed-nil *personas.Service in an
+		// interface field would pass a nil check and panic on use.
+		s.personas = personaSvc
 		RegisterPersonaRoutes(s.mux, personaSvc, &s.authzStore, &s.authzChecker)
 	}
 	if skillSvc != nil {

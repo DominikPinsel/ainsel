@@ -143,6 +143,51 @@ function defaultFetch(url: string, init?: RequestInit): Response {
       { status: 200 },
     )
   }
+  // Agent-scoped persona (M3): the agent detail Persona tab reads and saves
+  // through here, not through /personas/{id}.
+  const agentPersonaMatch = url.match(/\/api\/v1\/agents\/([^/?]+)\/persona$/)
+  if (agentPersonaMatch) {
+    if (init?.method === 'PUT') {
+      const body = JSON.parse(String(init.body ?? '{}')) as {
+        name?: string
+        description?: string
+        text?: string
+      }
+      return new Response(
+        JSON.stringify({
+          owned: true,
+          ref: 'p-own',
+          persona: {
+            id: 'p-own',
+            name: body.name || 'doc-writer (own)',
+            description: body.description ?? '',
+            currentVersion: 1,
+            text: body.text ?? '',
+            ownerAgent: agentPersonaMatch[1],
+            createdAt: '2026-05-01T00:00:00Z',
+            updatedAt: '2026-05-01T00:00:00Z',
+          },
+        }),
+        { status: 200 },
+      )
+    }
+    return new Response(
+      JSON.stringify({
+        owned: false,
+        ref: '01HXTEST00000000000000000',
+        persona: {
+          id: '01HXTEST00000000000000000',
+          name: 'docs-writer',
+          description: 'docs persona',
+          currentVersion: 1,
+          text: '# Persona\n\nYou are a docs writer.',
+          createdAt: '2026-05-01T00:00:00Z',
+          updatedAt: '2026-05-01T00:00:00Z',
+        },
+      }),
+      { status: 200 },
+    )
+  }
   if (url.includes('/agents/a1')) {
     return new Response(
       JSON.stringify({
@@ -211,6 +256,73 @@ describe('AgentDetail', () => {
     expect(container.querySelector('.md-body h1')?.textContent).toBe('Persona')
     expect(screen.getByText(/persona · docs-writer/i)).toBeInTheDocument()
     expect(screen.getByText(/docs persona/)).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /configure persona/i }),
+    ).toBeInTheDocument()
+  })
+
+  it('marks an agent-owned persona on the overview panel', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) => {
+        if (/\/api\/v1\/agents\/a1\/persona$/.test(url)) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                owned: true,
+                ref: 'p-own',
+                persona: {
+                  id: 'p-own',
+                  name: 'doc-writer (own)',
+                  description: 'private persona',
+                  currentVersion: 2,
+                  text: '# Own\n\nPrivate to this agent.',
+                  ownerAgent: 'a1',
+                  createdAt: '2026-05-01T00:00:00Z',
+                  updatedAt: '2026-05-01T00:00:00Z',
+                },
+              }),
+              { status: 200 },
+            ),
+          )
+        }
+        return Promise.resolve(defaultFetch(url, init))
+      }),
+    )
+
+    const { container } = renderWithProviders(
+      <Routes>
+        <Route path="/agents/:id" element={<AgentDetail />} />
+      </Routes>,
+      { route: '/agents/a1' },
+    )
+    await waitFor(() => expect(container.querySelector('.md-body h1')).not.toBeNull())
+    expect(
+      screen.getByText(/persona · doc-writer \(own\) · own/i),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/shared template/i)).not.toBeInTheDocument()
+  })
+
+  it('offers to configure a persona when the agent has none', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) => {
+        if (/\/api\/v1\/agents\/a1\/persona$/.test(url)) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ owned: false }), { status: 200 }),
+          )
+        }
+        return Promise.resolve(defaultFetch(url, init))
+      }),
+    )
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/agents/:id" element={<AgentDetail />} />
+      </Routes>,
+      { route: '/agents/a1' },
+    )
+    expect(await screen.findByText(/no persona yet/i)).toBeInTheDocument()
     expect(
       screen.getByRole('button', { name: /configure persona/i }),
     ).toBeInTheDocument()
