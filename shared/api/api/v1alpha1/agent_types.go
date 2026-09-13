@@ -15,16 +15,16 @@ type AgentSpec struct {
 	Persona      AgentPersona  `json:"persona"`
 	EnabledTools []string      `json:"enabledTools,omitempty"`
 	// Skills explicitly selects the skill library entries this agent mounts.
-	// When nil, the agent inherits the referenced image's EnabledSkills
-	// (legacy behavior); once set, the agent's list replaces the image's —
-	// an empty Items means no skills.
+	// When nil, the agent runs on the referenced image's EnabledSkills — the
+	// shared runtime profile's defaults; once set, the agent's list replaces
+	// the image's, and an empty Items means no skills.
 	// +optional
 	Skills *AgentSkills `json:"skills,omitempty"`
 	// MCP explicitly defines the MCP servers this agent connects to at
 	// runtime, as resolved definitions (URL + token env reference), not just
-	// names. When nil, the agent inherits the referenced image's MCPServers
-	// (legacy behavior); once set, the agent's servers replace the image's —
-	// empty Servers means no MCP connections.
+	// names. When nil, the agent runs on the referenced image's MCPServers —
+	// the shared runtime profile's defaults; once set, the agent's servers
+	// replace the image's, and empty Servers means no MCP connections.
 	// +optional
 	MCP *AgentMCP `json:"mcp,omitempty"`
 	// Env holds this agent's environment variable overrides, applied on top of
@@ -35,10 +35,13 @@ type AgentSpec struct {
 	// defaults alone.
 	// +optional
 	Env []AgentEnvVar `json:"env,omitempty"`
-	// EnabledMCPs lists the names of MCPServer registry entries this agent
-	// should connect to at runtime. Names refer to MCPServer rows managed
-	// by the hub backend; the agent operator injects URLs into the agent
-	// pod as MCP_SERVERS env. See docs/superpowers/specs/2026-05-19-mcp-registry-design.md.
+	// EnabledMCPs is DEPRECATED and no longer read by the operator. It listed
+	// names of in-cluster "mcp-<name>" Services; the operator migrates it once
+	// into MCP (an explicit snapshot of resolved definitions) and clears it.
+	// Set MCP instead — the hub resolves registry names there at write time.
+	// The field is kept for one release so stored values survive to be
+	// migrated rather than being pruned by the API server, and is scheduled
+	// for removal.
 	EnabledMCPs    []string             `json:"enabledMCPs,omitempty"`
 	Scaling        *AgentScaling        `json:"scaling,omitempty"`
 	Memory         *AgentMemory         `json:"memory,omitempty"`

@@ -1,5 +1,6 @@
-// Package mcpservers contains discovery helpers used by the agent
-// controller to resolve enabled MCP names into runtime URLs.
+// Package mcpservers contains helpers used by the agent controller to turn
+// MCP server definitions into the runtime env values the agent expects, plus
+// the one-shot resolution of legacy in-cluster server names.
 package mcpservers
 
 import (
@@ -14,10 +15,10 @@ import (
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// servicePath is the streamable-HTTP MCP mount path. The hub backend creates
+// servicePath is the streamable-HTTP MCP mount path used when resolving a
+// legacy server name to its in-cluster Service. The hub backend creates
 // services with port "http"; this package assumes the standard MCP mount
-// path of /mcp. If a future MCP needs a different path, surface it via the
-// MCPServer record and pass it through here (out of scope for v1).
+// path of /mcp.
 const servicePath = "/mcp"
 
 // MissingEnvEntry pairs an MCP server name with the env-var name it
@@ -29,11 +30,17 @@ type MissingEnvEntry struct {
 	EnvVarName string
 }
 
-// Discover resolves the supplied MCP names to "name=url" entries. Names whose
-// Service does not (yet) exist are reported in `missing` and skipped — the
-// caller may log a warning and continue rolling out the agent. Returned slices
-// preserve the input order.
-func Discover(ctx context.Context, c ctrlclient.Client, namespace string, names []string) (entries []string, missing []string, err error) {
+// Resolve turns legacy MCP server names into agent-scoped server definitions
+// by looking each name up as the in-cluster Service "mcp-<name>" in the given
+// namespace. Names whose Service does not exist are reported in `missing` and
+// skipped; the resolved definitions carry no TokenFromEnv, matching what the
+// legacy discovery path injected into MCP_SERVERS. Returned slices preserve
+// the input order.
+//
+// This exists only to migrate the deprecated Agent.spec.enabledMCPs field into
+// spec.mcp — agent-scoped definitions carry their URL already, so nothing else
+// needs in-cluster lookup.
+func Resolve(ctx context.Context, c ctrlclient.Client, namespace string, names []string) (servers []ainselv1alpha1.AgentMCPServer, missing []string, err error) {
 	for _, name := range names {
 		svc := &corev1.Service{}
 		err := c.Get(ctx, types.NamespacedName{Name: "mcp-" + name, Namespace: namespace}, svc)
@@ -51,10 +58,12 @@ func Discover(ctx context.Context, c ctrlclient.Client, namespace string, names 
 				break
 			}
 		}
-		url := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d%s", svc.Name, namespace, port, servicePath)
-		entries = append(entries, fmt.Sprintf("%s=%s", name, url))
+		servers = append(servers, ainselv1alpha1.AgentMCPServer{
+			Name: name,
+			URL:  fmt.Sprintf("http://%s.%s.svc.cluster.local:%d%s", svc.Name, namespace, port, servicePath),
+		})
 	}
-	return entries, missing, nil
+	return servers, missing, nil
 }
 
 // EnvValue formats the discovered entries into the MCP_SERVERS env value
@@ -65,10 +74,9 @@ func EnvValue(entries []string) string {
 
 // DedupeEntries removes duplicate "name=url" entries, keeping the first
 // occurrence of each server name. The controller builds MCP_SERVERS from
-// several sources (Agent.spec.enabledMCPs discovery, AgentImage MCP
-// servers, sidecar declarations, and the injected chat sidecar); an MCP
-// declared on both the Agent and its AgentImage would otherwise reach the
-// runtime twice and be connected/registered twice.
+// several sources (the agent's or its profile's MCP servers, sidecar
+// declarations, and the injected chat sidecar); an MCP declared twice would
+// otherwise reach the runtime twice and be connected/registered twice.
 func DedupeEntries(entries []string) []string {
 	seen := make(map[string]bool, len(entries))
 	out := make([]string, 0, len(entries))
