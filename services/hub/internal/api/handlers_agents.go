@@ -382,6 +382,13 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Agent-scoped persona: inline content editing with copy-on-write
+	// ownership (see handlers_agent_persona.go).
+	if strings.HasSuffix(name, "/persona") {
+		s.handleAgentPersona(w, r, strings.TrimSuffix(name, "/persona"))
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		if !s.requireRead(w, r, "agent", name) {
@@ -962,6 +969,12 @@ func (s *Server) updateAgent(ctx context.Context, w http.ResponseWriter, r *http
 		return
 	}
 
+	// Re-pointing away from the agent's own persona orphans it — owned
+	// personas are invisible to the library, so reclaim it here.
+	if req.Persona != nil && req.Persona.ID != "" {
+		s.cleanupOwnedPersona(ctx, name, req.Persona.ID)
+	}
+
 	// Resolve image display name for the response. If we already validated the
 	// image ref above, reuse that display name; otherwise look it up.
 	imageDisplayName := validatedDisplayName
@@ -979,6 +992,10 @@ func (s *Server) deleteAgent(ctx context.Context, w http.ResponseWriter, name st
 		writeError(w, http.StatusNotFound, "agent not found")
 		return
 	}
+
+	// Reclaim the agent's owned persona, if any: it is invisible to the
+	// library, so nothing else would ever delete it.
+	s.cleanupOwnedPersona(ctx, name, "")
 
 	// Clean up ownership record.
 	if s.authzStore != nil {
