@@ -104,7 +104,7 @@ export function ImageFormView({
       <Titleblock
         crumbs={
           <>
-            Fleet / <Link to="/agent-images">Agent Images</Link> /{' '}
+            Library / <Link to="/agent-images">Agent Images</Link> /{' '}
             <b>{isEdit ? (image?.displayName ?? id) : 'New'}</b>
           </>
         }

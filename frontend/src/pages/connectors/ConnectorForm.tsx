@@ -119,7 +119,7 @@ export function ConnectorForm() {
         <Titleblock
           crumbs={
             <>
-              Fleet / <Link to="/connectors">Connectors</Link> / <b>New</b>
+              Admin / <Link to="/connectors">Connectors</Link> / <b>New</b>
             </>
           }
           title={
@@ -235,7 +235,7 @@ export function ConnectorForm() {
       <Titleblock
         crumbs={
           <>
-            Fleet / <Link to="/connectors">Connectors</Link> /{' '}
+            Admin / <Link to="/connectors">Connectors</Link> /{' '}
             <b>{isEdit ? 'Edit' : 'New'}</b>
           </>
         }

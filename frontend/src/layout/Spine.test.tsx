@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, vi } from 'vitest'
@@ -63,6 +63,8 @@ describe('Spine', () => {
       'Activity',
       'Observability',
       'Agents',
+      'Images',
+      'Personas',
       'Connectors',
       'Docs',
       'MCPs',
@@ -71,6 +73,33 @@ describe('Spine', () => {
     for (const name of expected) {
       expect(screen.getByRole('link', { name: new RegExp(name, 'i') })).toBeInTheDocument()
     }
+  })
+
+  it('groups the shared catalogs under Library', () => {
+    renderAt('/dashboard')
+
+    const section = screen.getByText('Library').closest('div')?.parentElement
+    expect(section).not.toBeNull()
+    for (const name of ['Images', 'Personas', 'Skills', 'MCPs']) {
+      expect(
+        within(section as HTMLElement).getByRole('link', { name: new RegExp(name, 'i') }),
+      ).toBeInTheDocument()
+    }
+
+    // The old Setup section is gone: its entries moved into Library.
+    expect(screen.queryByText('Setup')).not.toBeInTheDocument()
+  })
+
+  it('links the library entries to their catalog routes', () => {
+    renderAt('/dashboard')
+    expect(screen.getByRole('link', { name: /Images/i })).toHaveAttribute(
+      'href',
+      '/agent-images',
+    )
+    expect(screen.getByRole('link', { name: /Personas/i })).toHaveAttribute(
+      'href',
+      '/personas',
+    )
   })
 
   it('shows the three most recently updated agents under Agents', async () => {

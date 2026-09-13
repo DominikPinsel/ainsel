@@ -50,7 +50,7 @@ export function SkillDetail() {
       <Titleblock
         crumbs={
           <>
-            Fleet / <Link to="/skills">Skills</Link> / <b>{data?.name ?? id ?? '—'}</b>
+            Library / <Link to="/skills">Skills</Link> / <b>{data?.name ?? id ?? '—'}</b>
           </>
         }
         title={<>{data?.name ?? <em>Skill</em>}</>}
