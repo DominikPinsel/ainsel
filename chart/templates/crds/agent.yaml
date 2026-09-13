@@ -4,6 +4,7 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.20.1
+    helm.sh/resource-policy: keep
   name: agents.ainsel.dev
 spec:
   group: ainsel.dev
@@ -334,6 +335,20 @@ spec:
                   replicas:
                     format: int32
                     type: integer
+                type: object
+              skills:
+                description: |-
+                  Skills explicitly selects the skill library entries this agent mounts.
+                  When nil, the agent inherits the referenced image's EnabledSkills
+                  (legacy behavior); once set, the agent's list replaces the image's —
+                  an empty Items means no skills.
+                properties:
+                  items:
+                    description: Items lists skill library ids (hub /skills API) to
+                      mount for this agent.
+                    items:
+                      type: string
+                    type: array
                 type: object
             required:
             - displayName

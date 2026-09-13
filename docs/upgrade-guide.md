@@ -50,7 +50,7 @@ Helm does **not** upgrade CRDs automatically on `helm upgrade`. This is intentio
 If a release introduces new or changed CRDs, apply them manually before or after the Helm upgrade:
 
 ```bash
-kubectl apply -f chart/crds/
+kubectl apply -f chart/templates/crds/
 ```
 
 Check the changelog for the release to find out whether CRDs have changed and what the recommended apply order is.

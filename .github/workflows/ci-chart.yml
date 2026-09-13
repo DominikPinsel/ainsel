@@ -5,12 +5,18 @@ on:
     branches: [main, develop]
     paths:
       - 'chart/**'
+      - 'operators/agent/config/crd/bases/**'
+      - 'operators/event-gateway/config/crd/bases/**'
+      - 'scripts/check-crd-sync.py'
       - '.github/workflows/ci-chart.yml'
   pull_request:
     branches: [main, develop]
     types: [opened, synchronize, reopened]
     paths:
       - 'chart/**'
+      - 'operators/agent/config/crd/bases/**'
+      - 'operators/event-gateway/config/crd/bases/**'
+      - 'scripts/check-crd-sync.py'
       - '.github/workflows/ci-chart.yml'
   workflow_dispatch:
 
@@ -22,6 +28,8 @@ jobs:
       - uses: actions/checkout@v7
       - name: Install Helm
         run: curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      - name: CRD sync check (chart copies vs operator bases)
+        run: python3 scripts/check-crd-sync.py
       - name: Helm lint
         run: helm lint chart/
       - name: Helm template (default values)
