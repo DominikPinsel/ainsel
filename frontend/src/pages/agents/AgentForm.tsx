@@ -17,6 +17,7 @@ import { useAgentImages } from '../../api/agentImages'
 import { usePersonas } from '../../api/personas'
 import { ApiError } from '../../api/client'
 import { Button } from '../../primitives/Button'
+import { Check } from '../../primitives/Check'
 import { Field } from '../../primitives/Field'
 import { Input } from '../../primitives/Input'
 import { Select } from '../../primitives/Select'
@@ -49,6 +50,10 @@ const schema = z
       provider: z.string().optional(),
       maxTurns: z.coerce.number().int().min(1).optional(),
       temperature: z.coerce.number().min(0).max(2).optional(),
+      // Always a concrete boolean in the payload: the hub treats a missing
+      // `vision` on update as "leave unchanged", so the form must send false
+      // explicitly to turn image input back off.
+      vision: z.boolean().optional(),
     }),
     providerApiKey: z.string().optional(),
     customProviderUrl: z.string().optional(),
@@ -97,7 +102,7 @@ export function AgentForm() {
       name: '',
       description: '',
       imageRef: { name: '' },
-      llm: { model: '', provider: 'ollama-cloud', maxTurns: 100, temperature: 1 },
+      llm: { model: '', provider: 'ollama-cloud', maxTurns: 100, temperature: 1, vision: false },
       customProviderUrl: '',
       providerApiKey: '',
       persona: { id: '' },
@@ -117,6 +122,7 @@ export function AgentForm() {
           provider: existing.data.llm?.provider ?? '',
           maxTurns: existing.data.llm?.maxTurns,
           temperature: existing.data.llm?.temperature,
+          vision: existing.data.llm?.vision ?? false,
         },
         customProviderUrl: existing.data.customProvider?.url ?? '',
         providerApiKey: '',
@@ -366,6 +372,24 @@ export function AgentForm() {
                 </Field>
               </>
             ) : null}
+            <Field
+              label="Image Input"
+              htmlFor="llm.vision"
+              hint="Only for vision-capable models: lets pi send screenshots and image attachments to the model."
+            >
+              <div
+                style={{ display: 'flex', alignItems: 'center', gap: 8, height: '100%', paddingTop: 6 }}
+              >
+                <Check
+                  checked={watch('llm.vision') ?? false}
+                  onChange={(v) => setValue('llm.vision', v, { shouldDirty: true })}
+                  aria-label="Image Input"
+                />
+                <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)' }}>
+                  {watch('llm.vision') ? 'Model accepts images' : 'Text-only model'}
+                </span>
+              </div>
+            </Field>
           </div>
         </section>
 

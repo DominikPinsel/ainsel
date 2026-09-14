@@ -2,7 +2,14 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 import { request } from './client'
 import type { Paginated } from './types'
 
-export type AgentLLM = { model: string; provider?: string; maxTurns?: number; temperature?: number }
+export type AgentLLM = {
+  model: string
+  provider?: string
+  maxTurns?: number
+  temperature?: number
+  /** Model accepts image input; advertised in pi's models.json `input` array. */
+  vision?: boolean
+}
 export type AgentPersona = { id: string }
 export type AgentImageRef = { name: string; displayName?: string }
 export type AgentOllamaCloud = { apiKey?: string }

@@ -129,6 +129,104 @@ describe('AgentForm', () => {
     )
   })
 
+  it('sends llm.vision when image input is enabled', async () => {
+    const fetchMock = vi.fn((url: string, init?: RequestInit) =>
+      Promise.resolve(defaultFetch(url, init)),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/agents/new" element={<AgentForm />} />
+      </Routes>,
+      { route: '/agents/new' },
+    )
+
+    await userEvent.type(screen.getByLabelText('Name'), 'vision-agent')
+    await userEvent.type(screen.getByLabelText('Model'), 'gpt-4-vision')
+    await waitFor(() =>
+      expect(
+        screen.getByRole('option', { name: /claude-tooling-base/i }),
+      ).toBeInTheDocument(),
+    )
+    await userEvent.selectOptions(
+      screen.getByLabelText(/^image$/i),
+      'claude-tooling-base:1.4',
+    )
+    await waitFor(() =>
+      expect(
+        screen.getByRole('option', { name: /test-persona/i }),
+      ).toBeInTheDocument(),
+    )
+    await userEvent.selectOptions(
+      screen.getByLabelText(/^persona$/i),
+      '01HXTEST00000000000000000',
+    )
+    await userEvent.selectOptions(await screen.findByLabelText('Group'), 'g1')
+
+    // Text-only is the default: an unset flag must never reach the hub as true.
+    const toggle = await screen.findByRole('checkbox', { name: /image input/i })
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
+    await userEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
+
+    await userEvent.click(screen.getByRole('button', { name: /create/i }))
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.find(
+          ([u, init]) =>
+            typeof u === 'string' &&
+            u.includes('/agents') &&
+            (init as RequestInit | undefined)?.method === 'POST',
+        ),
+      ).toBeDefined()
+    })
+    const postCall = fetchMock.mock.calls.find(
+      ([u, init]) =>
+        typeof u === 'string' &&
+        u.includes('/agents') &&
+        (init as RequestInit | undefined)?.method === 'POST',
+    )!
+    const body = JSON.parse((postCall[1] as RequestInit).body as string)
+    expect(body.llm.vision).toBe(true)
+  })
+
+  it('prefills the image input toggle from the stored agent', async () => {
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (
+        typeof url === 'string' &&
+        url.includes('/agents/a1') &&
+        (init?.method ?? 'GET') === 'GET'
+      ) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              id: 'a1',
+              name: 'doc-writer',
+              imageRef: { name: 'claude-tooling-base:1.4' },
+              llm: { model: 'claude-opus-4-7', vision: true },
+              persona: { id: '01HXTEST00000000000000000' },
+            }),
+            { status: 200 },
+          ),
+        )
+      }
+      return Promise.resolve(defaultFetch(url, init))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/agents/:id/edit" element={<AgentForm />} />
+      </Routes>,
+      { route: '/agents/a1/edit' },
+    )
+
+    const toggle = await screen.findByRole('checkbox', { name: /image input/i })
+    await waitFor(() => expect(toggle).toHaveAttribute('aria-checked', 'true'))
+  })
+
   it('sends customProvider URL and API key in the POST body when Custom is selected', async () => {
     const fetchMock = vi.fn((url: string, init?: RequestInit) =>
       Promise.resolve(defaultFetch(url, init)),
