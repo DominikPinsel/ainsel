@@ -30,6 +30,29 @@ func findEnvVar(envs []corev1.EnvVar, name string) *corev1.EnvVar {
 	return nil
 }
 
+// piModelsProvider mirrors the slice of pi's models.json layout the operator
+// generates, so assertions can check parsed values instead of raw strings.
+type piModelsProvider struct {
+	API     string `json:"api"`
+	BaseURL string `json:"baseUrl"`
+	Models  []struct {
+		ID        string   `json:"id"`
+		Reasoning bool     `json:"reasoning"`
+		Input     []string `json:"input"`
+	} `json:"models"`
+}
+
+// parsePiModelsJSON decodes the models.json payload produced by
+// reconcilePiModelsConfigMap and returns its providers map.
+func parsePiModelsJSON(raw string) map[string]piModelsProvider {
+	GinkgoHelper()
+	var parsed struct {
+		Providers map[string]piModelsProvider `json:"providers"`
+	}
+	Expect(json.Unmarshal([]byte(raw), &parsed)).To(Succeed())
+	return parsed.Providers
+}
+
 var _ = Describe("Agent Controller", func() {
 	Context("When reconciling a resource", func() {
 		const resourceName = "test-agent"
@@ -682,6 +705,76 @@ var _ = Describe("Agent Controller", func() {
 			By("Verifying models.json is valid JSON")
 			var parsed map[string]any
 			Expect(json.Unmarshal([]byte(cm.Data["models.json"]), &parsed)).To(Succeed())
+		})
+
+		// pi's media tools (read, screenshots, attachments) drop image payloads
+		// unless the model entry advertises "image" in its `input` array, which
+		// the operator derives from spec.llm.vision.
+		It("should advertise image input in models.json when spec.llm.vision is true", func() {
+			By("Setting spec.llm.vision to true")
+			agent := &ainselv1alpha1.Agent{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, agent)).To(Succeed())
+			agent.Spec.LLM.Vision = ptr.To(true)
+			Expect(k8sClient.Update(ctx, agent)).To(Succeed())
+
+			By("Reconciling")
+			controllerReconciler := &AgentReconciler{
+				Client:          k8sClient,
+				Scheme:          k8sClient.Scheme(),
+			}
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying the model entry lists text and image input")
+			cm := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      "agent-" + resourceName + "-pi-models",
+				Namespace: "default",
+			}, cm)).To(Succeed())
+			modelsJSON := cm.Data["models.json"]
+			Expect(modelsJSON).To(ContainSubstring(`"input": ["text", "image"]`))
+
+			By("Verifying models.json still parses and the input array holds both media types")
+			parsed := parsePiModelsJSON(modelsJSON)
+			Expect(parsed).To(HaveLen(1))
+			for _, provider := range parsed {
+				Expect(provider.Models).To(HaveLen(1))
+				Expect(provider.Models[0].Input).To(ConsistOf("text", "image"))
+			}
+		})
+
+		It("should keep models.json text-only when spec.llm.vision is set back to false", func() {
+			By("Setting spec.llm.vision to false")
+			agent := &ainselv1alpha1.Agent{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, agent)).To(Succeed())
+			agent.Spec.LLM.Vision = ptr.To(false)
+			Expect(k8sClient.Update(ctx, agent)).To(Succeed())
+
+			By("Reconciling")
+			controllerReconciler := &AgentReconciler{
+				Client:          k8sClient,
+				Scheme:          k8sClient.Scheme(),
+			}
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying the model entry advertises text input only")
+			cm := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      "agent-" + resourceName + "-pi-models",
+				Namespace: "default",
+			}, cm)).To(Succeed())
+			modelsJSON := cm.Data["models.json"]
+			Expect(modelsJSON).To(ContainSubstring(`"input": ["text"]`))
+			Expect(modelsJSON).NotTo(ContainSubstring(`"image"`))
+
+			By("Verifying models.json still parses and the input array holds text only")
+			parsed := parsePiModelsJSON(modelsJSON)
+			Expect(parsed).To(HaveLen(1))
+			for _, provider := range parsed {
+				Expect(provider.Models).To(HaveLen(1))
+				Expect(provider.Models[0].Input).To(ConsistOf("text"))
+			}
 		})
 
 		It("should embed provider and model compat blocks in models.json for alibaba-cloud", func() {
