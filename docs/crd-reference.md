@@ -37,6 +37,7 @@ for its container image and tool catalog.
 | `llm.provider` | string | No | LLM provider backend. One of `ollama-cloud`, `opencode`, `custom` |
 | `llm.maxTurns` | int | No | Maximum tool-use loop turns |
 | `llm.temperature` | float64 | No | LLM sampling temperature |
+| `llm.vision` | bool | No | Model accepts image input. When true the operator advertises `"input": ["text", "image"]` to pi, so screenshots and image attachments are sent instead of dropped. Default false |
 | `persona.id` | string | Yes | ULID of a persona managed by the hub. The operator mounts a ConfigMap named `persona-<id>` (rendered by the hub) at `/etc/agent/persona.md` |
 | `enabledTools[]` | []string | No | List of tool names to enable for this agent (e.g. `forgejo`, `git`, `shell`) |
 | `enabledMCPs[]` | []string | No | List of MCPServer registry entry names the agent should connect to at runtime. The operator injects URLs into the agent pod as `MCP_SERVERS` env |
