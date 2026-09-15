@@ -4,36 +4,39 @@ import (
 	"testing"
 )
 
-func TestAgentSpecDeepCopyEnabledMCPs(t *testing.T) {
+func TestAgentSpecDeepCopyEnv(t *testing.T) {
 	src := &AgentSpec{
 		DisplayName: "test",
 		ImageRef:    AgentImageRef{Name: "img"},
 		Runtime:     AgentRuntime{},
 		LLM:         AgentLLM{Model: "qwen"},
 		Persona:     AgentPersona{ID: "01HXTESTPERSONA00000000000"},
-		EnabledMCPs: []string{"example-mcp", "github"},
+		Env: []AgentEnvVar{
+			{Name: "LOG_LEVEL", Value: "info"},
+			{Name: "SESSION_TTL", Value: "3600", Secret: true},
+		},
 	}
 	dst := src.DeepCopy()
 
 	if dst == src {
 		t.Fatal("DeepCopy returned same pointer")
 	}
-	if len(dst.EnabledMCPs) != 2 || dst.EnabledMCPs[0] != "example-mcp" || dst.EnabledMCPs[1] != "github" {
-		t.Fatalf("EnabledMCPs not copied: %+v", dst.EnabledMCPs)
+	if len(dst.Env) != 2 || dst.Env[0].Name != "LOG_LEVEL" || !dst.Env[1].Secret {
+		t.Fatalf("Env not copied: %+v", dst.Env)
 	}
 
-	dst.EnabledMCPs[0] = "changed"
-	if src.EnabledMCPs[0] == "changed" {
-		t.Fatal("EnabledMCPs slice was aliased, not deep-copied")
+	dst.Env[0].Value = "debug"
+	if src.Env[0].Value == "debug" {
+		t.Fatal("Env slice was aliased, not deep-copied")
 	}
 
-	dst.EnabledMCPs = append(dst.EnabledMCPs, "linear")
-	if len(src.EnabledMCPs) != 2 {
-		t.Fatalf("appending to copy changed original len: got %d want 2", len(src.EnabledMCPs))
+	dst.Env = append(dst.Env, AgentEnvVar{Name: "EXTRA"})
+	if len(src.Env) != 2 {
+		t.Fatalf("appending to copy changed original len: got %d want 2", len(src.Env))
 	}
 }
 
-func TestAgentSpecDeepCopyEnabledMCPsNil(t *testing.T) {
+func TestAgentSpecDeepCopyEnvNil(t *testing.T) {
 	src := &AgentSpec{
 		DisplayName: "test",
 		ImageRef:    AgentImageRef{Name: "img"},
@@ -42,7 +45,7 @@ func TestAgentSpecDeepCopyEnabledMCPsNil(t *testing.T) {
 		Persona:     AgentPersona{ID: "01HXTESTPERSONA00000000000"},
 	}
 	dst := src.DeepCopy()
-	if dst.EnabledMCPs != nil {
-		t.Fatalf("nil EnabledMCPs became non-nil after DeepCopy: %+v", dst.EnabledMCPs)
+	if dst.Env != nil {
+		t.Fatalf("nil Env became non-nil after DeepCopy: %+v", dst.Env)
 	}
 }

@@ -126,18 +126,6 @@ spec:
                 type: string
               displayName:
                 type: string
-              enabledMCPs:
-                description: |-
-                  EnabledMCPs is DEPRECATED and no longer read by the operator. It listed
-                  names of in-cluster "mcp-<name>" Services; the operator migrates it once
-                  into MCP (an explicit snapshot of resolved definitions) and clears it.
-                  Set MCP instead — the hub resolves registry names there at write time.
-                  The field is kept for one release so stored values survive to be
-                  migrated rather than being pruned by the API server, and is scheduled
-                  for removal.
-                items:
-                  type: string
-                type: array
               enabledTools:
                 items:
                   type: string

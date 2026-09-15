@@ -34,15 +34,7 @@ type AgentSpec struct {
 	// the operator. Absent or empty means the agent runs on the profile's
 	// defaults alone.
 	// +optional
-	Env []AgentEnvVar `json:"env,omitempty"`
-	// EnabledMCPs is DEPRECATED and no longer read by the operator. It listed
-	// names of in-cluster "mcp-<name>" Services; the operator migrates it once
-	// into MCP (an explicit snapshot of resolved definitions) and clears it.
-	// Set MCP instead — the hub resolves registry names there at write time.
-	// The field is kept for one release so stored values survive to be
-	// migrated rather than being pruned by the API server, and is scheduled
-	// for removal.
-	EnabledMCPs    []string             `json:"enabledMCPs,omitempty"`
+	Env            []AgentEnvVar        `json:"env,omitempty"`
 	Scaling        *AgentScaling        `json:"scaling,omitempty"`
 	Memory         *AgentMemory         `json:"memory,omitempty"`
 	OllamaCloud    *AgentOllamaCloud    `json:"ollamaCloud,omitempty"`
