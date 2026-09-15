@@ -53,7 +53,9 @@ Tags always include the `v` prefix: `v1.0.0`, `v0.2.1`.
 - Feature work happens on `<type>/<short-description>` branches
   (e.g., `feat/github-connector`, `fix/webhook-timeout`,
   `docs/architecture-update`).
-- Open PRs against `main`. Squash merge is the norm.
+- Open PRs against `develop`. Squash merge is the only merge type this
+  repository allows, so the PR title becomes the commit subject on both
+  `develop` and, after a promotion, `main`.
 - Always `git pull --rebase` before pushing.
 
 ### Pull Requests
@@ -64,14 +66,14 @@ Tags always include the `v` prefix: `v1.0.0`, `v0.2.1`.
 
 ### PR Labels
 
-The release tooling expects these labels to exist; CI creates them
-automatically if missing:
+Labels are a human convention here - no workflow reads them, and nothing
+creates them automatically. Only `dependencies` exists in the repository today
+(Dependabot applies it to its own PRs); add the others with `gh label create`
+if you want them.
 
 | Label | Color | Purpose |
 |-------|-------|---------|
-| `release` | `#0e8a16` (green) | Applied to release PRs |
-| `automated` | `#1d76db` (blue) | Applied to PRs opened by CI |
-| `dependencies` | `#0366d6` (blue) | Applied to chart/image bump PRs |
+| `dependencies` | `#0366d6` (blue) | Dependency bumps (applied by Dependabot) |
 
 ---
 
