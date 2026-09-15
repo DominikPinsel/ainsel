@@ -441,6 +441,73 @@ func TestUpdateAgent_PartialLLMUpdate_Temperature(t *testing.T) {
 	}
 }
 
+// The operator only advertises image input to pi when spec.llm.vision is true,
+// so an explicit false must survive a partial update: "omitted" means leave
+// unchanged, "false" means turn vision off again.
+func TestUpdateAgent_PartialLLMUpdate_Vision(t *testing.T) {
+	img := testAgentImage("img-1", "git")
+	s := testServer(t, img)
+	s.mux.HandleFunc("/api/v1/agents", s.handleAgents)
+	s.mux.HandleFunc("/api/v1/agents/", s.handleAgent)
+
+	createReq := SimpleAgentCreateRequest{
+		Name:     "Vision Agent",
+		ImageRef: AgentImageRefInfo{Name: "img-1"},
+		LLM:      AgentLLMInfo{Model: "glm-5.1", Vision: ptr(true)},
+	}
+	body, _ := json.Marshal(createReq)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/agents", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var created SimpleAgentResponse
+	if err := json.NewDecoder(rec.Body).Decode(&created); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if created.LLM.Vision == nil || !*created.LLM.Vision {
+		t.Fatalf("expected vision true on create, got %v", created.LLM.Vision)
+	}
+
+	// An update that omits vision entirely must leave it untouched.
+	omitted := SimpleAgentUpdateRequest{Description: ptr("unchanged vision")}
+	ob, _ := json.Marshal(omitted)
+	oreq := httptest.NewRequest(http.MethodPut, "/api/v1/agents/"+created.ID, bytes.NewReader(ob))
+	oreq.Header.Set("Content-Type", "application/json")
+	orec := httptest.NewRecorder()
+	s.mux.ServeHTTP(orec, oreq)
+	if orec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", orec.Code, orec.Body.String())
+	}
+	var afterOmit SimpleAgentResponse
+	if err := json.NewDecoder(orec.Body).Decode(&afterOmit); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if afterOmit.LLM.Vision == nil || !*afterOmit.LLM.Vision {
+		t.Errorf("expected vision to stay true when omitted, got %v", afterOmit.LLM.Vision)
+	}
+
+	// An explicit false must clear the flag.
+	clearReq := SimpleAgentUpdateRequest{LLM: &AgentLLMInfo{Vision: ptr(false)}}
+	cb, _ := json.Marshal(clearReq)
+	creq := httptest.NewRequest(http.MethodPut, "/api/v1/agents/"+created.ID, bytes.NewReader(cb))
+	creq.Header.Set("Content-Type", "application/json")
+	crec := httptest.NewRecorder()
+	s.mux.ServeHTTP(crec, creq)
+	if crec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", crec.Code, crec.Body.String())
+	}
+	var cleared SimpleAgentResponse
+	if err := json.NewDecoder(crec.Body).Decode(&cleared); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if cleared.LLM.Vision == nil || *cleared.LLM.Vision {
+		t.Errorf("expected vision cleared to false, got %v", cleared.LLM.Vision)
+	}
+}
+
 // --- Custom provider regression tests ---
 
 func TestCreateAgent_CustomProvider_PersistsURLAndCreatesSecret(t *testing.T) {

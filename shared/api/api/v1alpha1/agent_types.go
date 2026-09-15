@@ -62,6 +62,12 @@ type AgentLLM struct {
 	Provider    string   `json:"provider,omitempty"`
 	MaxTurns    int      `json:"maxTurns,omitempty"`
 	Temperature *float64 `json:"temperature,omitempty"`
+	// Vision declares that the model accepts image input. When true, the
+	// generated pi models.json advertises "input": ["text", "image"] so
+	// pi's media tools attach images instead of dropping them. Defaults to
+	// false: a text-only model must never receive image payloads.
+	// +optional
+	Vision *bool `json:"vision,omitempty"`
 }
 
 // AgentPersona points the agent runtime at a persona managed by the hub.

@@ -1123,6 +1123,15 @@ func (r *AgentReconciler) reconcilePiModelsConfigMap(ctx context.Context, agent 
 	if pp.ModelCompat != "" {
 		modelCompatBlock = ",\n                    " + pp.ModelCompat
 	}
+	// Pi's media-capable tools (read, screenshots, attachments) check the
+	// model's "input" array and omit images entirely when "image" is
+	// missing. Advertise vision only for models that actually support it
+	// (spec.llm.vision); otherwise a text-only model would receive image
+	// payloads it cannot parse.
+	input := `["text"]`
+	if agent.Spec.LLM.Vision != nil && *agent.Spec.LLM.Vision {
+		input = `["text", "image"]`
+	}
 	thinkingLevelMapBlock := ""
 	if pp.ThinkingLevelMap != "" {
 		thinkingLevelMapBlock = ",\n                    " + pp.ThinkingLevelMap
@@ -1137,13 +1146,13 @@ func (r *AgentReconciler) reconcilePiModelsConfigMap(ctx context.Context, agent 
                 {
                     "id": %q,
                     "contextWindow": 202752,
-                    "input": ["text"],
+                    "input": %s,
                     "reasoning": true%s%s%s
                 }
             ]
         }
     }%s
-}`, pp.Name, apiKeyRef, pp.BaseURL, providerCompatBlock, agent.Spec.LLM.Model, pp.Compat, thinkingLevelMapBlock, modelCompatBlock, ainselBlock)
+}`, pp.Name, apiKeyRef, pp.BaseURL, providerCompatBlock, agent.Spec.LLM.Model, input, pp.Compat, thinkingLevelMapBlock, modelCompatBlock, ainselBlock)
 
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
