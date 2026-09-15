@@ -1,248 +1,125 @@
 name: Release
 
-# Cuts a product release: one version for the whole repository.
+# Release pipeline: release-please decides *what* the release is, this workflow
+# publishes *the artifacts*.
 #
-#   * builds and pushes every image with immutable :vX.Y.Z tags
-#   * packages the Helm chart and pushes it to GHCR as an OCI artifact
-#   * creates the GitHub Release with notes generated from conventional commits
-#   * verifies all of it actually landed
+# Every push to main runs release-please-action, which reads conventional
+# commits, maintains CHANGELOG.md, keeps chart/Chart.yaml's version and
+# appVersion in step (release-please-config.json extra-files), and opens a
+# release PR. Merging that PR is what cuts the release: release-please creates
+# the tag and the GitHub Release, and this run then publishes the artifacts.
 #
-# Trigger it either way:
+# So the human-facing flow is: merge PRs as usual -> review the release PR
+# release-please opens (its diff *is* the dry run: version, changelog and chart
+# bump) -> merge it -> artifacts appear.
 #
-#   git tag -a v0.2.0 -m "Release v0.2.0" && git push origin v0.2.0
-#
-# or Actions -> Release -> Run workflow, where `version: auto` computes the
-# next version from the commits since the last tag (scripts/next-version.py)
-# and creates the tag for you.
-#
-# A release is the whole product rather than per component, because
-# chart/values.yaml pins a single image tag for every AInsel component: the
-# chart cannot express per-component versions without a redesign.
-# CONTRIBUTING.md used to describe a per-component release-please pipeline that
-# was never implemented; it now describes this.
+# One version for the whole product rather than per component, because
+# chart/values.yaml pins a single image tag per component and the chart cannot
+# express per-component versions without a redesign.
 
 on:
   push:
-    tags: ['v*.*.*']
+    branches: [main]
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version to release (vX.Y.Z), or "auto" to compute it from the commits since the last tag'
-        required: true
-        default: 'auto'
-      prerelease:
-        description: 'Mark as a prerelease - skips the :latest tag'
-        type: boolean
-        default: false
-      dry_run:
-        description: 'Run every gate and print the notes, but publish nothing and create no tag or release'
-        type: boolean
-        default: false
 
 permissions:
-  contents: write   # create the tag and the GitHub Release
-  packages: write   # push the chart to GHCR
+  contents: write        # release-please: release PR, tag, GitHub Release
+  pull-requests: write   # release-please: open and update the release PR
+  packages: write        # push the chart to GHCR
 
-# Never cancel a release halfway through publishing: a killed run leaves some
-# images tagged and others not, which is worse than a slow release.
+# Never cancel halfway through publishing: a killed run leaves some images
+# tagged and others not, which is worse than a slow release.
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   # --------------------------------------------------------------------------
-  # Resolve the version, run every gate, and create the tag.
+  # release-please: maintain the release PR, and on the run where that PR was
+  # merged, create the tag and the GitHub Release.
   # --------------------------------------------------------------------------
-  prepare:
-    name: Resolve version and gate the release
+  release-please:
+    name: Release Please
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.resolve.outputs.version }}
-      semver: ${{ steps.resolve.outputs.semver }}
-      prerelease: ${{ steps.resolve.outputs.prerelease }}
-      latest: ${{ steps.resolve.outputs.latest }}
-      prev_tag: ${{ steps.resolve.outputs.prev_tag }}
-      publish: ${{ steps.resolve.outputs.publish }}
-      oci_root: ${{ steps.resolve.outputs.oci_root }}
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
+      pr: ${{ steps.release.outputs.pr }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: googleapis/release-please-action@v5
+        id: release
         with:
-          fetch-depth: 0   # tags and full history: both scripts walk the log
+          target-branch: main
 
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.13'
-
-      - name: Resolve version
-        id: resolve
+      - name: Report what release-please did
         run: |
           set -euo pipefail
-
-          event="${GITHUB_EVENT_NAME}"
-          if [ "${event}" = "push" ]; then
-            version="${GITHUB_REF_NAME}"
-            prerelease=false
-            dry_run=false
+          created="${{ steps.release.outputs.release_created }}"
+          pr="${{ steps.release.outputs.pr }}"
+          if [ "${created}" = "true" ]; then
+            echo "Release ${{ steps.release.outputs.tag_name }} created - publishing artifacts." \
+              >> "${GITHUB_STEP_SUMMARY}"
+          elif [ -n "${pr}" ]; then
+            echo "Release PR open/updated: ${pr}" >> "${GITHUB_STEP_SUMMARY}"
+            echo "Nothing to publish until it is merged." >> "${GITHUB_STEP_SUMMARY}"
           else
-            version="${{ inputs.version }}"
-            prerelease="${{ inputs.prerelease }}"
-            dry_run="${{ inputs.dry_run }}"
+            echo "No release-worthy commits since the last release." >> "${GITHUB_STEP_SUMMARY}"
           fi
 
-          if [ "${version}" = "auto" ]; then
-            echo "::group::Computing version from conventional commits"
-            version=$(python3 scripts/next-version.py --explain)
-            echo "::endgroup::"
-          fi
+  # --------------------------------------------------------------------------
+  # Derive the tag spellings the artifacts need. Kept separate from the matrix
+  # jobs so the version is computed once and cannot disagree between them.
+  # --------------------------------------------------------------------------
+  prepare:
+    name: Resolve release metadata
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      semver: ${{ steps.meta.outputs.semver }}
+      latest: ${{ steps.meta.outputs.latest }}
+      oci_root: ${{ steps.meta.outputs.oci_root }}
+    steps:
+      - name: Derive from the tag release-please created
+        id: meta
+        run: |
+          set -euo pipefail
+          tag="${{ needs.release-please.outputs.tag_name }}"
+          version="${{ needs.release-please.outputs.version }}"
 
-          # vX.Y.Z, optionally with a prerelease suffix.
-          if ! printf '%s' "${version}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
-            echo "::error::${version} is not a valid version; expected vX.Y.Z or vX.Y.Z-suffix"
+          # include-component-in-tag is false, so the tag is plain vX.Y.Z. A
+          # component-prefixed tag would silently produce images nobody can
+          # resolve from the chart.
+          if ! printf '%s' "${tag}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::tag ${tag} is not vX.Y.Z; check include-component-in-tag in release-please-config.json"
             exit 1
           fi
-          semver="${version#v}"
+          if [ "${version}" != "${tag#v}" ]; then
+            echo "::error::release-please reported version ${version} but tag ${tag}"
+            exit 1
+          fi
+          semver="${version}"
 
-          # A version string carries its own prerelease marker; trust it over the input.
+          # A version string carries its own prerelease marker.
+          latest=true
           case "${semver}" in
-            *-*) prerelease=true ;;
+            *-*) latest=false ;;
           esac
 
-          latest=true
-          if [ "${prerelease}" = "true" ]; then
-            latest=false
-          fi
-
-          # Previous tag, for the changelog range. "-" means "no prior release".
-          prev_tag=$(git tag --merged HEAD | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)
-          if [ -z "${prev_tag}" ]; then
-            prev_tag="-"
-          fi
-
-          publish=true
-          if [ "${dry_run}" = "true" ]; then
-            publish=false
-          fi
-
-          # GHCR requires a lowercase owner; a fork publishing to the upstream
-          # namespace would be a nasty surprise.
+          # GHCR requires a lowercase owner; a fork publishing into the
+          # upstream namespace would be a nasty surprise.
           owner=$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')
 
           {
-            echo "version=${version}"
+            echo "version=${tag}"
             echo "semver=${semver}"
-            echo "prerelease=${prerelease}"
             echo "latest=${latest}"
-            echo "prev_tag=${prev_tag}"
-            echo "publish=${publish}"
             echo "oci_root=oci://ghcr.io/${owner}/charts"
           } >> "${GITHUB_OUTPUT}"
 
-          {
-            echo "### ${version} (semver ${semver})"
-            echo "- prerelease: ${prerelease}, tagging \`latest\`: ${latest}"
-            echo "- previous tag: ${prev_tag}"
-            if [ "${publish}" = "true" ]; then
-              echo "- publish: yes"
-            else
-              echo "- publish: no (dry run)"
-            fi
-          } >> "${GITHUB_STEP_SUMMARY}"
-
-      # Gate 1: releases come from main. develop builds :dev images; nothing on
-      # develop is a release candidate, and a tag pushed off a feature branch
-      # would publish images nobody reviewed.
-      - name: Gate - commit is on main
-        run: |
-          set -euo pipefail
-          git fetch --quiet origin main
-          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
-            echo "::error::${GITHUB_SHA} is not contained in origin/main - releases are cut from main only"
-            exit 1
-          fi
-          echo "ok: ${GITHUB_SHA} is on origin/main"
-
-      # Gate 2: the chart is versioned with the release. Without this the
-      # published chart would claim a version the repository disagrees with,
-      # and `helm search` would show two different 0.2.0s over time.
-      - name: Gate - chart version matches
-        run: |
-          set -euo pipefail
-          want="${{ steps.resolve.outputs.semver }}"
-          have=$(grep -E '^version:' chart/Chart.yaml | awk '{print $2}')
-          have_app=$(grep -E '^appVersion:' chart/Chart.yaml | awk '{print $2}' | tr -d '"')
-          fail=0
-          if [ "${have}" != "${want}" ]; then
-            echo "::error::chart/Chart.yaml version is ${have}, but this release is ${want}"
-            fail=1
-          fi
-          if [ "${have_app}" != "${want}" ]; then
-            echo "::error::chart/Chart.yaml appVersion is ${have_app}, but this release is ${want}"
-            fail=1
-          fi
-          if [ "${fail}" -ne 0 ]; then
-            echo "::error::bump both in a PR to main first, then re-run this release"
-            exit 1
-          fi
-          echo "ok: chart version and appVersion are both ${want}"
-
-      # Gate 3: don't publish from a commit whose CI failed. Checks are read
-      # from the API rather than assumed, because a tag can be pushed at any
-      # commit and nothing else would notice.
-      - name: Gate - CI is green on this commit
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          if ! out=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs?per_page=100" 2>/dev/null); then
-            echo "::warning::could not read check runs for ${GITHUB_SHA}; skipping this gate"
-            exit 0
-          fi
-          bad=$(printf '%s' "${out}" | jq -r '[.check_runs[] | select(.conclusion=="failure" or .conclusion=="timed_out" or .conclusion=="action_required")] | length')
-          total=$(printf '%s' "${out}" | jq -r '.check_runs | length')
-          if [ "${bad}" != "0" ]; then
-            printf '%s' "${out}" | jq -r '.check_runs[] | select(.conclusion=="failure" or .conclusion=="timed_out" or .conclusion=="action_required") | "::error::failed check: \(.name)"'
-            echo "::error::${bad} of ${total} checks failed on ${GITHUB_SHA}; fix them before releasing"
-            exit 1
-          fi
-          echo "ok: ${total} check runs on ${GITHUB_SHA}, none failed"
-
-      # Gate 4: a tag is forever. Refuse to move one that already exists.
-      - name: Gate - tag is free
-        run: |
-          set -euo pipefail
-          version="${{ steps.resolve.outputs.version }}"
-          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && git rev-parse -q --verify "refs/tags/${version}" >/dev/null; then
-            echo "::error::tag ${version} already exists; pick another version or delete the tag first"
-            exit 1
-          fi
-          echo "ok: ${version} is free"
-
-      - name: Create and push tag
-        if: github.event_name == 'workflow_dispatch' && steps.resolve.outputs.publish == 'true'
-        run: |
-          set -euo pipefail
-          version="${{ steps.resolve.outputs.version }}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "${version}" -m "Release ${version}"
-          git push origin "refs/tags/${version}"
-          echo "Pushed ${version} at ${GITHUB_SHA}."
-          echo "Tags pushed with GITHUB_TOKEN do not start another workflow run,"
-          echo "so this run continues and publishes the release itself."
-
-      - name: Preview release notes
-        run: |
-          set -euo pipefail
-          python3 scripts/release-notes.py \
-            --from "${{ steps.resolve.outputs.prev_tag }}" \
-            --to "${{ steps.resolve.outputs.version }}" > notes-preview.md
-          echo "::group::Release notes for ${{ steps.resolve.outputs.version }}"
-          cat notes-preview.md
-          echo "::endgroup::"
-          {
-            echo '#### Release notes'
-            cat notes-preview.md
-          } >> "${GITHUB_STEP_SUMMARY}"
+          echo "Releasing ${tag} (semver ${semver}, tagging latest: ${latest})" >> "${GITHUB_STEP_SUMMARY}"
 
   # --------------------------------------------------------------------------
   # Every image, tagged immutably. Mutable tags (:dev, pi-go:1.24) belong to
@@ -251,7 +128,8 @@ jobs:
   # --------------------------------------------------------------------------
   images:
     name: Image ${{ matrix.component }}
-    needs: prepare
+    needs: [release-please, prepare]
+    if: needs.release-please.outputs.release_created == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -308,9 +186,8 @@ jobs:
           semver="${{ needs.prepare.outputs.semver }}"
           {
             echo "tags<<EOF"
-            # Two spellings of the same release: :vX.Y.Z matches the git tag,
-            # :X.Y.Z is what the chart resolves to, since its component tags
-            # default to .Chart.AppVersion and appVersion carries no leading v.
+            # Two spellings of one release: :vX.Y.Z matches the git tag, :X.Y.Z
+            # is what the chart resolves to, since appVersion carries no v.
             echo "${{ matrix.image }}:${version}"
             echo "${{ matrix.image }}:${semver}"
             if [ "${{ needs.prepare.outputs.latest }}" = "true" ]; then
@@ -326,7 +203,6 @@ jobs:
           } >> "${GITHUB_OUTPUT}"
 
       - name: Login to Docker Hub
-        if: needs.prepare.outputs.publish == 'true'
         uses: docker/login-action@v4
         with:
           username: ${{ vars.DOCKERHUB_USERNAME }}
@@ -335,31 +211,32 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Build image
+      - name: Build and push
         uses: docker/build-push-action@v7
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
-          push: ${{ needs.prepare.outputs.publish == 'true' }}
+          push: true
           provenance: false
           sbom: false
           build-args: ${{ steps.meta.outputs.args }}
           tags: ${{ steps.meta.outputs.tags }}
 
       - name: Record what was published
-        if: needs.prepare.outputs.publish == 'true'
         run: |
           set -euo pipefail
-          echo "| ${{ matrix.component }} | \`${{ matrix.image }}:${{ needs.prepare.outputs.version }}\` |" >> "${GITHUB_STEP_SUMMARY}"
+          echo "| ${{ matrix.component }} | \`${{ matrix.image }}:${{ needs.prepare.outputs.version }}\` |" \
+            >> "${GITHUB_STEP_SUMMARY}"
 
   # --------------------------------------------------------------------------
-  # The pi variants are built FROM the pi base image, so they have to wait for
-  # it. BASE_TAG points at the released base, not :dev, which is what makes a
+  # The pi variants build FROM the pi base image, so they wait for it.
+  # BASE_TAG points at the released base, not :dev, which is what makes a
   # release reproducible.
   # --------------------------------------------------------------------------
   pi-variants:
     name: Image ${{ matrix.component }}
-    needs: [prepare, images]
+    needs: [release-please, prepare, images]
+    if: needs.release-please.outputs.release_created == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -377,7 +254,6 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Login to Docker Hub
-        if: needs.prepare.outputs.publish == 'true'
         uses: docker/login-action@v4
         with:
           username: ${{ vars.DOCKERHUB_USERNAME }}
@@ -386,12 +262,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Build ${{ matrix.variant }} variant
+      - name: Build and push the ${{ matrix.variant }} variant
         uses: docker/build-push-action@v7
         with:
           context: pi
           file: ${{ matrix.file }}
-          push: ${{ needs.prepare.outputs.publish == 'true' }}
+          push: true
           provenance: false
           sbom: false
           build-args: |
@@ -401,18 +277,44 @@ jobs:
             ${{ matrix.image }}:${{ matrix.variant }}-${{ needs.prepare.outputs.semver }}
 
   # --------------------------------------------------------------------------
-  # Package the chart and publish it as an OCI artifact. The same gates CI runs
-  # are repeated here, because a tag can point at a commit CI never saw.
+  # Package the chart, push it to GHCR, and attach the .tgz to the Release
+  # release-please just created. The gates CI runs are repeated here, because
+  # the release commit is a merge CI may not have seen in this exact shape.
   # --------------------------------------------------------------------------
   chart:
     name: Package and publish chart
-    needs: prepare
+    needs: [release-please, prepare]
+    if: needs.release-please.outputs.release_created == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
       - name: Install Helm
         run: curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+      # This is the check that release-please's extra-files actually fired. If
+      # the Chart.yaml bump ever stops working, packaging here would silently
+      # publish a chart claiming the previous version.
+      - name: Gate - chart version matches the release
+        run: |
+          set -euo pipefail
+          want="${{ needs.prepare.outputs.semver }}"
+          have=$(grep -E '^version:' chart/Chart.yaml | awk '{print $2}')
+          have_app=$(grep -E '^appVersion:' chart/Chart.yaml | awk '{print $2}' | tr -d '"')
+          fail=0
+          if [ "${have}" != "${want}" ]; then
+            echo "::error::chart/Chart.yaml version is ${have}, release is ${want}"
+            fail=1
+          fi
+          if [ "${have_app}" != "${want}" ]; then
+            echo "::error::chart/Chart.yaml appVersion is ${have_app}, release is ${want}"
+            fail=1
+          fi
+          if [ "${fail}" -ne 0 ]; then
+            echo "::error::check extra-files in release-please-config.json"
+            exit 1
+          fi
+          echo "ok: chart version and appVersion are both ${want}"
 
       - name: CRD sync check (chart copies vs operator bases)
         run: python3 scripts/check-crd-sync.py
@@ -430,145 +332,38 @@ jobs:
         run: |
           set -euo pipefail
           helm package chart/ --destination dist/
-          find dist -name '*.tgz' -maxdepth 1 | sed 's/^/packaged: /'
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: chart
-          path: dist/*.tgz
-          if-no-files-found: error
+          find dist -maxdepth 1 -name '*.tgz' | sed 's/^/packaged: /'
 
       - name: Login to GHCR
-        if: needs.prepare.outputs.publish == 'true'
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
-      - name: Push chart
-        if: needs.prepare.outputs.publish == 'true'
+      - name: Push chart to GHCR
         run: |
           set -euo pipefail
           helm push "dist/ainsel-${{ needs.prepare.outputs.semver }}.tgz" "${{ needs.prepare.outputs.oci_root }}"
           echo "Pushed ${{ needs.prepare.outputs.oci_root }}/ainsel:${{ needs.prepare.outputs.semver }}"
 
-  # --------------------------------------------------------------------------
-  # The GitHub Release: generated notes plus the chart as a downloadable
-  # artifact, so the release is usable even without GHCR access.
-  # --------------------------------------------------------------------------
-  release:
-    name: Create GitHub Release
-    needs: [prepare, images, pi-variants, chart]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.13'
-
-      - uses: actions/download-artifact@v8
-        with:
-          name: chart
-          path: dist/
-
-      - name: Generate release notes
-        run: |
-          set -euo pipefail
-          version="${{ needs.prepare.outputs.version }}"
-          semver="${{ needs.prepare.outputs.semver }}"
-          oci_root="${{ needs.prepare.outputs.oci_root }}"
-
-          python3 scripts/release-notes.py --from "${{ needs.prepare.outputs.prev_tag }}" --to "${version}" > notes.md
-
-          latest_suffix=""
-          if [ "${{ needs.prepare.outputs.latest }}" = "true" ]; then
-            latest_suffix=", \`:latest\`"
-          fi
-
-          {
-            echo ''
-            echo '### Artifacts'
-            echo ''
-            echo 'Helm chart:'
-            echo ''
-            echo '```bash'
-            echo "helm install ainsel ${oci_root}/ainsel --version ${semver}"
-            echo '```'
-            echo ''
-            echo "The chart is also attached to this release as \`ainsel-${semver}.tgz\`."
-            echo ''
-            echo 'Container images (Docker Hub):'
-            echo ''
-            echo '| component | tags |'
-            echo '| --- | --- |'
-          } >> notes.md
-
-          for img in \
-            dpinsel/ainsel-hub-frontend \
-            dpinsel/ainsel-hub-backend \
-            dpinsel/ainsel-k8s-ai-agent-operator \
-            dpinsel/ainsel-k8s-event-source-gateway-operator \
-            dpinsel/ainsel-mcp \
-            dpinsel/ainsel-chat-mcp \
-            dpinsel/ainsel-webhook-receiver \
-            dpinsel/ainsel-pi ; do
-            echo "| ${img##*/} | \`${img}:${version}\`, \`${img}:${semver}\`${latest_suffix} |" >> notes.md
-          done
-          echo "| pi-go | \`dpinsel/ainsel-pi-go:1.24-${version}\` |" >> notes.md
-          echo "| pi-maui | \`dpinsel/ainsel-pi-maui:8.0-${version}\` |" >> notes.md
-
-          echo '::group::Final release notes'
-          cat notes.md
-          echo '::endgroup::'
-
-      - name: Create or update the release
-        if: needs.prepare.outputs.publish == 'true'
+      - name: Attach the chart to the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          version="${{ needs.prepare.outputs.version }}"
-          pre=""
-          if [ "${{ needs.prepare.outputs.prerelease }}" = "true" ]; then
-            pre="--prerelease"
-          fi
-
-          # Idempotent: a re-run after a partial failure updates the notes
-          # instead of erroring out and leaving the release half-built.
-          if gh release view "${version}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            echo "Release ${version} exists; updating notes and assets."
-            gh release edit "${version}" --repo "${GITHUB_REPOSITORY}" --notes-file notes.md ${pre}
-            gh release upload "${version}" --repo "${GITHUB_REPOSITORY}" --clobber dist/*.tgz
-          else
-            gh release create "${version}" --repo "${GITHUB_REPOSITORY}" \
-              --title "${version}" --notes-file notes.md ${pre} dist/*.tgz
-          fi
-          echo "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${version}" >> "${GITHUB_STEP_SUMMARY}"
-
-      - name: Dry run summary
-        if: needs.prepare.outputs.publish != 'true'
-        run: |
-          set -euo pipefail
-          {
-            echo "Dry run: nothing published, no tag or release created."
-            echo ''
-            echo 'Notes that would have been published:'
-            echo ''
-            cat notes.md
-          } >> "${GITHUB_STEP_SUMMARY}"
+          gh release upload "${{ needs.release-please.outputs.tag_name }}" \
+            --repo "${GITHUB_REPOSITORY}" --clobber dist/*.tgz
+          echo "Attached ainsel-${{ needs.prepare.outputs.semver }}.tgz to the release"
 
   # --------------------------------------------------------------------------
   # A green run should mean the artifacts exist. Publishing can fail silently
-  # (a tag rejected, a package left private), so go and look.
+  # (a rejected tag, a package left private), so go and look.
   # --------------------------------------------------------------------------
   verify:
     name: Verify published artifacts
-    needs: [prepare, images, pi-variants, chart, release]
-    if: needs.prepare.outputs.publish == 'true'
+    needs: [release-please, prepare, images, pi-variants, chart]
+    if: needs.release-please.outputs.release_created == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Login to Docker Hub
@@ -623,15 +418,43 @@ jobs:
         run: |
           set -euo pipefail
           echo "${GH_TOKEN}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
-          helm pull "${{ needs.prepare.outputs.oci_root }}/ainsel" --version "${{ needs.prepare.outputs.semver }}" --destination pulled/
-          find pulled -name '*.tgz' -maxdepth 1 | sed 's/^/pulled: /'
+          helm pull "${{ needs.prepare.outputs.oci_root }}/ainsel" \
+            --version "${{ needs.prepare.outputs.semver }}" --destination pulled/
+          find pulled -maxdepth 1 -name '*.tgz' | sed 's/^/pulled: /'
           helm show chart pulled/ainsel-*.tgz | grep -E '^(name|version|appVersion):' | sed 's/^/  /'
 
-      - name: GitHub Release exists with the chart attached
+      # GHCR packages start out private, and this job authenticates, so it
+      # cannot tell "published" from "published but invisible to users". The
+      # .tgz on the Release is the fallback that always works; flip the package
+      # to public under Packages -> ainsel -> settings after the first release.
+      - name: GitHub Release has the changelog and the chart attached
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh release view "${{ needs.prepare.outputs.version }}" --repo "${GITHUB_REPOSITORY}" \
-            --json name,isPrerelease,assets \
-            --jq '"release: \(.name)  prerelease=\(.isPrerelease)  assets=\([.assets[].name] | join(", "))"'
+          tag="${{ needs.release-please.outputs.tag_name }}"
+          out=$(gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" \
+            --json name,isPrerelease,isDraft,assets \
+            --jq '"\(.name)|\(.isPrerelease)|\(.isDraft)|\([.assets[].name] | join(","))"')
+          name=$(printf '%s' "${out}" | cut -d'|' -f1)
+          pre=$(printf '%s' "${out}" | cut -d'|' -f2)
+          draft=$(printf '%s' "${out}" | cut -d'|' -f3)
+          assets=$(printf '%s' "${out}" | cut -d'|' -f4)
+          echo "release: ${name}  prerelease=${pre}  draft=${draft}  assets=${assets}"
+
+          fail=0
+          if [ "${draft}" = "true" ]; then
+            echo "::error::release ${tag} is still a draft; publish it"
+            fail=1
+          fi
+          case ",${assets}," in
+            *",ainsel-${{ needs.prepare.outputs.semver }}.tgz,"*) ;;
+            *)
+              echo "::error::release ${tag} has no chart asset (assets: ${assets})"
+              fail=1
+              ;;
+          esac
+          if [ "${fail}" -ne 0 ]; then
+            exit 1
+          fi
+          echo "ok: release ${tag} is published with its chart attached"

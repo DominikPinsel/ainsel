@@ -33,6 +33,16 @@ All commits follow [Conventional Commits](https://www.conventionalcommits.org/en
 - No period at the end
 - Body is optional, separated by a blank line; use it to explain the *why*
 
+Breaking changes need a marker: append `!` to the type
+(`feat(api)!: drop enabledMCPs`) or add a `BREAKING CHANGE: <what>` footer.
+
+**Why the format matters mechanically:** [release-please](https://github.com/googleapis/release-please)
+parses these commits on `main` to compute the next version and to write
+`CHANGELOG.md`. The subject becomes the changelog entry verbatim, so write it
+for someone reading a changelog, not for someone reviewing a diff. A commit
+whose subject does not parse is left out of the changelog and does not bump the
+version.
+
 ### Versioning
 
 The repository uses [Semantic Versioning](https://semver.org/):
@@ -41,11 +51,20 @@ The repository uses [Semantic Versioning](https://semver.org/):
 v<major>.<minor>.<patch>
 ```
 
-- **Major** — breaking API/CRD changes
-- **Minor** — new features, backward compatible
-- **Patch** — bug fixes, documentation
+Versions are computed by release-please from conventional commits, not chosen
+by hand. `.release-please-manifest.json` records the last released version and
+`release-please-config.json` sets the rules:
 
-Tags always include the `v` prefix: `v1.0.0`, `v0.2.1`.
+- **Major** — breaking changes (a `!` marker or a `BREAKING CHANGE:` footer),
+  once the project reaches `1.0.0`
+- **Minor** — `feat:` commits. While the version is below `1.0.0`,
+  `bump-minor-pre-major` maps breaking changes here too, which is what semver
+  prescribes before a stable API is promised
+- **Patch** — `fix:` commits
+
+Tags always include the `v` prefix and carry no component name (`v1.0.0`, not
+`ainsel-v1.0.0`), because one version covers the whole product: the Helm chart
+pins a single image tag per component.
 
 ### Branching
 
@@ -53,9 +72,13 @@ Tags always include the `v` prefix: `v1.0.0`, `v0.2.1`.
 - Feature work happens on `<type>/<short-description>` branches
   (e.g., `feat/github-connector`, `fix/webhook-timeout`,
   `docs/architecture-update`).
-- Open PRs against `develop`. Squash merge is the only merge type this
-  repository allows, so the PR title becomes the commit subject on both
-  `develop` and, after a promotion, `main`.
+- Open PRs against `develop` and squash-merge them, so the PR title becomes
+  the commit subject.
+- **Promote `develop` into `main` with a merge commit, never a squash.**
+  release-please derives the version and `CHANGELOG.md` from the conventional
+  commits reachable on `main`. A squash promotion collapses all of them into a
+  single `release:` commit, which is not a conventional type, so the changelog
+  would omit everything the release actually ships.
 - Always `git pull --rebase` before pushing.
 
 ### Pull Requests

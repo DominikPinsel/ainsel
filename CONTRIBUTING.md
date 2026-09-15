@@ -123,7 +123,7 @@ repository on Forgejo, not here.
 | `dev-image-<component>.yml` (8) | push to `main` or `develop`, path-filtered | build and push images (see tags below) |
 | `gitleaks.yml` | push and PR on `main`/`develop` | secret scanning |
 | `deploy-docs-pages.yml` | push to `main` on docs paths | publish the docs site |
-| `release.yml` | `v*.*.*` tag, or dispatch | cut a product release |
+| `release.yml` | push to `main`, or dispatch | release-please maintains the release PR; when one merges, publish images + chart and verify |
 
 Toolchains come from `actions/setup-go@v7` and `actions/setup-node@v7` after
 `actions/checkout@v7`. Docker build jobs run without a `container:` so the
@@ -157,94 +157,99 @@ Types: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `perf`, `revert`.
 - Body is optional, separated by a blank line; explain *why* the change is
   needed, not just *what* changed.
 
-Breaking changes need a marker, because the release tooling reads it: either
-append `!` to the type (`feat(api)!: drop enabledMCPs`) or add a
-`BREAKING CHANGE: <what>` footer. Without one, the change still ships - it
-just won't appear under *Breaking changes* in the release notes, and the
-version won't bump for it.
+release-please reads these commits to compute the next version and to write
+`CHANGELOG.md`, so the format is load-bearing rather than stylistic.
+
+Breaking changes need a marker: either append `!` to the type
+(`feat(api)!: drop enabledMCPs`) or add a `BREAKING CHANGE: <what>` footer.
+Without one the change still ships - it just won't appear under *BREAKING* in
+the changelog, and the version won't bump for it.
+
+`chore(deps)` and other `chore` commits land under *Miscellaneous Chores*;
+release-please's section mapping cannot split by scope, so Dependabot noise is
+grouped rather than hidden.
 
 The full convention lives in [`docs/conventions.md`](docs/conventions.md).
 
 ## Releases
 
-One version for the whole product, cut from `main`.
-`.github/workflows/release.yml` publishes everything from a single `vX.Y.Z` tag:
+Releases are driven by [release-please](https://github.com/googleapis/release-please)
+from conventional commits — no hand-picked versions, no hand-written
+changelogs. One version covers the whole product, because
+`chart/values.yaml` pins a single image tag per component and the chart cannot
+express per-component versions without a redesign.
+
+Three files define it:
+
+| file | role |
+| --- | --- |
+| `release-please-config.json` | `release-type: simple` at the repo root, plain `vX.Y.Z` tags (`include-component-in-tag: false`), `bump-minor-pre-major` so a breaking change on a `0.x` base bumps minor, and `extra-files` entries that keep `chart/Chart.yaml`'s `version` and `appVersion` in step with the release |
+| `.release-please-manifest.json` | the last released version — `0.1.5` until the first release, after which release-please maintains it |
+| `CHANGELOG.md` | generated and maintained by release-please |
+
+### How a release happens
+
+1. Merge PRs into `develop` and promote `develop` into `main` as usual.
+   **Promotions must be merged with a merge commit, not squashed** — see
+   [Why promotions are merge commits](#why-promotions-are-merge-commits).
+2. On every push to `main`, `.github/workflows/release.yml` runs
+   release-please. If there are release-worthy commits it opens — or refreshes —
+   a release PR titled `chore(main): release <version>`, containing the
+   `CHANGELOG.md` diff, the `chart/Chart.yaml` bump and the manifest update.
+3. **That PR is the dry run.** The version, the changelog and the chart bump
+   are all visible before anything is published, and nothing happens until the
+   PR is merged.
+4. Merging it cuts the release: release-please creates the `vX.Y.Z` tag and the
+   GitHub Release, and the same workflow run publishes the artifacts.
 
 | artifact | where | tags |
 | --- | --- | --- |
 | 8 images + 2 pi variants | Docker Hub, `dpinsel/ainsel-*` | `:vX.Y.Z`, `:X.Y.Z`, and `:latest` for stable releases |
 | Helm chart | GHCR, `oci://ghcr.io/dominikpinsel/charts/ainsel` | `X.Y.Z` |
-| chart `.tgz` + release notes | the GitHub Release | `vX.Y.Z` |
+| chart `.tgz` | attached to the GitHub Release | — |
 
-The product is versioned as a unit because `chart/values.yaml` pins one image
-tag per component: the chart cannot express per-component versions without a
-redesign, so a release tags them all the same.
+The two pi variants build with `BASE_TAG=<release>` against the pi base built in
+the same run, which is what makes a release reproducible rather than pinned to
+whatever `:dev` happens to be. A final job pulls every tag back from Docker Hub
+and GHCR and checks the Release is published with the chart attached, so a green
+run means the artifacts exist.
 
-### Cutting a release
+If a run fails partway, re-run it: the chart job gates `chart/Chart.yaml`
+against the release version, image pushes are idempotent per tag, and the
+Release upload uses `--clobber`.
 
-1. **Prepare.** Open a PR to `main` that bumps both `version` and `appVersion`
-   in `chart/Chart.yaml` to the version you intend to publish. To find out what
-   that should be:
+### Why promotions are merge commits
 
-   ```bash
-   python3 scripts/next-version.py --explain
-   ```
+release-please reads the conventional commits **on `main`**. A squash promotion
+collapses all of develop's per-PR commits into a single
+`release: promote develop to main` commit, and `release:` is not a conventional
+type — so `main` would appear to contain no features and no fixes at all. The
+changelog would omit everything the release actually ships, and release-please
+would propose no bump. Merging with a merge commit keeps every PR commit
+reachable from `main`, which is what makes the changelog correct.
 
-   It takes the highest bump among conventional commits since the last tag:
-   `feat!` or a `BREAKING CHANGE` footer → major, `feat` → minor, `fix` →
-   patch, `chore`/`ci`/`deps` → nothing. On a `0.x` base a breaking change
-   bumps *minor*, which is what semver prescribes before 1.0; pass
-   `--strict-breaking` to bump major instead. With no tag yet it returns the
-   chart version, since that is the only version the project has ever carried.
+The same applies to any PR merged straight into `main`: squash is fine there,
+because one squashed commit still carries that PR's conventional subject.
 
-2. **Tag**, once that PR is merged:
+### Prereleases and `latest`
 
-   ```bash
-   git fetch origin && git checkout origin/main
-   git tag -a v0.2.0 -m "Release v0.2.0" && git push origin v0.2.0
-   ```
+A version with a suffix (`v0.3.0-rc.1`) is marked as a prerelease on GitHub and
+skips the `:latest` tag, so `latest` always means the newest stable release.
 
-   Or run **Actions → Release → Run workflow** with `version: auto`, which
-   computes the version, pushes the tag and continues in the same run. Set
-   `dry_run: true` first to see every gate and the generated notes without
-   publishing anything.
+### Known rough edge: chart image tags
 
-3. **The workflow gates before it publishes anything:**
-   - the tagged commit is contained in `origin/main`
-   - `chart/Chart.yaml` `version` *and* `appVersion` equal the release
-   - no failed check runs on that commit
-   - the tag does not already exist
-
-   A gate failure means nothing was published, so fixing it and re-running is
-   safe.
-
-4. **Then it publishes.** The two pi variants build with
-   `BASE_TAG=<release>` against the pi base built in the same run, which is what
-   makes a release reproducible. A final job pulls every tag back from Docker
-   Hub and GHCR and checks the Release has the chart attached, so a green run
-   means the artifacts exist.
-
-### Changelogs
-
-Release notes are generated from conventional commits by
-`scripts/release-notes.py`, grouped into breaking changes, features, fixes,
-dependency updates and everything else, with each entry linked to its PR.
-Commits whose subject does not match `<type>(<scope>): <subject>` land under
-*Other changes* - another reason to keep the format.
-
-```bash
-python3 scripts/release-notes.py --from v0.1.0 --to v0.2.0   # between two tags
-python3 scripts/release-notes.py --from -        --to v0.2.0 # everything so far
-```
-
-Prereleases (`v0.3.0-rc.1`) are supported: they are marked as such on GitHub
-and skip the `:latest` tag, so `latest` always means the newest stable release.
+`chart/values.yaml` still hardcodes each component's image tag (`0.1.0`, and
+`0.2.1` for the frontend), which predates this pipeline. So a released chart
+installs those older images unless the tags are overridden. Defaulting them to
+`.Chart.AppVersion` is the fix, but it has to land together with a release —
+before one exists, the documented quickstart would point at tags that are not
+published.
 
 ### Releasing is not deploying
 
 The dev cluster keeps running mutable `:dev` images built from `develop`; the
-`AInsel/ainsel-deployment` workflow on Forgejo rolls them out on a schedule.
-A release does not touch it. Pointing an environment at a release means setting
+`AInsel/ainsel-deployment` workflow on Forgejo rolls them out on a schedule. A
+release does not touch it. Pointing an environment at a release means setting
 the chart version (or the component `image.tag` values) explicitly.
 
 ## Branching
