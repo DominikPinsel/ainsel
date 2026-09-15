@@ -57,7 +57,7 @@ function defaultFetch(url: string, init?: RequestInit): Response {
         name: 'doc-writer',
         description: 'Writes docs',
         imageRef: { name: IMAGE_ID },
-        llm: { model: 'claude-opus-4-7', provider: 'ollama-cloud' },
+        llm: { model: 'claude-opus-4-7', provider: 'ollama-cloud', vision: true },
         persona: { id: PERSONA_ID },
         replicas: 2,
       }),
@@ -121,6 +121,9 @@ describe('AgentForm (edit)', () => {
     expect(screen.getByLabelText(/^persona$/i)).toHaveValue(PERSONA_ID)
     expect(screen.getByLabelText('Replicas')).toHaveValue(2)
     expect(screen.getByLabelText('Image')).toHaveValue(IMAGE_ID)
+    expect(
+      screen.getByRole('checkbox', { name: /image input/i }),
+    ).toHaveAttribute('aria-checked', 'true')
   })
 
   it('offers no group field, since an agent keeps its group', async () => {
@@ -192,6 +195,24 @@ describe('AgentForm (edit)', () => {
       url: 'https://api.example.com/v1',
       apiKey: 'sk-test-12345',
     })
+  })
+
+  it('sends an explicit llm.vision false when image input is turned off', async () => {
+    const user = userEvent.setup()
+    renderEditForm()
+    await waitForPrefill()
+
+    const toggle = screen.getByRole('checkbox', { name: /image input/i })
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
+
+    await user.click(toggle)
+    expect(screen.getByText('Text-only model')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /^save$/i }))
+
+    await waitFor(() => expect(putBody(fetchMock)).toBeDefined())
+    // The hub reads a missing `vision` as "leave unchanged", so turning image
+    // input off only takes effect if the form says false explicitly.
+    expect(putBody(fetchMock)?.llm).toMatchObject({ vision: false })
   })
 
   it('omits the credential block when the API key is left blank', async () => {

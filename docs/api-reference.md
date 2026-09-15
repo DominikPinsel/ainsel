@@ -49,7 +49,7 @@ List all Agents in the configured namespace, sorted by resource name.
       "description": "...",
       "imageRef": {"name": "img-claude-coder"},
       "runtime": {"provider": "ollama-cloud"},
-      "llm": {"model": "glm-5.1:cloud", "maxTurns": 25},
+      "llm": {"model": "glm-5.1:cloud", "maxTurns": 25, "vision": false},
       "persona": {"inline": "..."},
       "enabledTools": ["read", "edit"],
       "scaling": {"minReplicas": 0, "maxReplicas": 3},
@@ -84,7 +84,7 @@ Create a new Agent. The hub generates the resource name (`a-<short id>`); the re
   "description": "...",
   "imageRef": {"name": "img-claude-coder"},
   "runtime": {"provider": "ollama-cloud"},
-  "llm": {"model": "glm-5.1:cloud", "maxTurns": 25, "temperature": 0.2},
+  "llm": {"model": "glm-5.1:cloud", "maxTurns": 25, "temperature": 0.2, "vision": true},
   "persona": {"inline": "..."},
   "enabledTools": ["read", "edit"],
   "scaling": {"minReplicas": 0, "maxReplicas": 3, "cooldownPeriod": 300, "lagThreshold": 5},
@@ -109,6 +109,8 @@ Fetch one Agent by resource name.
 Update an Agent. Body fields are all optional; only fields that are present are applied. When `imageRef` or `enabledTools` changes, the new combination is re-validated against the referenced `AgentImage`.
 
 `env` **replaces** this agent's override list when present: `{"env": []}` clears the overrides so the agent runs on the image's variables again. A secret entry submitted with an empty `value` keeps its stored value, so a client that never received the secret can round-trip the list safely.
+
+`llm.vision` is tri-state on update: **omitted means leave unchanged**, so turning image input off requires sending `false` explicitly. When true, the operator advertises `"input": ["text", "image"]` to pi, and screenshots and image attachments reach the model instead of being dropped.
 
 Re-pointing `persona` away from a persona this agent owns deletes that owned persona afterwards: owned personas are invisible to the persona library, so nothing else would reclaim them. The cleanup is best-effort and never fails the request.
 

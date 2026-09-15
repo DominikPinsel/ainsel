@@ -258,6 +258,46 @@ describe('AgentWizard', () => {
     })
   })
 
+  it('sends llm.vision when image input is enabled on the model step', async () => {
+    const user = userEvent.setup()
+    renderWizard()
+
+    await user.type(await screen.findByLabelText('Name'), 'vision-agent')
+    await selectGroup(user)
+    await user.click(next())
+
+    await selectImage(user)
+    await user.click(next())
+
+    await user.type(await screen.findByLabelText('Model'), 'gpt-4-vision')
+
+    // Text-only is the default: an unset flag must never reach the hub as true.
+    const toggle = await screen.findByRole('checkbox', { name: /image input/i })
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
+    expect(screen.getByText('Text-only model')).toBeInTheDocument()
+
+    await user.click(toggle)
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByText('Model accepts images')).toBeInTheDocument()
+    await user.click(next())
+
+    await selectPersona(user)
+    await user.click(next())
+
+    // The review step restates the choice before submitting.
+    expect(
+      await screen.findByText(/gpt-4-vision · ollama-cloud · accepts images/),
+    ).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /create agent/i }))
+
+    await waitFor(() => expect(postBody(fetchMock)).toBeDefined())
+    expect(postBody(fetchMock)?.llm).toMatchObject({
+      model: 'gpt-4-vision',
+      vision: true,
+    })
+  })
+
   it('sends customProvider URL and API key when Custom is selected', async () => {
     const user = userEvent.setup()
     renderWizard()

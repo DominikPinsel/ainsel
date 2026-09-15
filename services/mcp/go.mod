@@ -4,7 +4,7 @@ go 1.26.1
 
 require (
 	github.com/DominikPinsel/ainsel/shared/auth/oidc v0.0.0
-	github.com/mark3labs/mcp-go v0.58.0
+	github.com/mark3labs/mcp-go v1.0.0
 )
 
 require (
