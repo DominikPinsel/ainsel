@@ -119,6 +119,7 @@ repository on Forgejo, not here.
 | workflow | trigger | does |
 | --- | --- | --- |
 | `ci-<component>.yml` (10) | PR based on `main` or `develop`, path-filtered | build, test, lint that component |
+| `pr-title.yml` | PR opened, edited or updated | reject a PR title release-please could not parse |
 | `ci-chart.yml` | same, for `chart/**` and `operators/*/config/crd/**` | helm lint, template with default/example/medium/large values, CRD sync check |
 | `dev-image-<component>.yml` (8) | push to `main` or `develop`, path-filtered | build and push images (see tags below) |
 | `gitleaks.yml` | push and PR on `main`/`develop` | secret scanning |
@@ -158,16 +159,22 @@ Types: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `perf`, `revert`.
   needed, not just *what* changed.
 
 release-please reads these commits to compute the next version and to write
-`CHANGELOG.md`, so the format is load-bearing rather than stylistic.
+`CHANGELOG.md`, so the format is load-bearing rather than stylistic. Two rules
+decide what a reader of the changelog actually sees:
+
+- **A subject release-please cannot parse is dropped** - it appears nowhere in
+  the changelog and cannot bump the version. `.github/workflows/pr-title.yml`
+  rejects such a PR title, because squash-merge makes the title the subject.
+- Of the commits that do parse, only `feat`, `fix`, `perf` and `revert` are
+  listed by default. `chore` (where Dependabot's `chore(deps)` bumps land),
+  `docs`, `style`, `refactor`, `test`, `build` and `ci` are hidden - unless the
+  commit is breaking, in which case it is shown. That keeps dependency noise out
+  of the changelog without hiding anything that changes behaviour.
 
 Breaking changes need a marker: either append `!` to the type
 (`feat(api)!: drop enabledMCPs`) or add a `BREAKING CHANGE: <what>` footer.
 Without one the change still ships - it just won't appear under *BREAKING* in
 the changelog, and the version won't bump for it.
-
-`chore(deps)` and other `chore` commits land under *Miscellaneous Chores*;
-release-please's section mapping cannot split by scope, so Dependabot noise is
-grouped rather than hidden.
 
 The full convention lives in [`docs/conventions.md`](docs/conventions.md).
 
