@@ -8,7 +8,7 @@ import {
 } from 'react'
 import { AuthProvider as OidcProvider, useAuth as useOidcAuth } from 'react-oidc-context'
 import { WebStorageStateStore } from 'oidc-client-ts'
-import { setAuthToken } from '../api/client'
+import { setAuthToken, setUnauthorizedHandler } from '../api/client'
 import { login as apiLogin } from '../api/auth'
 import { runtimeConfig, type AuthMode, type ResolvedConfig } from '../runtime-config'
 
@@ -106,11 +106,19 @@ function LocalAuthProvider({ children }: { children: ReactNode }) {
     [session, login, logout],
   )
 
+  // 401 recovery: drop the stale session and let RequireAuth route to
+  // /login (local mode uses a client-side <Navigate>). No page reload, so
+  // no loop is possible.
+  setUnauthorizedHandler(() => logout())
+
   return <AuthCtx.Provider value={state}>{children}</AuthCtx.Provider>
 }
 
 function NoneAuthProvider({ children }: { children: ReactNode }) {
   setAuthToken(null)
+  // No session to recover in 'none' mode; clear any previously registered
+  // handler so stray 401s only surface as errors in the UI.
+  setUnauthorizedHandler(null)
   const state: AuthState = useMemo(
     () => ({
       mode: 'none',
@@ -150,16 +158,53 @@ function oidcProviderConfig(cfg: ResolvedConfig) {
 // OidcBridge adapts react-oidc-context state to the unified AuthState.
 function OidcBridge({ children }: { children: ReactNode }) {
   const oidc = useOidcAuth()
+
+  // An expired stored user still exposes its dead access token — and
+  // react-oidc-context keeps the user around even after silent-renew
+  // failures (it only flips isAuthenticated). Mirroring the token
+  // unconditionally made RequireAuth's "no token → redirect to IdP"
+  // guard unreachable, so a stale session rendered the app and every API
+  // call 401'd. Treat expired users as unauthenticated: RequireAuth then
+  // bounces to the IdP on the next render instead of looping.
+  const accessToken = oidc.user && !oidc.user.expired ? oidc.user.access_token : null
+
   // Mirror the OIDC access token into the API client during render — not in
   // a useEffect — so that any child component's data fetch sees the token on
   // the very first render after auth completes.
-  setAuthToken(oidc.user?.access_token ?? null)
+  setAuthToken(accessToken)
+
+  // 401 recovery for oidc mode. If the IdP issued a refresh token,
+  // signinSilent renews via the refresh-token grant (no iframe). Without
+  // one, silent renewal would have to run through a hidden iframe against
+  // the IdP — which cannot work in this deployment (the IdP session cookie
+  // is SameSite=Lax and the app and IdP live on separate sites, e.g.
+  // devoper.duckdns.org vs auth-devoper.duckdns.org), so we go straight to
+  // an interactive signinRedirect instead of waiting for the iframe to
+  // time out.
+  setUnauthorizedHandler(() => {
+    if (oidc.activeNavigator || oidc.isLoading) return // recovery already in flight
+    void (async () => {
+      if (oidc.user?.refresh_token) {
+        try {
+          await oidc.signinSilent()
+          return // token renewed; the mirror above picks it up on re-render
+        } catch {
+          // fall through to an interactive login
+        }
+      }
+      void oidc.signinRedirect().catch(() => {
+        // The IdP is unreachable — land on /login so the user gets the
+        // "Continue to login" button as a manual retry instead of a blank page.
+        window.location.href = `${import.meta.env.BASE_URL}login`
+      })
+    })()
+  })
 
   const state: AuthState = useMemo(
     () => ({
       mode: 'oidc',
       ready: !oidc.isLoading,
-      token: oidc.user?.access_token ?? null,
+      token: accessToken,
       user: oidc.user?.profile
         ? {
             sub: String(oidc.user.profile.sub ?? ''),
@@ -181,7 +226,7 @@ function OidcBridge({ children }: { children: ReactNode }) {
         void oidc.signoutRedirect()
       },
     }),
-    [oidc],
+    [oidc, accessToken],
   )
 
   return <AuthCtx.Provider value={state}>{children}</AuthCtx.Provider>

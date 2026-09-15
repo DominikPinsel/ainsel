@@ -39,6 +39,49 @@ export class ServiceUnavailableError extends ApiError {
   }
 }
 
+// --- 401 recovery -----------------------------------------------------------
+//
+// Historically a 401 triggered window.location.reload(). That reload was
+// meant to make RequireAuth notice the missing session and redirect to the
+// IdP, but it could never recover from an *expired* stored OIDC user: the
+// reload restored the same stale user (react-oidc-context keeps the user
+// object even after silent-renew failures), every retried request 401'd
+// again, and the page ended up in an infinite refresh loop.
+//
+// Instead, the active AuthProvider registers a recovery handler that can
+// actually fix the session: silent token renewal (refresh-token grant) or a
+// redirect to the IdP / login page. Burst-deduping lives here: pages like
+// /observability fire ~10 requests on mount, and a single recovery attempt
+// per cooldown window must cover the whole wave.
+
+type UnauthorizedHandler = () => void
+
+let unauthorizedHandler: UnauthorizedHandler | null = null
+let unauthorizedHandledAt = 0
+const UNAUTHORIZED_COOLDOWN_MS = 10_000
+
+/**
+ * Register (or replace/clear) the recovery action for 401 API responses.
+ * Registered by the active AuthProvider during render. Passing `null`
+ * clears the handler and resets the burst cooldown.
+ */
+export function setUnauthorizedHandler(handler: UnauthorizedHandler | null) {
+  unauthorizedHandler = handler
+  if (handler === null) unauthorizedHandledAt = 0
+}
+
+function recoverFromUnauthorized() {
+  if (!unauthorizedHandler) return
+  const now = Date.now()
+  if (now - unauthorizedHandledAt < UNAUTHORIZED_COOLDOWN_MS) return
+  unauthorizedHandledAt = now
+  try {
+    unauthorizedHandler()
+  } catch {
+    // Recovery must never mask the UnauthorizedError the caller throws.
+  }
+}
+
 type Query = Record<string, string | number | boolean | undefined | null>
 
 type RequestOptions = {
@@ -99,8 +142,10 @@ export async function request<T = unknown>(
   })()
 
   if (res.status === 401) {
-    // Triggers RequireAuth → signinRedirect on next render.
-    window.location.reload()
+    // Delegated to the auth layer (see setUnauthorizedHandler) — never a
+    // blind window.location.reload(), which cannot terminate when the
+    // stored OIDC user holds an expired token.
+    recoverFromUnauthorized()
     throw new UnauthorizedError(parsed)
   }
   if (res.status === 503) throw new ServiceUnavailableError(parsed)
