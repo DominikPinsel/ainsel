@@ -31,7 +31,11 @@ maintainers directly.
 
 You'll need:
 
-- **Node.js 20+** — pinned in [`.nvmrc`](.nvmrc) and `package.json#engines`.
+- **Node.js 24+** — pinned in [`.nvmrc`](.nvmrc) and `package.json#engines`.
+  The floor is set by the toolchain, not by preference: jsdom 30 needs
+  `^22.22.2 || ^24.15.0 || >=26.0.0` (its `undici` dependency calls
+  `worker_threads.markAsUncloneable`, which Node 20 does not have) and
+  mermaid 12 needs `>=22.12.0`. `frontend/Dockerfile` builds on `node:26`.
 - **pnpm 9.15+** — pinned in `package.json#packageManager`.
 - **Go 1.26+** — pinned in each module's `go.mod`.
 - **Helm 3** — for working with the chart.
