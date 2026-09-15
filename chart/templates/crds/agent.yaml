@@ -186,6 +186,13 @@ spec:
                     type: string
                   temperature:
                     type: number
+                  vision:
+                    description: |-
+                      Vision declares that the model accepts image input. When true, the
+                      generated pi models.json advertises "input": ["text", "image"] so
+                      pi's media tools attach images instead of dropping them. Defaults to
+                      false: a text-only model must never receive image payloads.
+                    type: boolean
                 required:
                 - model
                 type: object

@@ -21,6 +21,7 @@
 | `llm.model` | string | Yes | LLM model name |
 | `llm.maxTurns` | int | No | Maximum tool-use loop turns |
 | `llm.temperature` | float64 | No | LLM temperature |
+| `llm.vision` | bool | No | Model accepts image input (pi attaches screenshots/images only when true). Default false |
 | `persona.inline` | string | No | Inline persona text |
 | `persona.configMapRef.name` | string | No | ConfigMap containing persona |
 | `persona.configMapRef.key` | string | No | Key in ConfigMap |

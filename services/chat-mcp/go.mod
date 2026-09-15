@@ -2,7 +2,7 @@ module github.com/DominikPinsel/ainsel/services/chat-mcp
 
 go 1.26.1
 
-require github.com/mark3labs/mcp-go v0.58.0
+require github.com/mark3labs/mcp-go v1.0.0
 
 require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect

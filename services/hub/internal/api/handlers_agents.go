@@ -164,6 +164,9 @@ type AgentLLMInfo struct {
 	Provider    string   `json:"provider,omitempty"`
 	MaxTurns    int      `json:"maxTurns,omitempty"`
 	Temperature *float64 `json:"temperature,omitempty"`
+	// Vision mirrors spec.llm.vision: whether the model accepts image input.
+	// A pointer keeps an explicit false distinguishable from "unset".
+	Vision *bool `json:"vision,omitempty"`
 }
 
 // AgentPersonaInfo is the REST representation of an Agent's persona reference.
@@ -282,6 +285,7 @@ func toSimpleAgentResponse(a agentv1alpha1.Agent, imageDisplayName string) Simpl
 			Provider:    a.Spec.LLM.Provider,
 			MaxTurns:    a.Spec.LLM.MaxTurns,
 			Temperature: a.Spec.LLM.Temperature,
+			Vision:      a.Spec.LLM.Vision,
 		},
 		EnabledTools: a.Spec.EnabledTools,
 		UpdatedAt:    agentUpdatedAt(a),
@@ -643,6 +647,7 @@ func (s *Server) createAgent(ctx context.Context, w http.ResponseWriter, r *http
 		Provider:    req.LLM.Provider,
 		MaxTurns:    req.LLM.MaxTurns,
 		Temperature: req.LLM.Temperature,
+		Vision:      req.LLM.Vision,
 	}
 	if req.Persona != nil {
 		agent.Spec.Persona = agentv1alpha1.AgentPersona{
@@ -886,6 +891,9 @@ func (s *Server) updateAgent(ctx context.Context, w http.ResponseWriter, r *http
 		}
 		if req.LLM.Temperature != nil {
 			existing.Spec.LLM.Temperature = req.LLM.Temperature
+		}
+		if req.LLM.Vision != nil {
+			existing.Spec.LLM.Vision = req.LLM.Vision
 		}
 	}
 	if req.Persona != nil && req.Persona.ID != "" {

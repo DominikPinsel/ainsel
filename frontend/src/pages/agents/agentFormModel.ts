@@ -36,6 +36,10 @@ export const agentSchema = z
       provider: z.string().optional(),
       maxTurns: z.coerce.number().int().min(1).optional(),
       temperature: z.coerce.number().min(0).max(2).optional(),
+      // Always a concrete boolean in the payload: the hub treats a missing
+      // `vision` on update as "leave unchanged", so the form must send false
+      // explicitly to turn image input back off.
+      vision: z.boolean().optional(),
     }),
     providerApiKey: z.string().optional(),
     customProviderUrl: z.string().optional(),
@@ -62,7 +66,7 @@ export const agentDefaults: AgentFormInput = {
   name: '',
   description: '',
   imageRef: { name: '' },
-  llm: { model: '', provider: 'ollama-cloud', maxTurns: 100, temperature: 1 },
+  llm: { model: '', provider: 'ollama-cloud', maxTurns: 100, temperature: 1, vision: false },
   customProviderUrl: '',
   providerApiKey: '',
   persona: { id: '' },

@@ -40,6 +40,15 @@ def main() -> int:
             print(f"  operator base changed without updating the chart copy: {base_rel}")
             print("  fix: copy the base file into chart/templates/crds/ (keep the")
             print("  helm.sh/resource-policy: keep annotation)")
+        # The spec comparison above cannot see this: re-copying a base over the
+        # chart file drops the annotation, and the loss only bites on uninstall.
+        policy = (chart.get("metadata", {}).get("annotations") or {}).get(
+            "helm.sh/resource-policy")
+        if policy != "keep":
+            failed = True
+            print(f"CRD lost its uninstall guard: {chart_rel}")
+            print("  metadata.annotations[helm.sh/resource-policy] must be 'keep',")
+            print("  or `helm uninstall` deletes the CRD and every CR with it.")
     if failed:
         return 1
     print("chart CRD copies match their operator bases")
