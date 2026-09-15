@@ -28,6 +28,33 @@ type stubPersonaService struct {
 	listVerFn  func(ctx context.Context, id string) ([]personas.VersionSummary, error)
 	getVerFn   func(ctx context.Context, id string, n int) (*personas.Version, error)
 	rollbackFn func(ctx context.Context, id string, n int) (*personas.Persona, error)
+
+	// Agent-owned persona hooks (M3). Nil fns return inert zero values so
+	// library-only tests don't have to stub them.
+	ownedByFn     func(ctx context.Context, agentName string) (*personas.Persona, error)
+	ensureOwnedFn func(ctx context.Context, agentName, defaultName string, req personas.UpdateRequest) (*personas.Persona, error)
+	deleteOwnedFn func(ctx context.Context, personaID, agentName string) error
+}
+
+func (s *stubPersonaService) OwnedBy(ctx context.Context, agentName string) (*personas.Persona, error) {
+	if s.ownedByFn == nil {
+		return nil, nil
+	}
+	return s.ownedByFn(ctx, agentName)
+}
+
+func (s *stubPersonaService) EnsureOwned(ctx context.Context, agentName, defaultName string, req personas.UpdateRequest) (*personas.Persona, error) {
+	if s.ensureOwnedFn == nil {
+		return nil, personas.ErrNotFound
+	}
+	return s.ensureOwnedFn(ctx, agentName, defaultName, req)
+}
+
+func (s *stubPersonaService) DeleteOwned(ctx context.Context, personaID, agentName string) error {
+	if s.deleteOwnedFn == nil {
+		return nil
+	}
+	return s.deleteOwnedFn(ctx, personaID, agentName)
 }
 
 func (s *stubPersonaService) Create(ctx context.Context, req personas.CreateRequest) (*personas.Persona, error) {

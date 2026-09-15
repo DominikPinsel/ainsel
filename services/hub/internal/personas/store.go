@@ -48,9 +48,9 @@ func (s *Store) Create(ctx context.Context, p *Persona) error {
 	// real version id before commit (deferrable FK lets the row exist
 	// with a dangling reference until COMMIT).
 	if _, err := tx.Exec(ctx,
-		`INSERT INTO personas (id, name, description, current_version_id, created_at, updated_at)
-		 VALUES ($1, $2, $3, 0, $4, $4)`,
-		p.ID, p.Name, p.Description, now,
+		`INSERT INTO personas (id, name, description, current_version_id, owner_agent, created_at, updated_at)
+		 VALUES ($1, $2, $3, 0, NULLIF($4, ''), $5, $5)`,
+		p.ID, p.Name, p.Description, p.OwnerAgent, now,
 	); err != nil {
 		if isUniqueViolation(err) {
 			return ErrNameTaken
@@ -89,11 +89,13 @@ func (s *Store) Create(ctx context.Context, p *Persona) error {
 func (s *Store) Get(ctx context.Context, id string) (*Persona, error) {
 	var p Persona
 	err := s.pool.QueryRow(ctx, `
-		SELECT p.id, p.name, p.description, pv.version_number, pv.text, p.created_at, p.updated_at
+		SELECT p.id, p.name, p.description, pv.version_number, pv.text,
+		       COALESCE(p.owner_agent, ''), p.created_at, p.updated_at
 		FROM personas p
 		JOIN persona_versions pv ON pv.id = p.current_version_id
 		WHERE p.id = $1
-	`, id).Scan(&p.ID, &p.Name, &p.Description, &p.CurrentVersion, &p.Text, &p.CreatedAt, &p.UpdatedAt)
+	`, id).Scan(&p.ID, &p.Name, &p.Description, &p.CurrentVersion, &p.Text,
+		&p.OwnerAgent, &p.CreatedAt, &p.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -103,12 +105,37 @@ func (s *Store) Get(ctx context.Context, id string) (*Persona, error) {
 	return &p, nil
 }
 
-// List returns all personas as summaries (no text), newest first.
+// GetByOwner returns the persona owned by the given Agent CR name, or
+// ErrNotFound when the agent has no owned persona (e.g. it still
+// references a shared template).
+func (s *Store) GetByOwner(ctx context.Context, agentName string) (*Persona, error) {
+	var p Persona
+	err := s.pool.QueryRow(ctx, `
+		SELECT p.id, p.name, p.description, pv.version_number, pv.text,
+		       COALESCE(p.owner_agent, ''), p.created_at, p.updated_at
+		FROM personas p
+		JOIN persona_versions pv ON pv.id = p.current_version_id
+		WHERE p.owner_agent = $1
+	`, agentName).Scan(&p.ID, &p.Name, &p.Description, &p.CurrentVersion, &p.Text,
+		&p.OwnerAgent, &p.CreatedAt, &p.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("personas.GetByOwner: %w", err)
+	}
+	return &p, nil
+}
+
+// List returns shared template personas as summaries (no text), newest
+// first. Agent-owned personas are excluded — they are addressed through
+// their owning agent, never through the library.
 func (s *Store) List(ctx context.Context) ([]PersonaSummary, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT p.id, p.name, p.description, pv.version_number, p.created_at, p.updated_at
 		FROM personas p
 		JOIN persona_versions pv ON pv.id = p.current_version_id
+		WHERE p.owner_agent IS NULL
 		ORDER BY p.created_at DESC
 	`)
 	if err != nil {

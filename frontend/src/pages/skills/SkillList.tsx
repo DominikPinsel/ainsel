@@ -219,7 +219,7 @@ export function SkillList() {
       <Titleblock
         crumbs={
           <>
-            Fleet / <b>Skills</b>
+            Library / <b>Skills</b>
           </>
         }
         title={

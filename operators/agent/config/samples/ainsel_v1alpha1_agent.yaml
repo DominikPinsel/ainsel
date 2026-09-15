@@ -50,8 +50,16 @@ spec:
   enabledTools:
     - web-search
     - code-interpreter
-  enabledMCPs:
-    - hub-mcp
+  skills:
+    items:
+      - git-review
+  mcp:
+    servers:
+      - name: hub-mcp
+        url: http://mcp-hub-mcp.ainsel.svc.cluster.local:8080/mcp
+  env:
+    - name: LOG_LEVEL
+      value: debug
   scaling:
     replicas: 2
   memory:

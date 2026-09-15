@@ -52,7 +52,7 @@ export function PersonaDetail() {
       <Titleblock
         crumbs={
           <>
-            Fleet / <Link to="/personas">Personas</Link> /{' '}
+            Library / <Link to="/personas">Personas</Link> /{' '}
             <b>{data?.name ?? id ?? '—'}</b>
           </>
         }

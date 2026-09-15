@@ -309,7 +309,6 @@ func resolvePiProvider(agent *ainselv1alpha1.Agent) piProviderConfig {
 	}
 }
 
-
 // resolveHubURL returns the hub backend REST API URL that MCP sidecars
 // (e.g. the chat-mcp sidecar) use to proxy requests back to the hub. The
 // operator reads HUB_URL from its own environment; the chart injects it
@@ -382,13 +381,12 @@ func desiredReplicas(agent *ainselv1alpha1.Agent) int32 {
 }
 
 func (r *AgentReconciler) reconcileDeployment(ctx context.Context, agent *ainselv1alpha1.Agent, agentName string, img *ainselv1alpha1.AgentImage, podImage string) (*appsv1.Deployment, []mcpservers.MissingEnvEntry, error) {
-	log := logf.FromContext(ctx)
-
 	// missingEnv captures MCP servers whose tokenFromEnv references an
 	// env var not defined on the AgentImage. It is populated inside the
 	// CreateOrUpdate closure and returned to the caller so the Reconcile
 	// loop can set a Degraded condition and emit Warning Events.
 	var missingEnv []mcpservers.MissingEnvEntry
+	var err error
 
 	labels := map[string]string{
 		"app.kubernetes.io/name":       agentName,
@@ -397,17 +395,10 @@ func (r *AgentReconciler) reconcileDeployment(ctx context.Context, agent *ainsel
 		"ainsel.dev/agent":             agent.Name,
 	}
 
-	// Resolve each enabled MCP name to a runtime URL by looking up its
-	// Service in the agent's namespace. Missing Services are logged and
-	// skipped — the agent still rolls out.
-	mcpEntries, mcpMissing, err := mcpservers.Discover(ctx, r.Client, agent.Namespace, agent.Spec.EnabledMCPs)
-	if err != nil {
-		log.Error(err, "discover MCP services")
-		return nil, nil, err
-	}
-	for _, n := range mcpMissing {
-		log.Info("MCP service not found, skipping", "agent", agent.Name, "mcp", n)
-	}
+	// MCP_SERVERS is built from the agent's own definitions (or its runtime
+	// profile's), plus any sidecar-declared servers and the injected chat
+	// sidecar.
+	var mcpEntries []string
 
 	imagePullPolicy := agent.Spec.Runtime.ImagePullPolicy
 	if imagePullPolicy == "" {
@@ -485,9 +476,10 @@ func (r *AgentReconciler) reconcileDeployment(ctx context.Context, agent *ainsel
 		{Name: "pi-home", MountPath: "/home/agent/.pi/agent"},
 		{Name: "pi-models", MountPath: "/var/pi-models", ReadOnly: true},
 	}
-	if len(img.Spec.EnabledSkills) > 0 {
-		skillItems := make([]corev1.KeyToPath, 0, len(img.Spec.EnabledSkills))
-		for _, id := range img.Spec.EnabledSkills {
+	skills := effectiveSkills(agent, img)
+	if len(skills) > 0 {
+		skillItems := make([]corev1.KeyToPath, 0, len(skills))
+		for _, id := range skills {
 			skillItems = append(skillItems, corev1.KeyToPath{
 				Key:  id,
 				Path: id + "/SKILL.md",
@@ -737,14 +729,18 @@ func (r *AgentReconciler) reconcileDeployment(ctx context.Context, agent *ainsel
 								envs = append(envs,
 									corev1.EnvVar{Name: "AGENT_TOOLS", Value: strings.Join(containerTools, ",")},
 								)
-								// Inject image env vars as explicit entries (not envFrom)
-								// so they are eligible for Kubernetes $(VAR) substitution
-								// in MCP_SERVER_TOKENS below. Values are sourced from the
-								// operator-managed <agent>-image-env Secret built by
+								// Inject the effective runtime-profile env vars —
+								// the image defaults with this agent's overrides
+								// merged in — as explicit entries (not envFrom)
+								// so they are eligible for Kubernetes $(VAR)
+								// substitution in MCP_SERVER_TOKENS below. Values
+								// are sourced from the operator-managed
+								// <agent>-image-env Secret built by
 								// reconcileImageEnvSecret.
-								imageEnvNames := make(map[string]bool, len(img.Spec.Env))
+								profileEnv := effectiveEnv(agent, img)
+								imageEnvNames := make(map[string]bool, len(profileEnv))
 								managedEnv := platformManagedAgentEnv()
-								for _, e := range img.Spec.Env {
+								for _, e := range profileEnv {
 									if _, reserved := managedEnv[e.Name]; reserved {
 										// Platform-owned name: the canonical value is already
 										// injected above. Skipping it here prevents the image
@@ -762,11 +758,11 @@ func (r *AgentReconciler) reconcileDeployment(ctx context.Context, agent *ainsel
 									})
 									imageEnvNames[e.Name] = true
 								}
-								// Inject the resolved MCP server URLs. Empty when
-								// spec.enabledMCPs is empty or all referenced
-								// Services are missing.
+								// Inject the effective MCP server URLs: the agent's
+								// own definitions (explicit override, empty = none)
+								// or the referenced image's servers (legacy).
 								// Also append any MCP servers configured on the AgentImage.
-								for _, s := range img.Spec.MCPServers {
+								for _, s := range effectiveMCPServers(agent, img) {
 									mcpEntries = append(mcpEntries, fmt.Sprintf("%s=%s", s.Name, s.URL))
 								}
 								// Append MCP entries for sidecar containers that declare an MCP path.
@@ -805,7 +801,7 @@ func (r *AgentReconciler) reconcileDeployment(ctx context.Context, agent *ainsel
 								// from the image env are skipped; the controller logs
 								// them so a future Degraded condition can surface the
 								// misconfiguration to the user.
-								tokenValue, me := mcpservers.TokenEnvValue(img.Spec.MCPServers, imageEnvNames)
+								tokenValue, me := mcpservers.TokenEnvValue(effectiveMCPServers(agent, img), imageEnvNames)
 								if len(me) > 0 {
 									missingEnv = append(missingEnv, me...)
 									var descs []string
@@ -970,7 +966,7 @@ func (r *AgentReconciler) reconcileDeployment(ctx context.Context, agent *ainsel
 		// annotate the pod template. When the hub updates a skill, the hash
 		// changes, which causes Kubernetes to perform a rolling restart
 		// automatically so the agent picks up the new skill content.
-		if len(img.Spec.EnabledSkills) > 0 {
+		if len(effectiveSkills(agent, img)) > 0 {
 			skillHash, err := r.computeSkillsHash(ctx, agent.Namespace)
 			if err != nil {
 				return fmt.Errorf("computing skill hash: %w", err)
@@ -1032,10 +1028,16 @@ func (r *AgentReconciler) reconcileMCPTokenEnvCondition(ctx context.Context, age
 	}
 }
 
+// reconcileImageEnvSecret maintains the <agent>-image-env Secret holding the
+// effective runtime-profile env: the referenced image's defaults with this
+// agent's overrides merged in. The name predates agent-scoped overrides and is
+// kept so existing Secrets (and the pods referencing them) are not orphaned.
 func (r *AgentReconciler) reconcileImageEnvSecret(ctx context.Context, agent *ainselv1alpha1.Agent, agentName string, img *ainselv1alpha1.AgentImage) error {
 	secretName := agentName + "-image-env"
-	if len(img.Spec.Env) == 0 {
-		// Clean up any previously-created secret when the image has no env vars.
+	profileEnv := effectiveEnv(agent, img)
+	if len(profileEnv) == 0 {
+		// Clean up any previously-created secret when neither the image nor
+		// the agent defines env vars.
 		// Only delete if the secret is owned by this Agent to avoid removing
 		// user-managed secrets.
 		secret := &corev1.Secret{}
@@ -1053,13 +1055,13 @@ func (r *AgentReconciler) reconcileImageEnvSecret(ctx context.Context, agent *ai
 		return nil
 	}
 
-	secretData := make(map[string][]byte, len(img.Spec.Env))
+	secretData := make(map[string][]byte, len(profileEnv))
 	managedEnv := platformManagedAgentEnv()
-	for _, e := range img.Spec.Env {
+	for _, e := range profileEnv {
 		if v, reserved := managedEnv[e.Name]; reserved {
 			// Platform-owned names always carry the canonical platform value
 			// so sidecars and $(VAR) substitutions referencing the secret
-			// can never pick up a mis-set image value.
+			// can never pick up a mis-set image or agent value.
 			secretData[e.Name] = []byte(v)
 			continue
 		}
@@ -1416,6 +1418,75 @@ func (r *AgentReconciler) computePersonaHash(ctx context.Context, namespace, per
 	return fmt.Sprintf("sha256:%x", h.Sum(nil)), nil
 }
 
+// effectiveSkills returns the skill ids an agent mounts: the agent's own
+// spec.skills when set (an explicit override, possibly empty), otherwise
+// the referenced image's EnabledSkills (the profile's defaults).
+func effectiveSkills(agent *ainselv1alpha1.Agent, img *ainselv1alpha1.AgentImage) []string {
+	if agent.Spec.Skills != nil {
+		return agent.Spec.Skills.Items
+	}
+	return img.Spec.EnabledSkills
+}
+
+// effectiveMCPServers returns the MCP server definitions the agent
+// connects to: the agent's own selection when set (explicit override, empty
+// = no servers), falling back to the referenced image's servers (the shared
+// runtime profile's defaults). Agent definitions are snapshots resolved by
+// the hub at write time, so registry edits never rewrite running agents.
+func effectiveMCPServers(agent *ainselv1alpha1.Agent, img *ainselv1alpha1.AgentImage) []ainselv1alpha1.AgentImageMCPServer {
+	if agent.Spec.MCP != nil {
+		servers := make([]ainselv1alpha1.AgentImageMCPServer, 0, len(agent.Spec.MCP.Servers))
+		for _, s := range agent.Spec.MCP.Servers {
+			// The types are field-identical; staticcheck prefers the conversion.
+			servers = append(servers, ainselv1alpha1.AgentImageMCPServer(s))
+		}
+		return servers
+	}
+	return img.Spec.MCPServers
+}
+
+// effectiveEnv returns the environment variables the agent pod takes from its
+// runtime profile: the referenced image's Env (the shared defaults) with the
+// agent's own overrides merged in by name. An agent entry matching an image
+// name replaces that value; any other name is appended, so an agent can add
+// variables the profile does not define. Image order is preserved and agent-only
+// names keep their request order, which keeps the rendered Secret and env list
+// stable across reconciles.
+func effectiveEnv(agent *ainselv1alpha1.Agent, img *ainselv1alpha1.AgentImage) []ainselv1alpha1.AgentImageEnvVar {
+	if len(agent.Spec.Env) == 0 {
+		return img.Spec.Env
+	}
+	overrides := make(map[string]ainselv1alpha1.AgentEnvVar, len(agent.Spec.Env))
+	order := make([]string, 0, len(agent.Spec.Env))
+	for _, e := range agent.Spec.Env {
+		if _, seen := overrides[e.Name]; !seen {
+			order = append(order, e.Name)
+		}
+		// Duplicate names in the agent's list: the last entry wins. The hub
+		// rejects duplicates, so this only guards hand-edited CRs.
+		overrides[e.Name] = e
+	}
+
+	out := make([]ainselv1alpha1.AgentImageEnvVar, 0, len(img.Spec.Env)+len(order))
+	inImage := make(map[string]bool, len(img.Spec.Env))
+	for _, e := range img.Spec.Env {
+		inImage[e.Name] = true
+		if o, ok := overrides[e.Name]; ok {
+			// The types are field-identical; staticcheck prefers the conversion.
+			out = append(out, ainselv1alpha1.AgentImageEnvVar(o))
+			continue
+		}
+		out = append(out, e)
+	}
+	for _, name := range order {
+		if inImage[name] {
+			continue
+		}
+		out = append(out, ainselv1alpha1.AgentImageEnvVar(overrides[name]))
+	}
+	return out
+}
+
 // computeSkillsHash builds a stable hash of the Data map in the shared skills
 // ConfigMap. If the ConfigMap does not exist, a stable sentinel value is used
 // so that when it is later created the hash changes and triggers a restart.
@@ -1443,7 +1514,6 @@ func (r *AgentReconciler) computeSkillsHash(ctx context.Context, namespace strin
 
 	return fmt.Sprintf("sha256:%x", h.Sum(nil)), nil
 }
-
 
 // findAffectedAgents maps a Secret event to the Agent(s) that reference it.
 func (r *AgentReconciler) findAffectedAgents(ctx context.Context, obj client.Object) []reconcile.Request {
@@ -1502,7 +1572,8 @@ func (r *AgentReconciler) findAffectedAgentsFromConfigMap(ctx context.Context, o
 	// Fast path: shared skills ConfigMap.
 	if cm.Name == sharedskills.ConfigMapName {
 		// Find all AgentImages with enabled skills so we can match them
-		// against agents.
+		// against agents; agents with an explicit spec.skills are
+		// matched regardless of their image.
 		imgList := &ainselv1alpha1.AgentImageList{}
 		if err := r.List(ctx, imgList, client.InNamespace(cm.Namespace)); err != nil {
 			log.Error(err, "failed to list agent images for skills ConfigMap watcher")
@@ -1522,7 +1593,8 @@ func (r *AgentReconciler) findAffectedAgentsFromConfigMap(ctx context.Context, o
 		}
 		var requests []reconcile.Request
 		for _, agent := range agentList.Items {
-			if _, ok := imageNamesWithSkills[agent.Spec.ImageRef.Name]; ok {
+			_, imgHasSkills := imageNamesWithSkills[agent.Spec.ImageRef.Name]
+			if agent.Spec.Skills != nil || imgHasSkills {
 				requests = append(requests, reconcile.Request{
 					NamespacedName: types.NamespacedName{
 						Namespace: agent.Namespace,

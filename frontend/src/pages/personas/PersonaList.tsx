@@ -85,7 +85,7 @@ export function PersonaList() {
       <Titleblock
         crumbs={
           <>
-            Fleet / <b>Personas</b>
+            Library / <b>Personas</b>
           </>
         }
         title={
@@ -100,6 +100,10 @@ export function PersonaList() {
         }
       />
       <div style={{ padding: '28px 32px' }}>
+        <p className="label" style={{ margin: '0 0 14px', color: 'var(--ink-3)' }}>
+          Shared templates. A persona an agent owns privately is edited on that
+          agent’s Persona tab and does not appear here.
+        </p>
         <Panel className="cropped">
           {isLoading ? (
             <div className="label" style={{ padding: 14 }}>
