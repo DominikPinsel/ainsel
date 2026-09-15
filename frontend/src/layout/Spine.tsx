@@ -1,4 +1,6 @@
 import { NavLink, Link } from 'react-router-dom'
+import { useAgents } from '../api/agents'
+import { Dot } from '../primitives/Dot'
 import './Spine.css'
 
 type NavItem = { idx: string; name: string; to: string; tag?: string }
@@ -17,10 +19,17 @@ const SECTIONS: { label: string; items: NavItem[] }[] = [
     label: 'Fleet',
     items: [
       { idx: '02', name: 'Agents', to: '/agents' },
-      { idx: '03', name: 'Personas', to: '/personas' },
-      { idx: '05', name: 'Agent Images', to: '/agent-images' },
-      { idx: '07', name: 'Connectors', to: '/connectors' },
-      { idx: '08', name: 'Skills', to: '/skills' },
+    ],
+  },
+  {
+    // Shared catalogs an agent draws from. Agent-scoped configuration lives on
+    // the agent itself; these pages manage the reusable building blocks.
+    label: 'Library',
+    items: [
+      { idx: '15', name: 'Images', to: '/agent-images' },
+      { idx: '16', name: 'Personas', to: '/personas' },
+      { idx: '17', name: 'Skills', to: '/skills' },
+      { idx: '18', name: 'MCPs', to: '/settings' },
     ],
   },
   {
@@ -34,15 +43,43 @@ const SECTIONS: { label: string; items: NavItem[] }[] = [
     items: [
       { idx: '20', name: 'Users', to: '/users' },
       { idx: '21', name: 'Groups', to: '/groups' },
-    ],
-  },
-  {
-    label: 'Setup',
-    items: [
-      { idx: '15', name: 'Settings', to: '/settings' },
+      { idx: '22', name: 'Connectors', to: '/connectors' },
     ],
   },
 ]
+
+/** How many recently updated agents to surface under the Agents entry. */
+const RECENT_AGENT_COUNT = 3
+
+/**
+ * The agents the user worked on most recently, shown as quick links under
+ * the Agents nav entry. The list API is already scoped to what the caller
+ * can read, so "of the user" falls out of the backend's access filtering;
+ * recency comes from the hub-maintained updatedAt.
+ */
+function RecentAgents() {
+  const { data } = useAgents({ pageSize: 200 })
+  const recent = [...(data?.items ?? [])]
+    .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
+    .slice(0, RECENT_AGENT_COUNT)
+  if (recent.length === 0) return null
+  return (
+    <div className="nav-recent" aria-label="Recently updated agents">
+      {recent.map((a) => (
+        <NavLink
+          key={a.id}
+          to={`/agents/${encodeURIComponent(a.id)}`}
+          className={({ isActive }) =>
+            isActive ? 'nav-sublink active' : 'nav-sublink'
+          }
+        >
+          <Dot state={a.status?.ready ? 'ok' : 'warn'} aria-label={a.name + ' status'} />
+          <span className="name">{a.name}</span>
+        </NavLink>
+      ))}
+    </div>
+  )
+}
 
 type SpineProps = {
   operator: string
@@ -77,15 +114,19 @@ export function Spine({ operator, open = false, onClose }: SpineProps) {
                 <span className="label">{section.label}</span>
               </div>
               {section.items.map((item) => (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}
-                >
-                  <span className="idx">{item.idx}</span>
-                  <span className="name">{item.name}</span>
-                  {item.tag ? <span className="nav-tag">{item.tag}</span> : <span />}
-                </NavLink>
+                <div key={item.to}>
+                  <NavLink
+                    to={item.to}
+                    className={({ isActive }) =>
+                      isActive ? 'nav-link active' : 'nav-link'
+                    }
+                  >
+                    <span className="idx">{item.idx}</span>
+                    <span className="name">{item.name}</span>
+                    {item.tag ? <span className="nav-tag">{item.tag}</span> : <span />}
+                  </NavLink>
+                  {item.to === '/agents' ? <RecentAgents /> : null}
+                </div>
               ))}
             </div>
           ))}

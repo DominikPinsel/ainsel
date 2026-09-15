@@ -2,14 +2,14 @@ name: CI - services/webhook-receiver
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
     paths:
       - 'services/webhook-receiver/**'
       - 'shared/api/**'
       - 'go.work'
       - '.github/workflows/ci-services-webhook-receiver.yml'
   pull_request:
-    branches: [main]
+    branches: [main, develop]
     types: [opened, synchronize, reopened]
     paths:
       - 'services/webhook-receiver/**'

@@ -97,7 +97,7 @@ export function ConnectorList() {
       <Titleblock
         crumbs={
           <>
-            Fleet / <b>Connectors</b>
+            Admin / <b>Connectors</b>
           </>
         }
         title={

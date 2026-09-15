@@ -31,7 +31,7 @@ export function ConnectorDetail() {
       <Titleblock
         crumbs={
           <>
-            Fleet / <Link to="/connectors">Connectors</Link> /{' '}
+            Admin / <Link to="/connectors">Connectors</Link> /{' '}
             <b>{data?.name ?? id ?? '—'}</b>
           </>
         }

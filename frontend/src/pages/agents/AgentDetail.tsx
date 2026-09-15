@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useAgent, useDeleteAgent } from '../../api/agents'
 import { ApiError } from '../../api/client'
-import { usePersona } from '../../api/personas'
+import { useAgentPersona } from '../../api/personas'
 import { Button } from '../../primitives/Button'
 import { ConfirmModal } from '../../primitives/ConfirmModal'
 import { Dot } from '../../primitives/Dot'
@@ -13,12 +13,23 @@ import { Tag } from '../../primitives/Tag'
 import { Titleblock } from '../../layout/Titleblock'
 import { AgentTriggers } from './AgentTriggers'
 import { AgentSchedules } from './AgentSchedules'
+import { AgentPersonaSection } from './AgentPersonaSection'
+import {
+  AgentImageSection,
+  AgentToolsSection,
+  AgentMCPSection,
+  AgentSkillsSection,
+} from './AgentImageSection'
+import { AgentEnvSection } from './AgentEnvSection'
 
 const TABS = [
   { value: 'overview', label: 'Overview' },
+  { value: 'persona', label: 'Persona' },
+  { value: 'runtime', label: 'Runtime' },
+  { value: 'tools', label: 'Tools' },
+  { value: 'skills', label: 'Skills' },
   { value: 'triggers', label: 'Triggers' },
   { value: 'schedule', label: 'Schedule' },
-  { value: 'status', label: 'Status' },
 ] as const
 
 const TAB_VALUES: string[] = TABS.map((t) => t.value)
@@ -26,10 +37,12 @@ const TAB_VALUES: string[] = TABS.map((t) => t.value)
 export function AgentDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const tabParam = searchParams.get('tab')
-  const initialTab = tabParam && TAB_VALUES.includes(tabParam) ? tabParam : 'overview'
-  const [tab, setTab] = useState<string>(initialTab)
+  const tab = tabParam && TAB_VALUES.includes(tabParam) ? tabParam : 'overview'
+  const onTabChange = (next: string) => {
+    setSearchParams(next === 'overview' ? {} : { tab: next }, { replace: true })
+  }
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const { data, isLoading, error } = useAgent(id)
@@ -76,7 +89,7 @@ export function AgentDetail() {
         }
       />
       <div style={{ padding: '28px 32px' }}>
-        <Tabs value={tab} onChange={setTab} tabs={TABS} aria-label="Agent sections" />
+        <Tabs value={tab} onChange={onTabChange} tabs={TABS} aria-label="Agent sections" />
         <div style={{ marginTop: 24 }}>
           {isLoading ? <p className="label">Loading…</p> : null}
           {error ? (
@@ -100,9 +113,9 @@ export function AgentDetail() {
                     <div className="k">Image</div>
                     <div className="v">
                       {data.imageRef ? (
-                        <Link to={`/agent-images/${encodeURIComponent(data.imageRef.name)}`}>
+                        <Button variant="ghost" onClick={() => onTabChange('runtime')}>
                           {data.imageRef.displayName ?? data.imageRef.name}
-                        </Link>
+                        </Button>
                       ) : (
                         '—'
                       )}
@@ -114,30 +127,6 @@ export function AgentDetail() {
                 ) : null}
               </Panel>
 
-              {data.enabledTools && data.enabledTools.length > 0 ? (
-                <Panel title={`Enabled Tools · ${data.enabledTools.length}`} className="cropped">
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                    {data.enabledTools.map((t) => (
-                      <Tag key={t}>{t}</Tag>
-                    ))}
-                  </div>
-                </Panel>
-              ) : null}
-
-              {data.persona?.id ? <PersonaPanel personaId={data.persona.id} /> : null}
-            </div>
-          ) : null}
-
-          {data && tab === 'triggers' ? (
-            <AgentTriggers agentId={data.id} agentName={data.name} />
-          ) : null}
-
-          {data && tab === 'schedule' ? (
-            <AgentSchedules agentId={data.id} />
-          ) : null}
-
-          {data && tab === 'status' ? (
-            <>
               <Panel title="Runtime Status" className="cropped">
                 <div className="info-grid">
                   <div>
@@ -157,7 +146,48 @@ export function AgentDetail() {
                   </div>
                 </div>
               </Panel>
+
+              {data.enabledTools && data.enabledTools.length > 0 ? (
+                <Panel title={`Enabled Tools · ${data.enabledTools.length}`} className="cropped">
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {data.enabledTools.map((t) => (
+                      <Tag key={t}>{t}</Tag>
+                    ))}
+                  </div>
+                </Panel>
+              ) : null}
+
+              <PersonaPanel
+                agentId={data.id}
+                onConfigure={() => onTabChange('persona')}
+              />
+            </div>
+          ) : null}
+
+          {data && tab === 'persona' ? <AgentPersonaSection agent={data} /> : null}
+
+          {data && tab === 'runtime' ? (
+            <>
+              <AgentImageSection agent={data} />
+              <AgentEnvSection agent={data} />
             </>
+          ) : null}
+
+          {data && tab === 'tools' ? (
+            <>
+              <AgentToolsSection agent={data} />
+              <AgentMCPSection agent={data} />
+            </>
+          ) : null}
+
+          {data && tab === 'skills' ? <AgentSkillsSection agent={data} /> : null}
+
+          {data && tab === 'triggers' ? (
+            <AgentTriggers agentId={data.id} agentName={data.name} />
+          ) : null}
+
+          {data && tab === 'schedule' ? (
+            <AgentSchedules agentId={data.id} />
           ) : null}
         </div>
       </div>
@@ -184,8 +214,18 @@ export function AgentDetail() {
   )
 }
 
-function PersonaPanel({ personaId }: { personaId: string }) {
-  const { data, isLoading, error } = usePersona(personaId)
+function PersonaPanel({
+  agentId,
+  onConfigure,
+}: {
+  agentId: string
+  onConfigure: () => void
+}) {
+  // Agent-scoped on purpose: a persona an agent owns has no library permission
+  // record, so reading it through /personas/{id} would be denied for
+  // non-admins. This endpoint is gated by the agent instead, and reports
+  // whether the persona is private to it or a shared template.
+  const { data: view, isLoading } = useAgentPersona(agentId)
 
   if (isLoading) {
     return (
@@ -194,32 +234,45 @@ function PersonaPanel({ personaId }: { personaId: string }) {
       </Panel>
     )
   }
-  if (error instanceof ApiError && error.status === 404) {
+
+  const persona = view?.persona
+
+  if (!persona) {
     return (
       <Panel title="Persona" className="cropped">
-        <p className="label" style={{ color: 'var(--signal)' }}>
-          Persona not found (id: {personaId}).
+        <p style={{ marginTop: 0, color: 'var(--ink-2)' }}>
+          {view?.ref
+            ? `The linked persona (${view.ref}) no longer exists.`
+            : 'No persona yet — this agent runs without one.'}
+        </p>
+        <p style={{ marginTop: 12 }}>
+          <Button variant="ghost" onClick={onConfigure}>
+            Configure persona →
+          </Button>
         </p>
       </Panel>
     )
   }
-  if (!data) return null
 
   // 600 chars keeps the preview tight; full text is one click away.
-  const preview = data.text.length > 600 ? data.text.slice(0, 600) + '…' : data.text
+  const preview =
+    persona.text.length > 600 ? persona.text.slice(0, 600) + '…' : persona.text
 
   return (
-    <Panel title={`Persona · ${data.name}`} className="cropped">
-      {data.description ? (
+    <Panel
+      title={`Persona · ${persona.name}${view?.owned ? ' · own' : ' · shared template'}`}
+      className="cropped"
+    >
+      {persona.description ? (
         <p style={{ marginTop: 0, marginBottom: 12, color: 'var(--ink-2)' }}>
-          {data.description}
+          {persona.description}
         </p>
       ) : null}
       <Markdown source={preview} />
       <p style={{ marginTop: 12 }}>
-        <Link to={`/personas/${encodeURIComponent(data.id)}`}>
-          View full persona →
-        </Link>
+        <Button variant="ghost" onClick={onConfigure}>
+          Configure persona →
+        </Button>
       </p>
     </Panel>
   )

@@ -25,3 +25,7 @@ docs-site/vitest.config.d.ts
 .superpowers/
 docs/superpowers/
 package-lock.json
+
+# Python bytecode (scripts/*.py are run and sometimes imported in tests)
+__pycache__/
+*.py[cod]

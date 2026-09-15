@@ -12,12 +12,15 @@ A connector turns webhook deliveries (from Forgejo today) into a canonical event
 
 | Concept | What it is | Where in the UI |
 |---|---|---|
-| **Agent** | One AI worker: binds a persona, an image, an LLM model, and a tool set. | `/agents` |
-| **Persona** | The versioned prompt that defines the agent's behaviour. | `/personas` |
-| **Agent Image** | The container image with tools, env vars, and MCP servers. | `/agent-images` |
-| **Connector** | Bridge between AInsel and an external system (Forgejo today). | `/connectors` |
+| **Agent** | One AI worker: its own persona, model, and runtime, plus per-agent overrides for tools, skills, MCP servers and environment. | **Fleet → Agents** (`/agents`) |
+| **Persona** | The versioned prompt that defines an agent's behaviour. Shared templates live in the library; an agent can fork its own private copy. | **Library → Personas** (`/personas`) |
+| **Agent Image** | The runtime profile: container image with tools, env vars, skills and MCP servers that agents inherit from. | **Library → Images** (`/agent-images`) |
+| **Connector** | Bridge between AInsel and an external system (Forgejo today). | **Admin → Connectors** (`/connectors`) |
 | **Trigger** | Rule that decides when an agent fires (event type + filter). | Agent detail page |
-| **Skill** | A reusable capability an agent can invoke (e.g. forgejo, git, shell). | `/skills` |
+| **Skill** | A reusable capability an agent can invoke (e.g. forgejo, git, shell). | **Library → Skills** (`/skills`) |
+| **MCP server** | A registry entry for a remote MCP server agents can connect to. | **Library → MCPs** (`/settings`) |
+
+The sidebar mirrors this: **Fleet** holds the agents you operate, **Library** holds the shared building blocks they draw from, and **Admin** holds users, groups and connectors. Anything an agent owns outright is edited on that agent's detail tabs, not in the library.
 
 ## How to get started
 
@@ -29,9 +32,13 @@ A connector turns webhook deliveries (from Forgejo today) into a canonical event
 
 4. **Build an agent image** — Define the container image with the tools, environment variables, and MCP servers your agent needs. See `/agent-images`.
 
-5. **Create an agent** — Bind a persona, an image, a model, and a tool set together. Add triggers to decide when it fires. See `/agents`.
+5. **Create an agent** — **Fleet → Agents → New Agent** walks you through five steps: identity and group, runtime image, model and provider, persona, then a review of what will be created. Each step validates on its own, so nothing is submitted half-filled.
 
-6. **Watch it work** — Monitor activity on the dashboard (`/dashboard`), drill into invocations (`/activity`), and check token usage and errors (`/observability`).
+6. **Tune the agent** — After creation, the agent's detail tabs hold what belongs to that agent alone: **Persona** (fork an agent-owned copy of a shared template), **Runtime** (switch image, override environment variables), **Tools** (tool selection and MCP servers) and **Skills**. Overrides start out inherited from the image; the first change pins them to the agent.
+
+7. **Add triggers** — Decide when the agent fires from its **Triggers** and **Schedule** tabs.
+
+8. **Watch it work** — Monitor activity on the dashboard (`/dashboard`), drill into invocations (`/activity`), and check token usage and errors (`/observability`).
 
 ## Connect a local agent via MCP
 

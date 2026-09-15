@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { screen, waitFor, fireEvent } from '@testing-library/react'
+import { screen, waitFor, fireEvent, act } from '@testing-library/react'
 import { Route, Routes } from 'react-router-dom'
 import { EventView } from './EventView'
 import { renderWithProviders } from '../../../test/renderWithProviders'
@@ -205,6 +205,66 @@ describe('EventView', () => {
     await waitFor(() =>
       expect(screen.getByText('No invocations recorded for this event.')).toBeInTheDocument(),
     )
+  })
+
+  it('polls a running invocation until the transcript arrives', async () => {
+    vi.useFakeTimers()
+    const runningInvocations = {
+      ...sampleInvocations,
+      invocations: [
+        { ...sampleInvocations.invocations[0], status: 'running', durationMs: undefined },
+      ],
+    }
+    // The conversation endpoint answers with an empty transcript first and
+    // only returns the messages once the run has produced them.
+    let conversationArrived = false
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.includes('/invocations') && url.includes('event=')) {
+          return new Response(JSON.stringify(runningInvocations), { status: 200 })
+        }
+        if (url.includes('/observability/conversations') && url.includes('invocation=inv-1')) {
+          const body = conversationArrived ? sampleConversation : { messages: [], total: 0 }
+          return new Response(JSON.stringify(body), { status: 200 })
+        }
+        if (url.includes('/events/evt-')) {
+          return new Response(JSON.stringify(sampleEvent), { status: 200 })
+        }
+        return new Response('{}', { status: 200 })
+      }),
+    )
+
+    try {
+      renderEventView('/observability/events/evt-1234567890000000000')
+      // Initially the invocation is running and no transcript exists yet.
+      // Fake timers freeze react-query's setTimeout-based notification
+      // batching, so each flush round must advance the clock (firing the
+      // batchers) and let microtasks settle before re-checking the DOM.
+      for (let i = 0; i < 20 && !screen.queryByText('No conversation recorded.'); i++) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(10)
+        })
+      }
+      expect(screen.getByText('No conversation recorded.')).toBeInTheDocument()
+
+      // The run produces its transcript messages; without polling the page
+      // would keep showing the empty state until a manual refresh. Advance one
+      // poll interval (RUNNING_POLL_MS) and the transcript must appear.
+      conversationArrived = true
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000)
+      })
+      for (let i = 0; i < 20 && !screen.queryByText('Done reviewing'); i++) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(10)
+        })
+      }
+      expect(screen.getByText('Done reviewing')).toBeInTheDocument()
+      expect(screen.getByText('Handle the event')).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('shows error state when fetch fails', async () => {

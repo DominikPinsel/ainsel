@@ -4,33 +4,32 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.20.1
-  name: webhookconnectors.ainsel.dev
+  name: triggers.ainsel.dev
 spec:
   group: ainsel.dev
   names:
-    kind: WebhookConnector
-    listKind: WebhookConnectorList
-    plural: webhookconnectors
-    singular: webhookconnector
+    kind: Trigger
+    listKind: TriggerList
+    plural: triggers
+    singular: trigger
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.webhookEndpoint
-      name: Endpoint
+    - jsonPath: .spec.agentRef
+      name: Agent
       type: string
-    - jsonPath: .status.conditions[?(@.type=="Ready")].status
-      name: Ready
+    - jsonPath: .spec.connectorRef
+      name: Connector
       type: string
-    - jsonPath: .spec.disabled
-      name: Disabled
-      type: boolean
+    - jsonPath: .status.conditions[?(@.type=="AgentRefValid")].status
+      name: Agent Valid
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: WebhookConnector is the Schema for the webhookconnectors API.
         properties:
           apiVersion:
             description: |-
@@ -50,62 +49,40 @@ spec:
           metadata:
             type: object
           spec:
-            description: WebhookConnectorSpec defines the desired state of a WebhookConnector.
             properties:
-              disabled:
-                description: Disabled scales the Deployment to zero when true.
-                type: boolean
+              agentRef:
+                type: string
+              connectorRef:
+                type: string
               displayName:
-                description: DisplayName is the user-facing name.
                 type: string
-              image:
-                description: Image for the webhook-receiver container.
-                properties:
-                  repository:
-                    type: string
-                  tag:
-                    type: string
-                required:
-                - repository
-                - tag
-                type: object
-              signatureHeader:
-                description: |-
-                  SignatureHeader is the HTTP header the sender puts the HMAC-SHA256
-                  signature in. E.g. "X-Hub-Signature-256" for GitHub,
-                  "X-Forgejo-Signature" for Forgejo.
-                type: string
-              webhookEndpoint:
-                description: |-
-                  WebhookEndpoint is the URL to paste into GitHub/Forgejo webhook settings.
-                  Set by the hub when creating the connector; read-only thereafter.
-                type: string
-              webhookSecret:
-                description: 'WebhookSecret references the K8s Secret holding the
-                  HMAC key (key: "secret").'
-                properties:
-                  secretRef:
-                    description: SecretRef identifies a Secret and key.
-                    properties:
-                      key:
+              filters:
+                items:
+                  description: |-
+                    Filter represents a single field-level filter condition applied to an event's
+                    Data payload (parsed as map[string]any).
+                  properties:
+                    field:
+                      type: string
+                    op:
+                      type: string
+                    value:
+                      type: string
+                    values:
+                      items:
                         type: string
-                      name:
-                        type: string
-                    required:
-                    - key
-                    - name
-                    type: object
-                required:
-                - secretRef
-                type: object
+                      type: array
+                  required:
+                  - field
+                  - op
+                  type: object
+                type: array
             required:
-            - image
-            - signatureHeader
-            - webhookEndpoint
-            - webhookSecret
+            - agentRef
+            - connectorRef
+            - displayName
             type: object
           status:
-            description: WebhookConnectorStatus defines the observed state of a WebhookConnector.
             properties:
               conditions:
                 items:

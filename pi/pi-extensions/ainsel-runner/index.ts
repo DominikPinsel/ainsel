@@ -666,6 +666,10 @@ export interface TurnTracker {
 	settled: boolean;
 	/** Resolves a pending waitForSettle promise; null when nobody is waiting. */
 	settleResolve: (() => void) | null;
+	/** Post context for the task currently being processed, or null between
+	 *  tasks. When set, turn_end flushes newly captured messages to the hub
+	 *  incrementally (live conversation tracking). See TaskPostContext. */
+	postCtx: TaskPostContext | null;
 }
 
 export function createTurnTracker(): TurnTracker {
@@ -678,6 +682,7 @@ export function createTurnTracker(): TurnTracker {
 		capturedMessages: [],
 		settled: true,
 		settleResolve: null,
+		postCtx: null,
 	};
 }
 
@@ -784,6 +789,54 @@ export async function waitForSettle(
 export function captureMessage(tracker: TurnTracker, message: any): void {
 	if (tracker.activeGeneration === 0) return; // no active turn
 	tracker.capturedMessages.push({ gen: tracker.activeGeneration, message });
+}
+
+/** Post context for the task currently being processed. Installed by
+ *  processTask after beginTurn; while it is set, flushTurnMessages posts
+ *  newly captured messages to the hub on every turn_end so the conversation
+ *  view shows progress while the task is still running. Cleared when the
+ *  final transcript report has been queued. */
+export interface TaskPostContext {
+	hubUrl: string
+	token: string
+	/** Conversation metadata (agent, invocation, task correlation). */
+	meta: SerializeMeta
+	/** Generation of the owning task's turn; flushes only run while it
+	 *  matches the tracker's activeGeneration. */
+	gen: number
+	taskId: number
+	/** Number of the task's captured messages already queued for posting.
+	 *  Each flush slices past this so a message is never posted twice. */
+	postedCount: number
+	/** Tail of the serialized post chain. Batches are chained (never fired
+	 *  concurrently) so they always reach the hub in conversation order. */
+	postChain: Promise<void>
+}
+
+/** Queue any not-yet-posted messages of the task that owns ctx. Slicing past
+ *  ctx.postedCount keeps a message from being posted twice across successive
+ *  flushes; each batch is chained onto ctx.postChain so batches cannot
+ *  interleave and reach the hub out of order. */
+export function queueConversationFlush(tracker: TurnTracker, ctx: TaskPostContext): void {
+	const pending = tracker.capturedMessages.filter((e) => e.gen === ctx.gen);
+	const fresh = pending.slice(ctx.postedCount);
+	if (fresh.length === 0) return;
+	ctx.postedCount = pending.length;
+	ctx.postChain = ctx.postChain.then(() =>
+		reportConversation(ctx.hubUrl, ctx.token, fresh.map((e) => e.message), ctx.meta, ctx.taskId),
+	);
+}
+
+/** Post newly captured messages of the active task to the hub. Called from
+ *  the turn_end handler for live conversation tracking. No-op when no task
+ *  is being processed or the turn belongs to a different generation (e.g.
+ *  while an aborted turn is draining). Fire-and-forget: reportConversation
+ *  is best-effort and never throws. */
+export function flushTurnMessages(tracker: TurnTracker): void {
+	const ctx = tracker.postCtx;
+	if (ctx === null) return;
+	if (tracker.activeGeneration === 0 || tracker.activeGeneration !== ctx.gen) return;
+	queueConversationFlush(tracker, ctx);
 }
 
 const NAK_DELAY_MS = (() => {
@@ -949,6 +1002,20 @@ async function processTask(
 	const turnDone = beginTurn(tracker);
 	const thisGeneration = tracker.activeGeneration;
 
+	// Install the incremental post context. From here on every turn_end
+	// flushes newly captured messages to the hub (live conversation
+	// tracking); the final report below posts whatever is left and awaits
+	// the whole chain before ack/nack.
+	tracker.postCtx = {
+		hubUrl,
+		token,
+		meta: { agentName, invocationId, correlationId },
+		gen: thisGeneration,
+		taskId: task.id,
+		postedCount: 0,
+		postChain: Promise.resolve(),
+	};
+
 	try {
 		await pi.sendUserMessage(buildUserMessage(evCtx, task.payload));
 
@@ -1035,17 +1102,18 @@ async function processTask(
 
 	const durationMs = Date.now() - start;
 
-	// Report the conversation transcript. Only messages tagged with this turn's
-	// generation are serialized (see captureMessage). reportConversation is
+	// Report the conversation transcript. Messages already posted by the
+	// incremental turn_end flushes are skipped (queueConversationFlush slices
+	// past ctx.postedCount); awaiting ctx.postChain covers both the queued
+	// incremental batches and this final one. reportConversation is
 	// guaranteed not to throw, so a serialize/post failure can never skip
 	// ack/nack below or crash the poll loop.
-	await reportConversation(
-		hubUrl,
-		token,
-		tracker.capturedMessages.filter((e) => e.gen === thisGeneration).map((e) => e.message),
-		{ agentName, invocationId, correlationId },
-		task.id,
-	);
+	const postCtx = tracker.postCtx;
+	tracker.postCtx = null;
+	if (postCtx !== null) {
+		queueConversationFlush(tracker, postCtx);
+		await postCtx.postChain;
+	}
 
 	if (succeeded) {
 		await ackTask(hubUrl, token, agentName, task.id);
@@ -1127,9 +1195,12 @@ export default function ainselRunnerExtension(pi: ExtensionAPI) {
 	const tracker = createTurnTracker();
 
 	// turn_end fires after EACH LLM response in the tool-use loop — too early
-	// to resolve the task. We only track it for observability.
+	// to resolve the task, but the turn's assistant message and tool results
+	// are complete by then, so it is the right point to post the transcript
+	// incrementally for live conversation tracking.
 	pi.on("turn_end", (event) => {
 		logInfo("turn ended", { turn_index: event.turnIndex });
+		flushTurnMessages(tracker);
 	});
 
 	// agent_settled fires once when the entire agent run is complete (all

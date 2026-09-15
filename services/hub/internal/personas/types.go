@@ -8,17 +8,22 @@ import "time"
 // Persona is the canonical persona record from the database, with the
 // current version's text inlined for convenience.
 type Persona struct {
-	ID             string    `json:"id"`
-	Name           string    `json:"name"`
-	Description    string    `json:"description"`
-	CurrentVersion int       `json:"currentVersion"`
-	Text           string    `json:"text"`
-	CreatedAt      time.Time `json:"createdAt"`
-	UpdatedAt      time.Time `json:"updatedAt"`
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	Description    string `json:"description"`
+	CurrentVersion int    `json:"currentVersion"`
+	Text           string `json:"text"`
+	// OwnerAgent is the name of the Agent CR that owns this persona, or
+	// empty for a shared template. Owned personas are created by the hub on
+	// an agent's behalf (copy-on-write) and are hidden from the library.
+	OwnerAgent string    `json:"ownerAgent,omitempty"`
+	CreatedAt  time.Time `json:"createdAt"`
+	UpdatedAt  time.Time `json:"updatedAt"`
 }
 
 // PersonaSummary is the listing projection: same as Persona without
-// the (potentially large) text body.
+// the (potentially large) text body. Listings only ever contain shared
+// templates, so OwnerAgent is omitted here.
 type PersonaSummary struct {
 	ID             string    `json:"id"`
 	Name           string    `json:"name"`
