@@ -37,6 +37,13 @@ type Task struct {
 	Payload      json.RawMessage `json:"payload"`
 	Attempts     int             `json:"attempts"`
 	Status       string          `json:"status"`
+
+	// Error is the last failure message reported for this task ("" when none).
+	Error string `json:"error,omitempty"`
+	// CreatedAt is when the task was enqueued.
+	CreatedAt time.Time `json:"createdAt,omitempty"`
+	// CompletedAt is when the task reached a terminal status, if it did.
+	CompletedAt *time.Time `json:"completedAt,omitempty"`
 }
 
 // Store provides event queue operations backed by PostgreSQL.
@@ -543,7 +550,8 @@ func (s *Store) TasksForEvents(ctx context.Context, eventIDs []string) ([]Task, 
 		return nil, nil
 	}
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, event_id, agent_name, trigger_name, invocation_id, status
+		`SELECT id, event_id, agent_name, trigger_name, invocation_id, status,
+		        attempts, error, created_at, completed_at
 		 FROM agent_tasks
 		 WHERE event_id = ANY($1)
 		 ORDER BY id ASC`, eventIDs,
@@ -556,7 +564,8 @@ func (s *Store) TasksForEvents(ctx context.Context, eventIDs []string) ([]Task, 
 	var tasks []Task
 	for rows.Next() {
 		var t Task
-		if err := rows.Scan(&t.ID, &t.EventID, &t.AgentName, &t.TriggerName, &t.InvocationID, &t.Status); err != nil {
+		if err := rows.Scan(&t.ID, &t.EventID, &t.AgentName, &t.TriggerName, &t.InvocationID, &t.Status,
+			&t.Attempts, &t.Error, &t.CreatedAt, &t.CompletedAt); err != nil {
 			return nil, fmt.Errorf("eventqueue: scan task: %w", err)
 		}
 		tasks = append(tasks, t)
