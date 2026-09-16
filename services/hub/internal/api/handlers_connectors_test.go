@@ -28,7 +28,7 @@ func testServer(t *testing.T, objects ...runtime.Object) *Server {
 		mux:                http.NewServeMux(),
 		ns:                 "test-ns",
 		observabilityCache: newPromCache(observabilityCacheTTL),
-		invocations:        invocations.NewStore(100),
+		invocations:        invocations.NewMemoryStore(100),
 	}
 }
 

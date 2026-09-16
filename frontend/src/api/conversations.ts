@@ -37,10 +37,14 @@ export async function listConversations(
   return { messages: env.messages ?? [], total: env.total ?? 0 }
 }
 
-export function useConversations(params: ListConversationsParams) {
+export function useConversations(
+  params: ListConversationsParams,
+  opts: { refetchInterval?: number | false } = {},
+) {
   return useQuery({
     queryKey: ['conversations', params],
     queryFn: () => listConversations(params),
     enabled: !!params.invocation,
+    refetchInterval: opts.refetchInterval ?? false,
   })
 }

@@ -14,22 +14,89 @@ type AgentSpec struct {
 	LLM          AgentLLM      `json:"llm"`
 	Persona      AgentPersona  `json:"persona"`
 	EnabledTools []string      `json:"enabledTools,omitempty"`
-	// EnabledMCPs lists the names of MCPServer registry entries this agent
-	// should connect to at runtime. Names refer to MCPServer rows managed
-	// by the hub backend; the agent operator injects URLs into the agent
-	// pod as MCP_SERVERS env. See docs/superpowers/specs/2026-05-19-mcp-registry-design.md.
-	EnabledMCPs []string          `json:"enabledMCPs,omitempty"`
-	Scaling     *AgentScaling     `json:"scaling,omitempty"`
-	Memory      *AgentMemory      `json:"memory,omitempty"`
-	OllamaCloud     *AgentOllamaCloud     `json:"ollamaCloud,omitempty"`
-	OpenCode        *AgentOpenCode        `json:"openCode,omitempty"`
-	AlibabaCloud    *AgentAlibabaCloud    `json:"alibabaCloud,omitempty"`
-	CustomProvider  *AgentCustomProvider  `json:"customProvider,omitempty"`
+	// Skills explicitly selects the skill library entries this agent mounts.
+	// When nil, the agent runs on the referenced image's EnabledSkills — the
+	// shared runtime profile's defaults; once set, the agent's list replaces
+	// the image's, and an empty Items means no skills.
+	// +optional
+	Skills *AgentSkills `json:"skills,omitempty"`
+	// MCP explicitly defines the MCP servers this agent connects to at
+	// runtime, as resolved definitions (URL + token env reference), not just
+	// names. When nil, the agent runs on the referenced image's MCPServers —
+	// the shared runtime profile's defaults; once set, the agent's servers
+	// replace the image's, and empty Servers means no MCP connections.
+	// +optional
+	MCP *AgentMCP `json:"mcp,omitempty"`
+	// Env holds this agent's environment variable overrides, applied on top of
+	// the referenced image's Env — the shared runtime profile's defaults. An
+	// entry whose Name matches a profile entry overrides its value; any other
+	// name is added for this agent only. Platform-managed names are ignored by
+	// the operator. Absent or empty means the agent runs on the profile's
+	// defaults alone.
+	// +optional
+	Env            []AgentEnvVar        `json:"env,omitempty"`
+	Scaling        *AgentScaling        `json:"scaling,omitempty"`
+	Memory         *AgentMemory         `json:"memory,omitempty"`
+	OllamaCloud    *AgentOllamaCloud    `json:"ollamaCloud,omitempty"`
+	OpenCode       *AgentOpenCode       `json:"openCode,omitempty"`
+	AlibabaCloud   *AgentAlibabaCloud   `json:"alibabaCloud,omitempty"`
+	CustomProvider *AgentCustomProvider `json:"customProvider,omitempty"`
 }
 
 // AgentImageRef references an AgentImage by metadata name in the same namespace.
 type AgentImageRef struct {
 	Name string `json:"name"`
+}
+
+// AgentSkills is the agent-scoped skill selection. The wrapper makes the
+// distinction between "not configured" (nil = inherit the referenced
+// image's EnabledSkills) and "explicitly empty" (Items: [] = no skills)
+// representable in the CR — a bare []string could not.
+type AgentSkills struct {
+	// Items lists skill library ids (hub /skills API) to mount for this agent.
+	// +optional
+	Items []string `json:"items"`
+}
+
+// AgentMCPServer is one MCP server definition this agent connects to at
+// runtime: the URL is resolved from the hub's MCP registry at write time,
+// so the agent pod is decoupled from later registry edits.
+type AgentMCPServer struct {
+	// Name is the MCP registry entry name.
+	Name string `json:"name"`
+	// URL is the MCP server endpoint the agent runtime connects to.
+	URL string `json:"url"`
+	// TokenFromEnv names the env var on the agent pod whose value is sent
+	// as the bearer token. Empty means the server needs no token.
+	// +optional
+	TokenFromEnv string `json:"tokenFromEnv,omitempty"`
+}
+
+// AgentMCP is the agent-scoped MCP selection: Servers replaces (never
+// merges with) the referenced image's MCPServers when present.
+type AgentMCP struct {
+	// Servers lists the MCP servers this agent connects to.
+	// +optional
+	Servers []AgentMCPServer `json:"servers"`
+}
+
+// AgentEnvVar is one per-agent environment variable override.
+//
+// Unlike Skills and MCP, agent env is a plain list rather than a wrapper with
+// nil/empty distinction: entries *merge* over the referenced image's Env by
+// name instead of replacing it, so "not configured" and "explicitly none"
+// mean the same thing — run on the profile's defaults.
+type AgentEnvVar struct {
+	// Name is the environment variable name. Matching a name in the
+	// referenced image's Env overrides that value for this agent.
+	Name string `json:"name"`
+	// Value is the variable's value.
+	Value string `json:"value"`
+	// Secret marks Value as sensitive: the hub API masks it on read, and an
+	// empty Value on write means "keep the existing value" — the same
+	// contract as AgentImageEnvVar.
+	// +optional
+	Secret bool `json:"secret,omitempty"`
 }
 
 // AgentRuntime holds operator-managed runtime configuration for the agent pod.
@@ -167,4 +234,3 @@ type AgentList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []Agent `json:"items"`
 }
-

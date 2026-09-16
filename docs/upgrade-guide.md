@@ -7,18 +7,20 @@ This guide covers how to upgrade an existing Ainsel installation to a newer char
 Before upgrading, complete these pre-upgrade steps:
 
 1. **Back up the Postgres database.** All persistent state (agents, personas, triggers, connectors, invocation history) lives in Postgres. Create a backup before proceeding.
-2. **Read the changelog.** Review `CHANGELOG.md` (or the release notes on the repository) for the target version. Look for any noted breaking changes.
+2. **Read the changelog.** Review [`CHANGELOG.md`](https://github.com/DominikPinsel/ainsel/blob/main/CHANGELOG.md) or the notes for the target version on the [releases page](https://github.com/DominikPinsel/ainsel/releases). Breaking changes are listed first.
 3. **Check for breaking changes.** See [Checking for breaking changes](#checking-for-breaking-changes) below.
-4. **Update your local Helm repo** (if using a published chart):
+4. **Fetch the released chart.** Charts are published to GHCR as OCI artifacts,
+   one per release, tagged with the chart version:
 
    ```bash
-   helm repo update
+   helm pull oci://ghcr.io/dominikpinsel/charts/ainsel --version <X.Y.Z>
    ```
 
 5. **Upgrade:**
 
    ```bash
-   helm upgrade ainsel ainsel/ainsel -n <namespace> -f values.yaml
+   helm upgrade ainsel oci://ghcr.io/dominikpinsel/charts/ainsel \
+     --version <X.Y.Z> -n <namespace> -f values.yaml
    ```
 
    If you are deploying directly from the repository chart directory:
@@ -29,7 +31,7 @@ Before upgrading, complete these pre-upgrade steps:
 
 ## Checking for breaking changes
 
-Release notes are published in `CHANGELOG.md` at the root of this repository and in the release notes for each tagged version in the repository.
+`CHANGELOG.md` at the root of this repository is generated and maintained by [release-please](https://github.com/googleapis/release-please) from conventional commits, and the same content is published on each GitHub Release. Entries are grouped by type (*BREAKING*, *Features*, *Bug Fixes*, *Miscellaneous Chores*) and linked to their commits and PRs.
 
 To check whether the new chart version introduces new or changed values, diff the default values between versions:
 
@@ -50,7 +52,7 @@ Helm does **not** upgrade CRDs automatically on `helm upgrade`. This is intentio
 If a release introduces new or changed CRDs, apply them manually before or after the Helm upgrade:
 
 ```bash
-kubectl apply -f chart/crds/
+kubectl apply -f chart/templates/crds/
 ```
 
 Check the changelog for the release to find out whether CRDs have changed and what the recommended apply order is.

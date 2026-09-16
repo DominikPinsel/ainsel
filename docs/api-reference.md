@@ -49,17 +49,29 @@ List all Agents in the configured namespace, sorted by resource name.
       "description": "...",
       "imageRef": {"name": "img-claude-coder"},
       "runtime": {"provider": "ollama-cloud"},
-      "llm": {"model": "glm-5.1:cloud", "maxTurns": 25},
+      "llm": {"model": "glm-5.1:cloud", "maxTurns": 25, "vision": false},
       "persona": {"inline": "..."},
       "enabledTools": ["read", "edit"],
       "scaling": {"minReplicas": 0, "maxReplicas": 3},
       "memory": {"enabled": true, "provider": "example"},
-      "status": {"ready": true, "replicas": 1}
+      "status": {"ready": true, "replicas": 1},
+      "skills": {"items": ["git-review"]},
+      "mcp": {"servers": [{"name": "github", "url": "https://mcp.github.com/sse", "tokenFromEnv": "GITHUB_TOKEN"}]},
+      "env": [{"name": "LOG_LEVEL", "value": "debug"}, {"name": "API_TOKEN", "value": "", "secret": true}],
+      "updatedAt": "2026-06-22T00:05:00Z"
     }
   ],
   "total": 1, "page": 1, "pageSize": 50, "totalPages": 1
 }
 ```
+
+Agents carry an `updatedAt` timestamp (RFC3339) in both list and detail responses. The hub stamps it on every create/update via the `ainsel.dev/updated-at` annotation; for agents that predate the annotation it falls back to the resource creation time.
+
+Agents also carry an agent-scoped skill selection in `skills`: **present = explicit override** (`{"items": []}` means no skills at all), **absent = inherit** the referenced image's `enabledSkills` (legacy behavior). Every id must exist in the skill library (`/skills`); unknown ids are rejected with `400`. Once set, the selection is explicit — the API does not currently offer a reset-to-inherit.
+
+The same wrapper semantics apply to the agent-scoped MCP selection in `mcp`, with one asymmetry: **requests carry registry names** (`{"servers": ["github"]}`), and the hub resolves each name to its full definition from the MCP registry (`/mcp-servers`, unknown names → `400`) when writing — **responses return the resolved definitions** (`name`, `url`, `tokenFromEnv`). The agent CR holds a snapshot: later registry edits do not rewrite existing agents. Absent `mcp` inherits the referenced image's `mcpServers` (legacy); `{"servers": []}` explicitly connects to none.
+
+Agents may also carry their own environment variables in `env`: a list of `{"name", "value", "secret"}` layered **on top of** the referenced image's `env`. Entries whose name matches an image variable override its value (and its `secret` flag); new names are added. Absent `env` means the agent runs on the image's variables alone. Names must be valid environment variable names and unique within the list (`400` otherwise). Values of entries with `secret: true` are never returned — they read back as `""`, matching the image `env` contract — and submitting a secret entry with an empty value on update keeps the stored value.
 
 ### POST /api/v1/agents
 
@@ -72,11 +84,12 @@ Create a new Agent. The hub generates the resource name (`a-<short id>`); the re
   "description": "...",
   "imageRef": {"name": "img-claude-coder"},
   "runtime": {"provider": "ollama-cloud"},
-  "llm": {"model": "glm-5.1:cloud", "maxTurns": 25, "temperature": 0.2},
+  "llm": {"model": "glm-5.1:cloud", "maxTurns": 25, "temperature": 0.2, "vision": true},
   "persona": {"inline": "..."},
   "enabledTools": ["read", "edit"],
   "scaling": {"minReplicas": 0, "maxReplicas": 3, "cooldownPeriod": 300, "lagThreshold": 5},
   "memory": {"enabled": true, "provider": "example"},
+  "env": [{"name": "LOG_LEVEL", "value": "debug"}],
   "ollamaCloud": {"apiKey": "<consumed-once>"}
 }
 ```
@@ -95,13 +108,72 @@ Fetch one Agent by resource name.
 
 Update an Agent. Body fields are all optional; only fields that are present are applied. When `imageRef` or `enabledTools` changes, the new combination is re-validated against the referenced `AgentImage`.
 
+`env` **replaces** this agent's override list when present: `{"env": []}` clears the overrides so the agent runs on the image's variables again. A secret entry submitted with an empty `value` keeps its stored value, so a client that never received the secret can round-trip the list safely.
+
+`llm.vision` is tri-state on update: **omitted means leave unchanged**, so turning image input off requires sending `false` explicitly. When true, the operator advertises `"input": ["text", "image"]` to pi, and screenshots and image attachments reach the model instead of being dropped.
+
+Re-pointing `persona` away from a persona this agent owns deletes that owned persona afterwards: owned personas are invisible to the persona library, so nothing else would reclaim them. The cleanup is best-effort and never fails the request.
+
 **Response:** `200 OK` with the updated agent, `400` on invalid body, `404` if missing, `500` on K8s failures.
 
 ### DELETE /api/v1/agents/{name}
 
-Delete an Agent.
+Delete an Agent, and reclaim the persona it owned if any (best-effort).
 
 **Response:** `204 No Content` or `404 Not Found`.
+
+### GET /api/v1/agents/{name}/persona
+
+The agent's persona as the agent sees it: the content plus whether the agent owns it.
+
+**Response:** `200 OK`
+```json
+{
+  "owned": false,
+  "ref": "01HX8YTNRD9Q3K5R6Z3SD9TXC7",
+  "persona": {
+    "id": "01HX8YTNRD9Q3K5R6Z3SD9TXC7",
+    "name": "code-reviewer",
+    "description": "Reviews pull requests",
+    "currentVersion": 3,
+    "text": "# Persona\n\nYou review pull requests.",
+    "createdAt": "2026-05-20T09:00:00Z",
+    "updatedAt": "2026-05-20T10:00:00Z"
+  }
+}
+```
+
+- `owned` — `true` when the referenced persona belongs to this agent, so edits
+  here stay private to it. `false` means a shared template: the next
+  `PUT` forks a private copy.
+- `ref` — the persona id the Agent CR references. Present even when the persona
+  no longer exists, which distinguishes a dangling reference (`ref` set,
+  `persona` omitted) from an agent with no persona at all (both empty).
+- `404 Not Found` if the agent does not exist, `503 Service Unavailable` if the
+  hub runs without persona storage.
+
+### PUT /api/v1/agents/{name}/persona
+
+Save the agent's persona content. The hub **never writes through to a shared
+template**: if the agent currently references a template (or nothing), the
+first call creates a new persona owned by this agent (copy-on-write) and
+re-points the Agent CR at it — stamping `ainsel.dev/updated-at` like any other
+spec change. Subsequent calls update that owned persona and bump its version.
+
+```json
+{ "name": "code-reviewer", "description": "Reviews pull requests", "text": "# Persona\n\n…" }
+```
+
+- `text` is required; `name` is optional and defaults to `<agent display name> (own)`;
+  an empty `description` clears it.
+- The response is the same shape as `GET`, with `owned: true`.
+- Access is gated by the agent (`read`/`write` on `agent`), so an owned persona
+  needs no separate permission record.
+
+**Response:** `200 OK`, `400` on validation failure (e.g. empty `text`), `404` if
+the agent does not exist, `500` on K8s failures, `503` without persona storage.
+Name collisions cannot occur here: uniqueness is enforced among templates only,
+and an owned persona may share a name with the template it was forked from.
 
 ---
 
@@ -395,7 +467,7 @@ Update a CronTrigger. All body fields are optional; omitted fields are unchanged
 
 ## Invocations
 
-Invocations record one dispatch of an event to an agent. They are kept in an in-process ring buffer by the hub; the endpoint returns `503 Service Unavailable` when invocation history is not configured.
+Invocations record one dispatch of an event to an agent. They are persisted in the `invocations` Postgres table (48h retention) so they survive hub restarts; the endpoint returns `503 Service Unavailable` when invocation history is not configured.
 
 ### GET /api/v1/invocations
 
@@ -595,11 +667,22 @@ Personas live in the hub's database (tables `personas` and `persona_versions`). 
 
 The runtime mounts `persona.md` at `/etc/agent/persona.md` (consumer added in a follow-up project).
 
-Validation: `name` is non-empty, unique across personas, and ≤ 200 chars. `description` ≤ 2000 chars. `text` is non-empty and ≤ 100 000 chars.
+A persona is either a **shared template** — curated in the library and
+referenced by any number of agents — or **owned by one agent** (`ownerAgent`
+holds the Agent CR name). Owned personas are created by the hub when an agent's
+persona is edited inline (see
+[`PUT /api/v1/agents/{name}/persona`](#put-apiv1agentsnamepersona)) and are
+hidden from the library, so editing an agent's persona never rewrites a
+template other agents share.
+
+Validation: `name` is non-empty and ≤ 200 chars, and unique **among templates**
+(an owned persona may keep the name of the template it was forked from).
+`description` ≤ 2000 chars. `text` is non-empty and ≤ 100 000 chars.
 
 ### GET /api/v1/personas
 
-List all personas (metadata only — no `text` body).
+List shared template personas (metadata only — no `text` body). Agent-owned
+personas are excluded; read them through their agent.
 
 Supports the standard `?page=` and `?pageSize=` query params. `page` defaults
 to `1`, `pageSize` defaults to `50` and is clamped to `200`. Invalid values
@@ -642,9 +725,13 @@ Create a new persona. The hub generates the ULID and inserts the initial version
 
 ### GET /api/v1/personas/{id}
 
-Fetch one persona, including the current `text`.
+Fetch one persona, including the current `text`. Owned personas are reachable
+by id (the agent detail page reads them through
+[`GET /api/v1/agents/{name}/persona`](#get-apiv1agentsnamepersona) instead), but
+they never appear in the list.
 
-**Response:** `200 OK` (full Persona) or `404 Not Found`.
+**Response:** `200 OK` (full Persona, plus `ownerAgent` when the persona is
+owned by an agent) or `404 Not Found`.
 
 ### PUT /api/v1/personas/{id}
 

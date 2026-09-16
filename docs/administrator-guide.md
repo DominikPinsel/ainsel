@@ -76,9 +76,20 @@ agent should do on a clock rather than in reaction to a webhook
 **MCP servers.** Extend an agent's tool surface via the
 [Model Context Protocol](https://modelcontextprotocol.io). AInsel
 registers MCP servers centrally (DB-backed, managed by the hub and
-proxied through [`services/mcp/`](../services/mcp/)); each agent
-opts in via `Agent.spec.enabledMCPs`. The bundled MCP server today
-is configured as a generic MCP server in the frontend; you can register more.
+proxied through [`services/mcp/`](../services/mcp/)); each agent opts in
+through its own selection on the **Tools** tab, which the hub resolves
+into `Agent.spec.mcp` — a snapshot of names, URLs and token references, so
+editing the registry never rewrites running agents. The bundled MCP server
+today is configured as a generic MCP server in the frontend; you can
+register more.
+
+> **Removed:** `Agent.spec.enabledMCPs`, the older list of in-cluster
+> `mcp-<name>` Service names. For one release beforehand the operator
+> converted it into an equivalent `spec.mcp` snapshot on reconcile, folding in
+> the servers the agent's runtime profile contributed so nothing changed at
+> runtime. The field is now gone from the schema: any value still stored on a
+> CR that was never reconciled in between is pruned by the API server, so
+> re-select those servers on the **Tools** tab.
 
 ## 3. The end-to-end admin journey
 

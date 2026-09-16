@@ -1,0 +1,72 @@
+name: PR title
+
+# Squash-merge makes the PR title the commit subject on develop, and a
+# promotion carries that subject onto main, where release-please reads it to
+# compute the version and write CHANGELOG.md. A title release-please cannot
+# parse is dropped from the changelog entirely and cannot bump a version - the
+# change still ships, it just becomes invisible in the release.
+#
+# That is not hypothetical: M1-M6 of the agent-centric rework were merged as
+# "M1: skills move onto the agent (#158)" and friends, and none of them appear
+# in the generated changelog. Checking the title here is the cheapest place to
+# catch it, because the title is exactly what will become the commit.
+#
+# No checkout and no third-party action: the title arrives in the event payload
+# and the rule is one regex, so there is nothing to install or supply-chain.
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  conventional:
+    name: Is a conventional commit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the title
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+
+          # The types release-please parses. A scope is optional, `!` marks a
+          # breaking change, and the description must be non-empty.
+          pattern='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-zA-Z0-9 ._/-]+\))?!?: [^ ].*'
+
+          if printf '%s' "${TITLE}" | grep -Eq "${pattern}"; then
+            echo "ok: ${TITLE}"
+            type=$(printf '%s' "${TITLE}" | sed -E 's/^([a-z]+).*/\1/')
+            case "${type}" in
+              chore|ci|docs|test|style|build) echo "note: '${type}' does not bump the version" ;;
+            esac
+            exit 0
+          fi
+
+          # GitHub titles its own revert PRs 'Revert "<subject>"'. Blocking one
+          # would be worse than the changelog gap, so let it through with a note.
+          if printf '%s' "${TITLE}" | grep -Eq '^Revert ".*"$'; then
+            echo "::warning::'${TITLE}' is not a conventional commit; release-please will not list it in CHANGELOG.md"
+            exit 0
+          fi
+
+          echo "::error::PR title is not a conventional commit: '${TITLE}'"
+          echo ""
+          echo "Expected:  <type>(<optional scope>): <description>"
+          echo "           feat(api): add persona endpoints"
+          echo "           fix(operator): keep the profile MCP token on collision"
+          echo "           refactor(api)!: remove Agent.spec.enabledMCPs"
+          echo ""
+          echo "Types:     feat fix docs style refactor perf test build ci chore revert"
+          echo "Breaking:  append ! to the type, or add a 'BREAKING CHANGE: <what>' footer"
+          echo "           to the merge commit body."
+          echo ""
+          echo "Why it matters: this title becomes the commit subject, and release-please"
+          echo "reads those subjects on main to compute the next version and to write"
+          echo "CHANGELOG.md. A title it cannot parse is left out of the changelog and"
+          echo "does not bump the version."
+          echo ""
+          echo "Fix it by editing the PR title - this check re-runs on edit."
+          exit 1

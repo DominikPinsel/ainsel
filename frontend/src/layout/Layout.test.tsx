@@ -1,6 +1,8 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { afterEach, beforeEach, vi } from 'vitest'
 import { Layout } from './Layout'
 
 vi.mock('../auth/AuthProvider', () => ({
@@ -18,17 +20,39 @@ vi.mock('../components/ReportButton', () => ({
 }))
 
 function renderLayout(route = '/dashboard') {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0, staleTime: 0 } },
+  })
   return render(
-    <MemoryRouter initialEntries={[route]}>
-      <Routes>
-        <Route element={<Layout />}>
-          <Route path="/dashboard" element={<div>Dashboard page</div>} />
-          <Route path="/agents" element={<div>Agents page</div>} />
-        </Route>
-      </Routes>
-    </MemoryRouter>,
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={[route]}>
+        <Routes>
+          <Route element={<Layout />}>
+            <Route path="/dashboard" element={<div>Dashboard page</div>} />
+            <Route path="/agents" element={<div>Agents page</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
   )
 }
+
+beforeEach(() => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({ items: [], total: 0, page: 1, pageSize: 200, totalPages: 0 }),
+          { status: 200 },
+        ),
+      ),
+    ),
+  )
+})
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 
 const menuButton = () => screen.getByRole('button', { name: 'Menu' })
 

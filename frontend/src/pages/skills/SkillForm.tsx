@@ -147,7 +147,7 @@ export function SkillForm() {
       <Titleblock
         crumbs={
           <>
-            Fleet / <Link to="/skills">Skills</Link> / <b>{isEdit ? 'Edit' : 'New'}</b>
+            Library / <Link to="/skills">Skills</Link> / <b>{isEdit ? 'Edit' : 'New'}</b>
           </>
         }
         title={

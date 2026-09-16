@@ -2,14 +2,14 @@ name: CI - operators/event-gateway
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
     paths:
       - 'operators/event-gateway/**'
       - 'shared/api/**'
       - 'go.work'
       - '.github/workflows/ci-operators-event-gateway.yml'
   pull_request:
-    branches: [main]
+    branches: [main, develop]
     types: [opened, synchronize, reopened]
     paths:
       - 'operators/event-gateway/**'

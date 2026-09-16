@@ -1,0 +1,180 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: crontriggers.ainsel.dev
+spec:
+  group: ainsel.dev
+  names:
+    kind: CronTrigger
+    listKind: CronTriggerList
+    plural: crontriggers
+    singular: crontrigger
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.agentRef
+      name: Agent
+      type: string
+    - jsonPath: .spec.schedule
+      name: Schedule
+      type: string
+    - jsonPath: .spec.enabled
+      name: Enabled
+      type: boolean
+    - jsonPath: .status.conditions[?(@.type=="AgentRefValid")].status
+      name: Agent Valid
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .status.nextRun
+      name: Next Run
+      type: date
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          CronTrigger is the Schema for the crontriggers API. It schedules a prompt
+          to be delivered to an agent on a recurring cron schedule.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              CronTriggerSpec defines the desired state of a CronTrigger: a recurring
+              schedule that delivers a fixed prompt to an agent. Unlike a webhook-driven
+              Trigger, a CronTrigger has no connector — the hub emits a synthetic event
+              on the schedule and enqueues a task for the agent
+              (agent.<agentRef>), where one of the agent's replicas pulls and processes it.
+            properties:
+              agentRef:
+                description: AgentRef is the name of the Agent that should receive
+                  the scheduled prompt.
+                type: string
+              displayName:
+                description: DisplayName is the user-facing name of the cron trigger.
+                type: string
+              enabled:
+                default: true
+                description: |-
+                  Enabled controls whether the schedule is active. When false (or unset,
+                  which defaults to enabled), the hub does not fire the trigger. This
+                  allows pausing a schedule without deleting it.
+                type: boolean
+              prompt:
+                description: |-
+                  Prompt is the text delivered to the agent as the user message on each
+                  fire. It is sent verbatim — the agent runtime renders it without the
+                  forgejo event template used for webhook events.
+                type: string
+              schedule:
+                description: |-
+                  Schedule is a standard 5-field cron expression
+                  (minute hour day-of-month month day-of-week, in the hub's local time).
+                  Example: "0 9 * * 1-5" fires at 09:00 on weekdays.
+                type: string
+            required:
+            - agentRef
+            - displayName
+            - prompt
+            - schedule
+            type: object
+          status:
+            description: CronTriggerStatus defines the observed state of a CronTrigger.
+            properties:
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              lastRun:
+                description: LastRun is the last time the cron trigger fired and published
+                  an event.
+                format: date-time
+                type: string
+              nextRun:
+                description: NextRun is the next scheduled fire time computed by the
+                  hub.
+                format: date-time
+                type: string
+              observedGeneration:
+                format: int64
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

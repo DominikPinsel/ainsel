@@ -25,6 +25,12 @@ type PersonaService interface {
 	ListVersions(ctx context.Context, personaID string) ([]personas.VersionSummary, error)
 	GetVersion(ctx context.Context, personaID string, n int) (*personas.Version, error)
 	Rollback(ctx context.Context, personaID string, toVersion int) (*personas.Persona, error)
+	// Agent-owned personas (see personas.Service): the agent detail page
+	// edits an agent's persona inline, which the hub implements as a
+	// copy-on-write persona owned by that agent.
+	OwnedBy(ctx context.Context, agentName string) (*personas.Persona, error)
+	EnsureOwned(ctx context.Context, agentName, defaultName string, req personas.UpdateRequest) (*personas.Persona, error)
+	DeleteOwned(ctx context.Context, personaID, agentName string) error
 }
 
 // personaHandlers groups handler functions plus their service dependency.
@@ -365,6 +371,12 @@ func (h *personaHandlers) itemRollback(w http.ResponseWriter, r *http.Request, i
 }
 
 func (h *personaHandlers) writePersonaError(w http.ResponseWriter, err error) {
+	writePersonaServiceError(w, err)
+}
+
+// writePersonaServiceError maps personas.Service errors to HTTP responses.
+// Shared by the library endpoints and the agent-scoped persona endpoint.
+func writePersonaServiceError(w http.ResponseWriter, err error) {
 	var verr *personas.ValidationError
 	if errors.As(err, &verr) {
 		writeError(w, http.StatusBadRequest, verr.Error())
@@ -376,6 +388,10 @@ func (h *personaHandlers) writePersonaError(w http.ResponseWriter, err error) {
 			"error":     "persona in use",
 			"referrers": inUse.Referrers,
 		})
+		return
+	}
+	if errors.Is(err, personas.ErrNotOwned) {
+		writeError(w, http.StatusConflict, "persona is not owned by this agent")
 		return
 	}
 	if errors.Is(err, personas.ErrNameTaken) {
