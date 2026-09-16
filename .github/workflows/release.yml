@@ -1,0 +1,460 @@
+name: Release
+
+# Release pipeline: release-please decides *what* the release is, this workflow
+# publishes *the artifacts*.
+#
+# Every push to main runs release-please-action, which reads conventional
+# commits, maintains CHANGELOG.md, keeps chart/Chart.yaml's version and
+# appVersion in step (release-please-config.json extra-files), and opens a
+# release PR. Merging that PR is what cuts the release: release-please creates
+# the tag and the GitHub Release, and this run then publishes the artifacts.
+#
+# So the human-facing flow is: merge PRs as usual -> review the release PR
+# release-please opens (its diff *is* the dry run: version, changelog and chart
+# bump) -> merge it -> artifacts appear.
+#
+# One version for the whole product rather than per component, because
+# chart/values.yaml pins a single image tag per component and the chart cannot
+# express per-component versions without a redesign.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write        # release-please: release PR, tag, GitHub Release
+  pull-requests: write   # release-please: open and update the release PR
+  packages: write        # push the chart to GHCR
+
+# Never cancel halfway through publishing: a killed run leaves some images
+# tagged and others not, which is worse than a slow release.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # --------------------------------------------------------------------------
+  # release-please: maintain the release PR, and on the run where that PR was
+  # merged, create the tag and the GitHub Release.
+  # --------------------------------------------------------------------------
+  release-please:
+    name: Release Please
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
+      pr: ${{ steps.release.outputs.pr }}
+    steps:
+      - uses: googleapis/release-please-action@v5
+        id: release
+        with:
+          target-branch: main
+
+      - name: Report what release-please did
+        run: |
+          set -euo pipefail
+          created="${{ steps.release.outputs.release_created }}"
+          pr="${{ steps.release.outputs.pr }}"
+          if [ "${created}" = "true" ]; then
+            echo "Release ${{ steps.release.outputs.tag_name }} created - publishing artifacts." \
+              >> "${GITHUB_STEP_SUMMARY}"
+          elif [ -n "${pr}" ]; then
+            echo "Release PR open/updated: ${pr}" >> "${GITHUB_STEP_SUMMARY}"
+            echo "Nothing to publish until it is merged." >> "${GITHUB_STEP_SUMMARY}"
+          else
+            echo "No release-worthy commits since the last release." >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+  # --------------------------------------------------------------------------
+  # Derive the tag spellings the artifacts need. Kept separate from the matrix
+  # jobs so the version is computed once and cannot disagree between them.
+  # --------------------------------------------------------------------------
+  prepare:
+    name: Resolve release metadata
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      semver: ${{ steps.meta.outputs.semver }}
+      latest: ${{ steps.meta.outputs.latest }}
+      oci_root: ${{ steps.meta.outputs.oci_root }}
+    steps:
+      - name: Derive from the tag release-please created
+        id: meta
+        run: |
+          set -euo pipefail
+          tag="${{ needs.release-please.outputs.tag_name }}"
+          version="${{ needs.release-please.outputs.version }}"
+
+          # include-component-in-tag is false, so the tag is plain vX.Y.Z. A
+          # component-prefixed tag would silently produce images nobody can
+          # resolve from the chart.
+          if ! printf '%s' "${tag}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::tag ${tag} is not vX.Y.Z; check include-component-in-tag in release-please-config.json"
+            exit 1
+          fi
+          if [ "${version}" != "${tag#v}" ]; then
+            echo "::error::release-please reported version ${version} but tag ${tag}"
+            exit 1
+          fi
+          semver="${version}"
+
+          # A version string carries its own prerelease marker.
+          latest=true
+          case "${semver}" in
+            *-*) latest=false ;;
+          esac
+
+          # GHCR requires a lowercase owner; a fork publishing into the
+          # upstream namespace would be a nasty surprise.
+          owner=$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')
+
+          {
+            echo "version=${tag}"
+            echo "semver=${semver}"
+            echo "latest=${latest}"
+            echo "oci_root=oci://ghcr.io/${owner}/charts"
+          } >> "${GITHUB_OUTPUT}"
+
+          echo "Releasing ${tag} (semver ${semver}, tagging latest: ${latest})" >> "${GITHUB_STEP_SUMMARY}"
+
+  # --------------------------------------------------------------------------
+  # Every image, tagged immutably. Mutable tags (:dev, pi-go:1.24) belong to
+  # develop alone - see #182, where main builds overwriting :dev took the dev
+  # cluster down. A release never writes one.
+  # --------------------------------------------------------------------------
+  images:
+    name: Image ${{ matrix.component }}
+    needs: [release-please, prepare]
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: hub-frontend
+            image: dpinsel/ainsel-hub-frontend
+            file: frontend/Dockerfile
+            context: .
+            versioned: false
+          - component: hub-backend
+            image: dpinsel/ainsel-hub-backend
+            file: services/hub/Dockerfile
+            context: .
+            versioned: true
+          - component: agent-operator
+            image: dpinsel/ainsel-k8s-ai-agent-operator
+            file: operators/agent/Dockerfile
+            context: .
+            versioned: true
+          - component: event-gateway-operator
+            image: dpinsel/ainsel-k8s-event-source-gateway-operator
+            file: operators/event-gateway/Dockerfile
+            context: .
+            versioned: true
+          - component: mcp
+            image: dpinsel/ainsel-mcp
+            file: services/mcp/Dockerfile
+            context: .
+            versioned: true
+          - component: chat-mcp
+            image: dpinsel/ainsel-chat-mcp
+            file: services/chat-mcp/Dockerfile
+            context: .
+            versioned: true
+          - component: webhook-receiver
+            image: dpinsel/ainsel-webhook-receiver
+            file: services/webhook-receiver/Dockerfile
+            context: .
+            versioned: true
+          - component: pi
+            image: dpinsel/ainsel-pi
+            file: pi/Dockerfile
+            context: pi
+            versioned: false
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Compute tags and build args
+        id: meta
+        run: |
+          set -euo pipefail
+          version="${{ needs.prepare.outputs.version }}"
+          semver="${{ needs.prepare.outputs.semver }}"
+          {
+            echo "tags<<EOF"
+            # Two spellings of one release: :vX.Y.Z matches the git tag, :X.Y.Z
+            # is what the chart resolves to, since appVersion carries no v.
+            echo "${{ matrix.image }}:${version}"
+            echo "${{ matrix.image }}:${semver}"
+            if [ "${{ needs.prepare.outputs.latest }}" = "true" ]; then
+              echo "${{ matrix.image }}:latest"
+            fi
+            echo "EOF"
+            echo "args<<EOF"
+            if [ "${{ matrix.versioned }}" = "true" ]; then
+              echo "VERSION=${version}"
+              echo "VCS_REF=${GITHUB_SHA}"
+            fi
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          push: true
+          provenance: false
+          sbom: false
+          build-args: ${{ steps.meta.outputs.args }}
+          tags: ${{ steps.meta.outputs.tags }}
+
+      - name: Record what was published
+        run: |
+          set -euo pipefail
+          echo "| ${{ matrix.component }} | \`${{ matrix.image }}:${{ needs.prepare.outputs.version }}\` |" \
+            >> "${GITHUB_STEP_SUMMARY}"
+
+  # --------------------------------------------------------------------------
+  # The pi variants build FROM the pi base image, so they wait for it.
+  # BASE_TAG points at the released base, not :dev, which is what makes a
+  # release reproducible.
+  # --------------------------------------------------------------------------
+  pi-variants:
+    name: Image ${{ matrix.component }}
+    needs: [release-please, prepare, images]
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: pi-go
+            image: dpinsel/ainsel-pi-go
+            file: pi/Dockerfile.go
+            variant: '1.24'
+          - component: pi-maui
+            image: dpinsel/ainsel-pi-maui
+            file: pi/Dockerfile.maui
+            variant: '8.0'
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and push the ${{ matrix.variant }} variant
+        uses: docker/build-push-action@v7
+        with:
+          context: pi
+          file: ${{ matrix.file }}
+          push: true
+          provenance: false
+          sbom: false
+          build-args: |
+            BASE_TAG=${{ needs.prepare.outputs.version }}
+          tags: |
+            ${{ matrix.image }}:${{ matrix.variant }}-${{ needs.prepare.outputs.version }}
+            ${{ matrix.image }}:${{ matrix.variant }}-${{ needs.prepare.outputs.semver }}
+
+  # --------------------------------------------------------------------------
+  # Package the chart, push it to GHCR, and attach the .tgz to the Release
+  # release-please just created. The gates CI runs are repeated here, because
+  # the release commit is a merge CI may not have seen in this exact shape.
+  # --------------------------------------------------------------------------
+  chart:
+    name: Package and publish chart
+    needs: [release-please, prepare]
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Helm
+        run: curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+      # This is the check that release-please's extra-files actually fired. If
+      # the Chart.yaml bump ever stops working, packaging here would silently
+      # publish a chart claiming the previous version.
+      - name: Gate - chart version matches the release
+        run: |
+          set -euo pipefail
+          want="${{ needs.prepare.outputs.semver }}"
+          have=$(grep -E '^version:' chart/Chart.yaml | awk '{print $2}')
+          have_app=$(grep -E '^appVersion:' chart/Chart.yaml | awk '{print $2}' | tr -d '"')
+          fail=0
+          if [ "${have}" != "${want}" ]; then
+            echo "::error::chart/Chart.yaml version is ${have}, release is ${want}"
+            fail=1
+          fi
+          if [ "${have_app}" != "${want}" ]; then
+            echo "::error::chart/Chart.yaml appVersion is ${have_app}, release is ${want}"
+            fail=1
+          fi
+          if [ "${fail}" -ne 0 ]; then
+            echo "::error::check extra-files in release-please-config.json"
+            exit 1
+          fi
+          echo "ok: chart version and appVersion are both ${want}"
+
+      - name: CRD sync check (chart copies vs operator bases)
+        run: python3 scripts/check-crd-sync.py
+
+      - name: Helm lint
+        run: helm lint chart/
+
+      - name: Helm template (default and example values)
+        run: |
+          set -euo pipefail
+          helm template chart/ > /dev/null
+          helm template chart/ -f chart/values-example.yaml > /dev/null
+
+      - name: Package chart
+        run: |
+          set -euo pipefail
+          helm package chart/ --destination dist/
+          find dist -maxdepth 1 -name '*.tgz' | sed 's/^/packaged: /'
+
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Push chart to GHCR
+        run: |
+          set -euo pipefail
+          helm push "dist/ainsel-${{ needs.prepare.outputs.semver }}.tgz" "${{ needs.prepare.outputs.oci_root }}"
+          echo "Pushed ${{ needs.prepare.outputs.oci_root }}/ainsel:${{ needs.prepare.outputs.semver }}"
+
+      - name: Attach the chart to the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release upload "${{ needs.release-please.outputs.tag_name }}" \
+            --repo "${GITHUB_REPOSITORY}" --clobber dist/*.tgz
+          echo "Attached ainsel-${{ needs.prepare.outputs.semver }}.tgz to the release"
+
+  # --------------------------------------------------------------------------
+  # A green run should mean the artifacts exist. Publishing can fail silently
+  # (a rejected tag, a package left private), so go and look.
+  # --------------------------------------------------------------------------
+  verify:
+    name: Verify published artifacts
+    needs: [release-please, prepare, images, pi-variants, chart]
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Install Helm
+        run: curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+      - name: Every image tag resolves
+        run: |
+          set -euo pipefail
+          version="${{ needs.prepare.outputs.version }}"
+          semver="${{ needs.prepare.outputs.semver }}"
+
+          tags="${version} ${semver}"
+          if [ "${{ needs.prepare.outputs.latest }}" = "true" ]; then
+            tags="${version} ${semver} latest"
+          fi
+
+          images="dpinsel/ainsel-hub-frontend dpinsel/ainsel-hub-backend
+            dpinsel/ainsel-k8s-ai-agent-operator dpinsel/ainsel-k8s-event-source-gateway-operator
+            dpinsel/ainsel-mcp dpinsel/ainsel-chat-mcp dpinsel/ainsel-webhook-receiver dpinsel/ainsel-pi"
+          for img in ${images}; do
+            for tag in ${tags}; do
+              if docker manifest inspect "${img}:${tag}" >/dev/null 2>&1; then
+                echo "ok: ${img}:${tag}"
+              else
+                echo "::error::${img}:${tag} is not pullable"
+                exit 1
+              fi
+            done
+          done
+
+          for base in "dpinsel/ainsel-pi-go:1.24" "dpinsel/ainsel-pi-maui:8.0"; do
+            for tag in "${version}" "${semver}"; do
+              pair="${base}-${tag}"
+              if docker manifest inspect "${pair}" >/dev/null 2>&1; then
+                echo "ok: ${pair}"
+              else
+                echo "::error::${pair} is not pullable"
+                exit 1
+              fi
+            done
+          done
+
+      - name: Chart is pullable from GHCR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo "${GH_TOKEN}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+          helm pull "${{ needs.prepare.outputs.oci_root }}/ainsel" \
+            --version "${{ needs.prepare.outputs.semver }}" --destination pulled/
+          find pulled -maxdepth 1 -name '*.tgz' | sed 's/^/pulled: /'
+          helm show chart pulled/ainsel-*.tgz | grep -E '^(name|version|appVersion):' | sed 's/^/  /'
+
+      # GHCR packages start out private, and this job authenticates, so it
+      # cannot tell "published" from "published but invisible to users". The
+      # .tgz on the Release is the fallback that always works; flip the package
+      # to public under Packages -> ainsel -> settings after the first release.
+      - name: GitHub Release has the changelog and the chart attached
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${{ needs.release-please.outputs.tag_name }}"
+          out=$(gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" \
+            --json name,isPrerelease,isDraft,assets \
+            --jq '"\(.name)|\(.isPrerelease)|\(.isDraft)|\([.assets[].name] | join(","))"')
+          name=$(printf '%s' "${out}" | cut -d'|' -f1)
+          pre=$(printf '%s' "${out}" | cut -d'|' -f2)
+          draft=$(printf '%s' "${out}" | cut -d'|' -f3)
+          assets=$(printf '%s' "${out}" | cut -d'|' -f4)
+          echo "release: ${name}  prerelease=${pre}  draft=${draft}  assets=${assets}"
+
+          fail=0
+          if [ "${draft}" = "true" ]; then
+            echo "::error::release ${tag} is still a draft; publish it"
+            fail=1
+          fi
+          case ",${assets}," in
+            *",ainsel-${{ needs.prepare.outputs.semver }}.tgz,"*) ;;
+            *)
+              echo "::error::release ${tag} has no chart asset (assets: ${assets})"
+              fail=1
+              ;;
+          esac
+          if [ "${fail}" -ne 0 ]; then
+            exit 1
+          fi
+          echo "ok: release ${tag} is published with its chart attached"

@@ -1,18 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { z } from 'zod'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import {
-  useAgent,
-  useCreateAgent,
-  useUpdateAgent,
-  type AgentRequest,
-  type AgentOllamaCloud,
-  type AgentOpenCode,
-  type AgentAlibabaCloud,
-  type AgentCustomProvider,
-} from '../../api/agents'
+import { useAgent, useUpdateAgent } from '../../api/agents'
 import { useAgentImages } from '../../api/agentImages'
 import { usePersonas } from '../../api/personas'
 import { ApiError } from '../../api/client'
@@ -23,69 +13,35 @@ import { Input } from '../../primitives/Input'
 import { Select } from '../../primitives/Select'
 import { Textarea } from '../../primitives/Textarea'
 import { Titleblock } from '../../layout/Titleblock'
-import { GroupField } from '../../components/GroupField'
+import {
+  API_KEY_LABELS,
+  LLM_PROVIDERS,
+  agentDefaults,
+  agentSchema,
+  buildAgentRequest,
+  type AgentFormInput,
+  type AgentFormValues,
+} from './agentFormModel'
 
-const LLM_PROVIDERS = [
-  { value: '', label: 'None' },
-  { value: 'ollama-cloud', label: 'Ollama Cloud' },
-  { value: 'opencode', label: 'OpenCode' },
-  { value: 'alibaba-cloud', label: 'Alibaba Token Plan' },
-  { value: 'custom', label: 'Custom' },
-] as const
-
-const API_KEY_LABELS: Record<string, string> = {
-  'ollama-cloud': 'Ollama Cloud API Key',
-  opencode: 'OpenCode API Key',
-  'alibaba-cloud': 'Alibaba Token Plan API Key',
-  custom: 'API Key',
-}
-
-const schema = z
-  .object({
-    name: z.string().min(1, 'Name is required'),
-    description: z.string().optional(),
-    imageRef: z.object({ name: z.string().min(1, 'Image is required') }),
-    llm: z.object({
-      model: z.string().min(1, 'Model is required'),
-      provider: z.string().optional(),
-      maxTurns: z.coerce.number().int().min(1).optional(),
-      temperature: z.coerce.number().min(0).max(2).optional(),
-      // Always a concrete boolean in the payload: the hub treats a missing
-      // `vision` on update as "leave unchanged", so the form must send false
-      // explicitly to turn image input back off.
-      vision: z.boolean().optional(),
-    }),
-    providerApiKey: z.string().optional(),
-    customProviderUrl: z.string().optional(),
-    persona: z.object({ id: z.string().min(1, 'Persona is required') }),
-    replicas: z.coerce.number().int().min(0).optional(),
-    groupId: z.string().optional(),
-  })
-  .superRefine((data, ctx) => {
-    if (data.llm.provider === 'custom' && !data.customProviderUrl?.trim()) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['customProviderUrl'],
-        message: 'URL is required for custom providers',
-      })
-    }
-  })
-
-// zod 4 tracks input/output types separately (coercions & defaults make
-// inputs wider); useForm needs both so the resolver types line up.
-type FormInput = z.input<typeof schema>
-type FormValues = z.infer<typeof schema>
-
+/**
+ * The single-page edit form for an existing agent.
+ *
+ * Creation lives in the step-by-step {@link AgentWizard}; editing keeps every
+ * field on one screen because jumping straight to a value is the point. The
+ * two share their schema and request builder so they cannot drift.
+ *
+ * Anything agent-scoped and tab-shaped — persona content, runtime image,
+ * tools, skills, MCP servers, environment — is edited on the agent's detail
+ * tabs; this form covers identity, model, persona link and scaling.
+ */
 export function AgentForm() {
   const { id } = useParams<{ id: string }>()
-  const isEdit = id !== undefined
   const navigate = useNavigate()
   const [submitError, setSubmitError] = useState<string | null>(null)
 
-  const existing = useAgent(isEdit ? id : undefined)
+  const existing = useAgent(id)
   const images = useAgentImages({ pageSize: 200 })
   const personas = usePersonas({ pageSize: 200 })
-  const create = useCreateAgent()
   const update = useUpdateAgent()
 
   const {
@@ -94,21 +50,10 @@ export function AgentForm() {
     reset,
     setValue,
     watch,
-    setError,
     formState: { errors, isSubmitting },
-  } = useForm<FormInput, unknown, FormValues>({
-    resolver: zodResolver(schema),
-    defaultValues: {
-      name: '',
-      description: '',
-      imageRef: { name: '' },
-      llm: { model: '', provider: 'ollama-cloud', maxTurns: 100, temperature: 1, vision: false },
-      customProviderUrl: '',
-      providerApiKey: '',
-      persona: { id: '' },
-      replicas: 1,
-      groupId: '',
-    },
+  } = useForm<AgentFormInput, unknown, AgentFormValues>({
+    resolver: zodResolver(agentSchema),
+    defaultValues: agentDefaults,
   })
 
   useEffect(() => {
@@ -134,69 +79,11 @@ export function AgentForm() {
 
   const onSubmit = handleSubmit(async (values) => {
     setSubmitError(null)
-
-    if (!isEdit && !values.groupId) {
-      setError('groupId', { message: 'Group is required' })
-      return
-    }
-
-    // Use `watch()` to explicitly read the current state of the provider,
-    // URL, and API Key fields from the DOM. This ensures we get the
-    // user's latest inputs exactly as they are in the UI.
-    const activeProvider = watch('llm.provider')
-    const activeUrl = watch('customProviderUrl')
-    const activeApiKey = watch('providerApiKey')
-
-    const ollamaCloud:
-      | AgentOllamaCloud
-      | undefined = activeProvider === 'ollama-cloud'
-      ? activeApiKey
-        ? { apiKey: activeApiKey }
-        : undefined
-      : undefined
-
-    const openCode:
-      | AgentOpenCode
-      | undefined = activeProvider === 'opencode'
-      ? activeApiKey
-        ? { apiKey: activeApiKey }
-        : undefined
-      : undefined
-
-    const alibabaCloud:
-      | AgentAlibabaCloud
-      | undefined = activeProvider === 'alibaba-cloud'
-      ? activeApiKey
-        ? { apiKey: activeApiKey }
-        : undefined
-      : undefined
-
-    const customProvider:
-      | AgentCustomProvider
-      | undefined = activeProvider === 'custom'
-      ? {
-          url: activeUrl || '',
-          ...(activeApiKey ? { apiKey: activeApiKey } : {}),
-        }
-      : undefined
-
-    const body: AgentRequest = {
-      name: values.name,
-      description: values.description || undefined,
-      imageRef: values.imageRef,
-      llm: values.llm,
-      ollamaCloud,
-      openCode,
-      alibabaCloud,
-      customProvider,
-      persona: { id: values.persona.id },
-      replicas: values.replicas,
-      groupId: isEdit ? undefined : values.groupId,
-    }
     try {
-      const saved = isEdit
-        ? await update.mutateAsync({ id: id!, body })
-        : await create.mutateAsync(body)
+      const saved = await update.mutateAsync({
+        id: id!,
+        body: buildAgentRequest(values, { isEdit: true }),
+      })
       navigate(`/agents/${encodeURIComponent(saved.id)}`, { replace: true })
     } catch (err) {
       if (err instanceof ApiError) setSubmitError(err.message)
@@ -204,25 +91,31 @@ export function AgentForm() {
     }
   })
 
+  const provider = watch('llm.provider')
+
   return (
     <>
       <Titleblock
         crumbs={
           <>
-            Fleet / <Link to="/agents">Agents</Link> /{' '}
-            <b>{isEdit ? 'Edit' : 'New'}</b>
+            Fleet / <Link to="/agents">Agents</Link> / <b>Edit</b>
           </>
         }
         title={
           <>
-            {isEdit ? 'Edit' : 'New'} <em>Agent</em>
+            Edit <em>Agent</em>
           </>
         }
         actions={
           <>
             <Button onClick={() => navigate(-1)}>Cancel</Button>
-            <Button type="submit" variant="primary" form="agent-form" disabled={isSubmitting}>
-              {isSubmitting ? 'Saving…' : isEdit ? 'Save' : 'Create'}
+            <Button
+              type="submit"
+              variant="primary"
+              form="agent-form"
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? 'Saving…' : 'Save'}
             </Button>
           </>
         }
@@ -262,13 +155,6 @@ export function AgentForm() {
             <Field label="Description" htmlFor="description">
               <Textarea id="description" rows={2} {...register('description')} />
             </Field>
-            {!isEdit ? (
-              <GroupField
-                value={watch('groupId') ?? ''}
-                onChange={(v) => setValue('groupId', v, { shouldDirty: true })}
-                error={errors.groupId?.message}
-              />
-            ) : null}
           </div>
         </section>
 
@@ -300,8 +186,8 @@ export function AgentForm() {
             </Field>
           </div>
           <p className="label" style={{ marginTop: 12, color: 'var(--ink-3)' }}>
-            Tool enablement uses every tool defined on the selected image.
-            Per-agent overrides land in a follow-up.
+            Tools, skills, MCP servers and environment are edited per agent on
+            the agent's Tools, Skills and Runtime tabs.
           </p>
         </section>
 
@@ -337,15 +223,15 @@ export function AgentForm() {
             <Field label="Provider" htmlFor="llm.provider">
               <Select
                 id="llm.provider"
-                value={watch('llm.provider') ?? ''}
+                value={provider ?? ''}
                 onChange={(v) => setValue('llm.provider', v, { shouldDirty: true })}
                 options={LLM_PROVIDERS}
               />
               <input type="hidden" {...register('llm.provider')} />
             </Field>
-            {watch('llm.provider') ? (
+            {provider ? (
               <>
-                {watch('llm.provider') === 'custom' ? (
+                {provider === 'custom' ? (
                   <Field
                     label="Provider Base URL"
                     htmlFor="customProviderUrl"
@@ -359,14 +245,14 @@ export function AgentForm() {
                   </Field>
                 ) : null}
                 <Field
-                  label={API_KEY_LABELS[watch('llm.provider') ?? ''] ?? 'API Key'}
+                  label={API_KEY_LABELS[provider] ?? 'API Key'}
                   htmlFor="providerApiKey"
                 >
                   <Input
                     id="providerApiKey"
                     type="password"
                     autoComplete="off"
-                    placeholder={isEdit ? 'Leave blank to keep existing key' : ''}
+                    placeholder="Leave blank to keep existing key"
                     {...register('providerApiKey')}
                   />
                 </Field>

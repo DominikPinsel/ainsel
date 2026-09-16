@@ -6,6 +6,7 @@ import { Layout } from './layout/Layout'
 import { LoginLayout } from './layout/LoginLayout'
 import { AgentDetail } from './pages/agents/AgentDetail'
 import { AgentForm } from './pages/agents/AgentForm'
+import { AgentWizard } from './pages/agents/AgentWizard'
 import { AgentList } from './pages/agents/AgentList'
 import { Callback } from './pages/auth/Callback'
 import { ConnectorDetail } from './pages/connectors/ConnectorDetail'
@@ -77,7 +78,7 @@ export default function App() {
               <Route path="/chat/:id" element={<ChatView />} />
 
               <Route path="/agents" element={<AgentList />} />
-              <Route path="/agents/new" element={<AgentForm />} />
+              <Route path="/agents/new" element={<AgentWizard />} />
               <Route path="/agents/:id" element={<AgentDetail />} />
               <Route path="/agents/:id/edit" element={<AgentForm />} />
 

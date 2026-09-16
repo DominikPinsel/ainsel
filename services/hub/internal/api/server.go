@@ -17,7 +17,6 @@ import (
 	"github.com/DominikPinsel/ainsel/services/hub/internal/mcpservers"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/personas"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/prometheus"
-	"github.com/DominikPinsel/ainsel/services/hub/internal/skills"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/tasklogs"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/triggers"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/usertokens"
@@ -62,10 +61,10 @@ type Server struct {
 	prom                   *prometheus.Client
 	wsHub                  *wsHub
 	observabilityCache     *promCache
-	invocations            *invocations.Store
+	invocations            invocations.Store
 	mcp                    *mcpservers.Service
-	personas               *personas.Service
-	skills                 *skills.Service
+	personas               PersonaService
+	skills                 SkillService
 	triggerStore           *triggers.Store
 	chat                   *chat.Store
 	taskLogs               *tasklogs.Store
@@ -173,8 +172,8 @@ type Config struct {
 }
 
 // New creates a new API server with routes registered.
-func New(c client.Client, namespace string, connectorCfg ConnectorConfig, promClient *prometheus.Client, invStore *invocations.Store, mcp *mcpservers.Service, personaSvc *personas.Service, skillSvc *skills.Service, cfg *Config) *Server {
-	s := &Server{client: c, mux: http.NewServeMux(), ns: namespace, connectorCfg: connectorCfg, prom: promClient, invocations: invStore, mcp: mcp, personas: personaSvc, skills: skillSvc}
+func New(c client.Client, namespace string, connectorCfg ConnectorConfig, promClient *prometheus.Client, invStore invocations.Store, mcp *mcpservers.Service, personaSvc *personas.Service, skillSvc SkillService, cfg *Config) *Server {
+	s := &Server{client: c, mux: http.NewServeMux(), ns: namespace, connectorCfg: connectorCfg, prom: promClient, invocations: invStore, mcp: mcp, skills: skillSvc}
 	s.wsHub = newWsHub()
 	s.observabilityCache = newPromCache(observabilityCacheTTL)
 	s.identityTracker = newIdentityPersistTracker()
@@ -237,6 +236,9 @@ func New(c client.Client, namespace string, connectorCfg ConnectorConfig, promCl
 	s.mux.HandleFunc("/api/v1/chat/sessions", s.handleChatSessions)
 	s.mux.HandleFunc("/api/v1/chat/sessions/", s.handleChatSession)
 	if personaSvc != nil {
+		// Assigned only when non-nil: a typed-nil *personas.Service in an
+		// interface field would pass a nil check and panic on use.
+		s.personas = personaSvc
 		RegisterPersonaRoutes(s.mux, personaSvc, &s.authzStore, &s.authzChecker)
 	}
 	if skillSvc != nil {

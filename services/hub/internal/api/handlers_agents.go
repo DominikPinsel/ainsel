@@ -3,17 +3,21 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/DominikPinsel/ainsel/services/hub/internal/mcpservers"
 	agentv1alpha1 "github.com/DominikPinsel/ainsel/shared/api/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	validation "k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -23,15 +27,128 @@ type AgentImageRefInfo struct {
 	DisplayName string `json:"displayName,omitempty"`
 }
 
+// AgentSkillsInfo is the API representation of the agent-scoped skill
+// selection: present = explicit override (empty items = no skills),
+// absent = inherit the referenced image's enabledSkills.
+type AgentSkillsInfo struct {
+	Items []string `json:"items"`
+}
+
+// AgentMCPServerInfo is the API representation of one agent-scoped MCP
+// server: the definition is resolved from the hub's MCP registry at
+// write time, so later registry edits do not silently change running
+// agents.
+type AgentMCPServerInfo struct {
+	Name         string `json:"name"`
+	URL          string `json:"url"`
+	TokenFromEnv string `json:"tokenFromEnv,omitempty"`
+}
+
+// AgentMCPInfo is the API representation of the agent-scoped MCP
+// selection: present = explicit override (empty servers = no MCP
+// connections), absent = inherit the referenced image's mcpServers
+// (legacy behavior).
+type AgentMCPInfo struct {
+	Servers []AgentMCPServerInfo `json:"servers"`
+}
+
+// AgentMCPRequest selects MCP servers by registry name; the hub resolves
+// each name to its full definition when writing the agent.
+type AgentMCPRequest struct {
+	Servers []string `json:"servers"`
+}
+
+// resolveMCPRequest resolves registry names into agent-scoped MCP
+// definitions. A nil request means "leave unchanged"; a non-nil request
+// (including an empty Servers list) is an explicit selection and returns
+// a non-nil AgentMCP.
+func (s *Server) resolveMCPRequest(ctx context.Context, w http.ResponseWriter, req *AgentMCPRequest) (*agentv1alpha1.AgentMCP, error) {
+	if req == nil {
+		return nil, nil
+	}
+	if s.mcp == nil {
+		writeError(w, http.StatusServiceUnavailable, "mcp service not configured")
+		return nil, fmt.Errorf("mcp service not configured")
+	}
+	mcp := &agentv1alpha1.AgentMCP{Servers: make([]agentv1alpha1.AgentMCPServer, 0, len(req.Servers))}
+	for _, name := range req.Servers {
+		server, err := s.mcp.Get(ctx, name)
+		if err != nil {
+			if errors.Is(err, mcpservers.ErrNotFound) {
+				writeError(w, http.StatusBadRequest, "mcp server not found: "+name)
+				return nil, err
+			}
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return nil, err
+		}
+		mcp.Servers = append(mcp.Servers, agentv1alpha1.AgentMCPServer{
+			Name:         server.Name,
+			URL:          server.URL,
+			TokenFromEnv: server.TokenFromEnv,
+		})
+	}
+	return mcp, nil
+}
+
+// agentEnvFromRequest validates the requested env overrides and converts them
+// to CR entries. existing supplies the values of secret entries whose request
+// value is empty ("keep the existing value"), mirroring the image env contract.
+// A nil result means "no overrides", which is also what an empty request list
+// produces — clearing an agent's overrides returns it to the image defaults.
+func agentEnvFromRequest(w http.ResponseWriter, in []AgentImageEnvVarInfo, existing []agentv1alpha1.AgentEnvVar) ([]agentv1alpha1.AgentEnvVar, error) {
+	if len(in) == 0 {
+		return nil, nil
+	}
+	secretValues := make(map[string]string, len(existing))
+	for _, e := range existing {
+		if e.Secret {
+			secretValues[e.Name] = e.Value
+		}
+	}
+
+	out := make([]agentv1alpha1.AgentEnvVar, 0, len(in))
+	seen := make(map[string]bool, len(in))
+	for _, e := range in {
+		name := strings.TrimSpace(e.Name)
+		if name == "" {
+			writeError(w, http.StatusBadRequest, "env name is required")
+			return nil, fmt.Errorf("env name is required")
+		}
+		if errs := validation.IsEnvVarName(name); len(errs) > 0 {
+			writeError(w, http.StatusBadRequest, "invalid env name "+name+": "+errs[0])
+			return nil, fmt.Errorf("invalid env name %q", name)
+		}
+		if seen[name] {
+			// The operator merges by name, so duplicates would silently keep
+			// only one value. Reject instead of guessing.
+			writeError(w, http.StatusBadRequest, "duplicate env name: "+name)
+			return nil, fmt.Errorf("duplicate env name %q", name)
+		}
+		seen[name] = true
+
+		value := e.Value
+		if e.Secret && value == "" {
+			value = secretValues[name]
+		}
+		out = append(out, agentv1alpha1.AgentEnvVar{Name: name, Value: value, Secret: e.Secret})
+	}
+	return out, nil
+}
+
 // SimpleAgentResponse is the simplified API representation of an Agent.
 type SimpleAgentResponse struct {
-	ID             string                   `json:"id"`
-	Name           string                   `json:"name"`
-	Description    string                   `json:"description,omitempty"`
-	ImageRef       AgentImageRefInfo        `json:"imageRef"`
-	LLM            AgentLLMInfo             `json:"llm"`
-	Persona        *AgentPersonaInfo        `json:"persona,omitempty"`
-	EnabledTools   []string                 `json:"enabledTools,omitempty"`
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	Description  string            `json:"description,omitempty"`
+	ImageRef     AgentImageRefInfo `json:"imageRef"`
+	LLM          AgentLLMInfo      `json:"llm"`
+	Persona      *AgentPersonaInfo `json:"persona,omitempty"`
+	EnabledTools []string          `json:"enabledTools,omitempty"`
+	Skills       *AgentSkillsInfo  `json:"skills,omitempty"`
+	MCP          *AgentMCPInfo     `json:"mcp,omitempty"`
+	// Env lists this agent's environment overrides on top of the referenced
+	// image's env. Values of entries marked Secret are never returned.
+	Env            []AgentImageEnvVarInfo   `json:"env,omitempty"`
 	Replicas       *int32                   `json:"replicas,omitempty"`
 	Memory         *AgentMemoryInfo         `json:"memory,omitempty"`
 	OllamaCloud    *AgentOllamaCloudInfo    `json:"ollamaCloud,omitempty"`
@@ -39,6 +156,7 @@ type SimpleAgentResponse struct {
 	AlibabaCloud   *AgentAlibabaCloudInfo   `json:"alibabaCloud,omitempty"`
 	CustomProvider *AgentCustomProviderInfo `json:"customProvider,omitempty"`
 	Status         *SimpleAgentStatus       `json:"status,omitempty"`
+	UpdatedAt      string                   `json:"updatedAt,omitempty"`
 }
 
 type AgentLLMInfo struct {
@@ -96,13 +214,18 @@ type SimpleAgentStatus struct {
 
 // SimpleAgentCreateRequest is used to create a new Agent.
 type SimpleAgentCreateRequest struct {
-	Name           string                   `json:"name"`
-	GroupID        string                   `json:"groupId"`
-	Description    string                   `json:"description,omitempty"`
-	ImageRef       AgentImageRefInfo        `json:"imageRef"`
-	LLM            AgentLLMInfo             `json:"llm"`
-	Persona        *AgentPersonaInfo        `json:"persona,omitempty"`
-	EnabledTools   []string                 `json:"enabledTools,omitempty"`
+	Name         string            `json:"name"`
+	GroupID      string            `json:"groupId"`
+	Description  string            `json:"description,omitempty"`
+	ImageRef     AgentImageRefInfo `json:"imageRef"`
+	LLM          AgentLLMInfo      `json:"llm"`
+	Persona      *AgentPersonaInfo `json:"persona,omitempty"`
+	EnabledTools []string          `json:"enabledTools,omitempty"`
+	Skills       *AgentSkillsInfo  `json:"skills,omitempty"`
+	MCP          *AgentMCPRequest  `json:"mcp,omitempty"`
+	// Env sets this agent's environment overrides. For an entry marked
+	// Secret, an empty Value means "keep the existing value".
+	Env            []AgentImageEnvVarInfo   `json:"env,omitempty"`
 	Replicas       *int32                   `json:"replicas,omitempty"`
 	Memory         *AgentMemoryInfo         `json:"memory,omitempty"`
 	OllamaCloud    *AgentOllamaCloudInfo    `json:"ollamaCloud,omitempty"`
@@ -113,18 +236,42 @@ type SimpleAgentCreateRequest struct {
 
 // SimpleAgentUpdateRequest is used to update an existing Agent. All fields are optional.
 type SimpleAgentUpdateRequest struct {
-	Name           *string                  `json:"name,omitempty"`
-	Description    *string                  `json:"description,omitempty"`
-	ImageRef       *AgentImageRefInfo       `json:"imageRef,omitempty"`
-	LLM            *AgentLLMInfo            `json:"llm,omitempty"`
-	Persona        *AgentPersonaInfo        `json:"persona,omitempty"`
-	EnabledTools   *[]string                `json:"enabledTools,omitempty"`
+	Name         *string            `json:"name,omitempty"`
+	Description  *string            `json:"description,omitempty"`
+	ImageRef     *AgentImageRefInfo `json:"imageRef,omitempty"`
+	LLM          *AgentLLMInfo      `json:"llm,omitempty"`
+	Persona      *AgentPersonaInfo  `json:"persona,omitempty"`
+	EnabledTools *[]string          `json:"enabledTools,omitempty"`
+	Skills       *AgentSkillsInfo   `json:"skills,omitempty"`
+	MCP          *AgentMCPRequest   `json:"mcp,omitempty"`
+	// Env replaces this agent's environment overrides; present-but-empty
+	// clears them, so the agent runs on the image defaults again. For an
+	// entry marked Secret, an empty Value means "keep the existing value".
+	Env            *[]AgentImageEnvVarInfo  `json:"env,omitempty"`
 	Replicas       *int32                   `json:"replicas,omitempty"`
 	Memory         *AgentMemoryInfo         `json:"memory,omitempty"`
 	OllamaCloud    *AgentOllamaCloudInfo    `json:"ollamaCloud,omitempty"`
 	OpenCode       *AgentOpenCodeInfo       `json:"openCode,omitempty"`
 	AlibabaCloud   *AgentAlibabaCloudInfo   `json:"alibabaCloud,omitempty"`
 	CustomProvider *AgentCustomProviderInfo `json:"customProvider,omitempty"`
+}
+
+// AgentUpdatedAtAnnotation is stamped by the hub on every agent write so the
+// API can expose a meaningful updatedAt for "recently updated" UIs.
+// Kubernetes objects carry no spec-change timestamp of their own, and all
+// user-driven updates flow through the hub, so the hub is the right place to
+// track it. A missing annotation falls back to the creation timestamp.
+const AgentUpdatedAtAnnotation = "ainsel.dev/updated-at"
+
+func stampAgentUpdatedAt() string {
+	return time.Now().UTC().Truncate(time.Second).Format(time.RFC3339)
+}
+
+func agentUpdatedAt(a agentv1alpha1.Agent) string {
+	if v, ok := a.Annotations[AgentUpdatedAtAnnotation]; ok {
+		return v
+	}
+	return a.CreationTimestamp.UTC().Truncate(time.Second).Format(time.RFC3339)
 }
 
 func toSimpleAgentResponse(a agentv1alpha1.Agent, imageDisplayName string) SimpleAgentResponse {
@@ -141,10 +288,42 @@ func toSimpleAgentResponse(a agentv1alpha1.Agent, imageDisplayName string) Simpl
 			Vision:      a.Spec.LLM.Vision,
 		},
 		EnabledTools: a.Spec.EnabledTools,
+		UpdatedAt:    agentUpdatedAt(a),
 	}
 
 	if a.Spec.Persona.ID != "" {
 		resp.Persona = &AgentPersonaInfo{ID: a.Spec.Persona.ID}
+	}
+
+	// Skills: nil = inherit from the image (legacy), present = explicit.
+	if a.Spec.Skills != nil {
+		resp.Skills = &AgentSkillsInfo{Items: a.Spec.Skills.Items}
+	}
+
+	// MCP: nil = inherit from the image (legacy), present = explicit.
+	if a.Spec.MCP != nil {
+		mcpInfo := &AgentMCPInfo{Servers: make([]AgentMCPServerInfo, 0, len(a.Spec.MCP.Servers))}
+		for _, srv := range a.Spec.MCP.Servers {
+			mcpInfo.Servers = append(mcpInfo.Servers, AgentMCPServerInfo{
+				Name:         srv.Name,
+				URL:          srv.URL,
+				TokenFromEnv: srv.TokenFromEnv,
+			})
+		}
+		resp.MCP = mcpInfo
+	}
+
+	// Env overrides: secret values are masked, matching the image env
+	// contract, so a response can never expose them.
+	if len(a.Spec.Env) > 0 {
+		resp.Env = make([]AgentImageEnvVarInfo, 0, len(a.Spec.Env))
+		for _, e := range a.Spec.Env {
+			info := AgentImageEnvVarInfo{Name: e.Name, Secret: e.Secret}
+			if !e.Secret {
+				info.Value = e.Value
+			}
+			resp.Env = append(resp.Env, info)
+		}
 	}
 
 	// Replicas
@@ -274,6 +453,13 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 			s.handleAgentTaskNack(w, r)
 			return
 		}
+	}
+
+	// Agent-scoped persona: inline content editing with copy-on-write
+	// ownership (see handlers_agent_persona.go).
+	if strings.HasSuffix(name, "/persona") {
+		s.handleAgentPersona(w, r, strings.TrimSuffix(name, "/persona"))
+		return
 	}
 
 	switch r.Method {
@@ -424,12 +610,29 @@ func (s *Server) createAgent(ctx context.Context, w http.ResponseWriter, r *http
 		}
 	}
 
+	if req.Skills != nil {
+		if err := s.validateEnabledSkills(ctx, w, req.Skills.Items); err != nil {
+			return
+		}
+	}
+	mcpSelection, err := s.resolveMCPRequest(ctx, w, req.MCP)
+	if err != nil {
+		return
+	}
+	agentEnv, err := agentEnvFromRequest(w, req.Env, nil)
+	if err != nil {
+		return
+	}
+
 	id := generateID("a")
 
 	agent := agentv1alpha1.Agent{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      id,
 			Namespace: s.ns,
+			Annotations: map[string]string{
+				AgentUpdatedAtAnnotation: stampAgentUpdatedAt(),
+			},
 		},
 	}
 	agent.APIVersion = "ainsel.dev/v1alpha1"
@@ -450,6 +653,17 @@ func (s *Server) createAgent(ctx context.Context, w http.ResponseWriter, r *http
 		agent.Spec.Persona = agentv1alpha1.AgentPersona{
 			ID: req.Persona.ID,
 		}
+	}
+	if req.Skills != nil {
+		items := make([]string, len(req.Skills.Items))
+		copy(items, req.Skills.Items)
+		agent.Spec.Skills = &agentv1alpha1.AgentSkills{Items: items}
+	}
+	if mcpSelection != nil {
+		agent.Spec.MCP = mcpSelection
+	}
+	if len(agentEnv) > 0 {
+		agent.Spec.Env = agentEnv
 	}
 	if req.Replicas != nil {
 		agent.Spec.Scaling = &agentv1alpha1.AgentScaling{
@@ -621,6 +835,25 @@ func (s *Server) updateAgent(ctx context.Context, w http.ResponseWriter, r *http
 		}
 	}
 
+	if req.Skills != nil {
+		if err := s.validateEnabledSkills(ctx, w, req.Skills.Items); err != nil {
+			return
+		}
+	}
+	mcpSelection, err := s.resolveMCPRequest(ctx, w, req.MCP)
+	if err != nil {
+		return
+	}
+	// Env overrides are resolved against the current spec so a secret entry
+	// submitted with an empty value keeps its stored value.
+	var agentEnv []agentv1alpha1.AgentEnvVar
+	if req.Env != nil {
+		agentEnv, err = agentEnvFromRequest(w, *req.Env, existing.Spec.Env)
+		if err != nil {
+			return
+		}
+	}
+
 	if req.Name != nil {
 		existing.Spec.DisplayName = *req.Name
 	}
@@ -632,6 +865,19 @@ func (s *Server) updateAgent(ctx context.Context, w http.ResponseWriter, r *http
 	}
 	if req.EnabledTools != nil {
 		existing.Spec.EnabledTools = *req.EnabledTools
+	}
+	if req.Skills != nil {
+		items := make([]string, len(req.Skills.Items))
+		copy(items, req.Skills.Items)
+		existing.Spec.Skills = &agentv1alpha1.AgentSkills{Items: items}
+	}
+	if mcpSelection != nil {
+		existing.Spec.MCP = mcpSelection
+	}
+	if req.Env != nil {
+		// Present-but-empty clears the overrides: the agent then runs on the
+		// referenced image's env alone.
+		existing.Spec.Env = agentEnv
 	}
 	if req.LLM != nil {
 		if req.LLM.Model != "" {
@@ -809,9 +1055,22 @@ func (s *Server) updateAgent(ctx context.Context, w http.ResponseWriter, r *http
 		}
 	}
 
+	// Stamp the hub-managed updated-at annotation so the list API can surface
+	// recently updated agents.
+	if existing.Annotations == nil {
+		existing.Annotations = map[string]string{}
+	}
+	existing.Annotations[AgentUpdatedAtAnnotation] = stampAgentUpdatedAt()
+
 	if err := s.client.Update(ctx, &existing); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+
+	// Re-pointing away from the agent's own persona orphans it — owned
+	// personas are invisible to the library, so reclaim it here.
+	if req.Persona != nil && req.Persona.ID != "" {
+		s.cleanupOwnedPersona(ctx, name, req.Persona.ID)
 	}
 
 	// Resolve image display name for the response. If we already validated the
@@ -831,6 +1090,10 @@ func (s *Server) deleteAgent(ctx context.Context, w http.ResponseWriter, name st
 		writeError(w, http.StatusNotFound, "agent not found")
 		return
 	}
+
+	// Reclaim the agent's owned persona, if any: it is invisible to the
+	// library, so nothing else would ever delete it.
+	s.cleanupOwnedPersona(ctx, name, "")
 
 	// Clean up ownership record.
 	if s.authzStore != nil {

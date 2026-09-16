@@ -63,7 +63,15 @@ export async function listInvocations(
 
 export function useInvocations(
   params: ListInvocationsParams,
-  opts: { refetchInterval?: number | false } = {},
+  opts: {
+    // Straight from @tanstack/react-query: a plain interval, or a function
+    // receiving the query (so callers can poll conditionally off
+    // query.state.data without self-referencing the hook result).
+    refetchInterval?:
+      | number
+      | false
+      | ((query: { state: { data: Paginated<InvocationEntry> | undefined } }) => number | false | undefined)
+  } = {},
 ) {
   return useQuery({
     queryKey: ['invocations', params],

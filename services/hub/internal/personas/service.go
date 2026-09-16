@@ -40,7 +40,14 @@ type CreateRequest struct {
 	GroupID     string `json:"groupId"`
 	Description string `json:"description"`
 	Text        string `json:"text"`
+	// OwnerAgent marks the persona as owned by that Agent CR (empty =
+	// shared template). Owned personas are hidden from List.
+	OwnerAgent string `json:"ownerAgent,omitempty"`
 }
+
+// ErrNotOwned is returned by DeleteOwned when the persona is not owned by
+// the given agent — a shared template, or another agent's persona.
+var ErrNotOwned = errors.New("persona is not owned by this agent")
 
 // ValidationError is returned on invalid input. handlers map it to HTTP 400.
 type ValidationError struct {
@@ -119,6 +126,7 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (*Persona, erro
 		Name:        req.Name,
 		Description: req.Description,
 		Text:        req.Text,
+		OwnerAgent:  req.OwnerAgent,
 	}
 	if err := s.store.Create(ctx, p); err != nil {
 		return nil, err
@@ -138,9 +146,88 @@ func (s *Service) Get(ctx context.Context, id string) (*Persona, error) {
 	return s.store.Get(ctx, id)
 }
 
-// List returns all personas (metadata only).
+// List returns shared template personas (metadata only). Agent-owned
+// personas are excluded — they are addressed through their owning agent.
 func (s *Service) List(ctx context.Context) ([]PersonaSummary, error) {
 	return s.store.List(ctx)
+}
+
+// OwnedBy returns the persona owned by agentName, or nil when the agent has
+// no owned persona (it still references a shared template, or none at all).
+func (s *Service) OwnedBy(ctx context.Context, agentName string) (*Persona, error) {
+	p, err := s.store.GetByOwner(ctx, agentName)
+	if errors.Is(err, ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+// EnsureOwned returns the agent's own persona: the existing one when the
+// agent already owns a persona, otherwise a new one created copy-on-write
+// from the request. defaultName is used when the request carries no name —
+// typically derived from the agent's display name.
+//
+// Callers re-point the Agent CR at the returned persona when its ID differs
+// from the current reference. If that write fails the persona is orphaned
+// but reused by the next EnsureOwned call, so the operation is idempotent.
+func (s *Service) EnsureOwned(ctx context.Context, agentName, defaultName string, req UpdateRequest) (*Persona, error) {
+	if req.Text == nil {
+		return nil, &ValidationError{Field: "text", Message: "is required"}
+	}
+	existing, err := s.store.GetByOwner(ctx, agentName)
+	switch {
+	case err == nil:
+		return s.Update(ctx, existing.ID, req)
+	case errors.Is(err, ErrNotFound):
+		// No owned persona yet: create one below.
+	default:
+		return nil, err
+	}
+	name := defaultName
+	if req.Name != nil && *req.Name != "" {
+		name = *req.Name
+	}
+	description := ""
+	if req.Description != nil {
+		description = *req.Description
+	}
+	return s.Create(ctx, CreateRequest{
+		Name:        name,
+		Description: description,
+		Text:        *req.Text,
+		OwnerAgent:  agentName,
+	})
+}
+
+// DeleteOwned removes an agent-owned persona, bypassing the referrer check
+// in Delete: the owning agent is itself the referrer, and the persona is
+// invisible to the library, so leaving it behind would leak an orphan.
+// Deleting a persona that is already gone is a no-op; refusing anything not
+// owned by agentName keeps shared templates and other agents' personas safe.
+func (s *Service) DeleteOwned(ctx context.Context, personaID, agentName string) error {
+	p, err := s.store.Get(ctx, personaID)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if p.OwnerAgent != agentName {
+		return ErrNotOwned
+	}
+	if err := s.store.Delete(ctx, personaID); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	if err := s.rec.Delete(ctx, personaID); err != nil {
+		return fmt.Errorf("delete configmap: %w", err)
+	}
+	return nil
 }
 
 // Update applies a partial update; re-renders the ConfigMap if text changed.

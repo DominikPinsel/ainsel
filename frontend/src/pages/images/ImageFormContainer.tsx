@@ -23,9 +23,21 @@ import { ImageFormView } from './ImageFormView'
 
 type ImageFormContainerProps = {
   id: string | undefined
+  /**
+   * Embedded mode: the form is rendered inside another page (e.g. the agent
+   * detail's Tools / Skills tabs) instead of standing alone. Suppresses
+   * post-save navigation and page chrome (see ImageFormView).
+   */
+  embedded?: boolean
+  /** Which form sections to render; see ImageFormViewProps.sections. */
+  sections?: 'all' | 'image' | 'tools' | 'skills'
 }
 
-export function ImageFormContainer({ id }: ImageFormContainerProps) {
+export function ImageFormContainer({
+  id,
+  embedded = false,
+  sections = 'all',
+}: ImageFormContainerProps) {
   const isEdit = id !== undefined
   const navigate = useNavigate()
   const [submitError, setSubmitError] = useState<string | null>(null)
@@ -165,7 +177,9 @@ export function ImageFormContainer({ id }: ImageFormContainerProps) {
         enabledSkills: saved.enabledSkills ?? [],
       })
       setSelectedIndex(nextTools.length > 0 ? 0 : null)
-      navigate(`/agent-images/${encodeURIComponent(saved.id)}`, { replace: true })
+      if (!embedded) {
+        navigate(`/agent-images/${encodeURIComponent(saved.id)}`, { replace: true })
+      }
     } catch (err) {
       if (err instanceof ApiError) setSubmitError(err.message)
       else setSubmitError('Save failed. Please try again.')
@@ -178,6 +192,8 @@ export function ImageFormContainer({ id }: ImageFormContainerProps) {
     <ImageFormView
       isEdit={isEdit}
       id={id}
+      embedded={embedded}
+      sections={sections}
       image={image}
       register={register}
       control={control}
