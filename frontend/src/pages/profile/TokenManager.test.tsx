@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { TokenManager } from './TokenManager'
+import { tokenStatus } from './tokenStatus'
 import { renderWithProviders } from '../../test/renderWithProviders'
 
 function makeToken(
@@ -113,5 +114,40 @@ describe('TokenManager', () => {
         expect(revokeBtn).toBeInTheDocument()
       }
     }
+  })
+
+  it('shows Expired for a token past its expiry (#152)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.includes('/user-tokens')) {
+          const tokens = [
+            { id: 'tok-live', name: 'Live', createdAt: '2026-09-01T00:00:00Z', expiresAt: '2999-01-01T00:00:00Z', lastUsedAt: null, revokedAt: null },
+            { id: 'tok-old', name: 'Old', createdAt: '2026-01-01T00:00:00Z', expiresAt: '2026-01-31T00:00:00Z', lastUsedAt: null, revokedAt: null },
+            { id: 'tok-gone', name: 'Gone', createdAt: '2026-01-01T00:00:00Z', expiresAt: '2026-01-31T00:00:00Z', lastUsedAt: null, revokedAt: '2026-02-01T00:00:00Z' },
+          ]
+          return Promise.resolve(new Response(JSON.stringify(tokens), { status: 200 }))
+        }
+        return Promise.resolve(new Response('{}', { status: 200 }))
+      }),
+    )
+    renderWithProviders(<TokenManager />, { route: '/profile' })
+    await waitFor(() => expect(screen.getByText('Live')).toBeInTheDocument())
+
+    const rows = screen.getAllByRole('row').slice(1)
+    for (const row of rows) {
+      const name = within(row).getAllByText(/./)[0].textContent
+      const status = within(row).getAllByText(/Active|Expired|Revoked/)[0].textContent
+      if (name === 'Live') expect(status).toBe('Active')
+      if (name === 'Old') expect(status).toBe('Expired')
+      if (name === 'Gone') expect(status).toBe('Revoked')
+    }
+  })
+
+  it('tokenStatus derives label from expiry and revocation', () => {
+    const now = new Date('2026-09-16T12:00:00Z')
+    expect(tokenStatus({ revokedAt: null, expiresAt: '2026-12-31T00:00:00Z' }, now).label).toBe('Active')
+    expect(tokenStatus({ revokedAt: null, expiresAt: '2026-01-31T00:00:00Z' }, now).label).toBe('Expired')
+    expect(tokenStatus({ revokedAt: '2026-02-01T00:00:00Z', expiresAt: '2026-01-31T00:00:00Z' }, now).label).toBe('Revoked')
   })
 })
