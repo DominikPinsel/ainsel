@@ -252,4 +252,52 @@ describe('EventView', () => {
     fireEvent.click(button)
     expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' })
   })
+
+  it('explains an empty transcript for a task that is still queued (#195)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.includes('/invocations') && url.includes('event=')) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                invocations: [
+                  {
+                    id: 'inv-2',
+                    agent: 'dev-bot',
+                    agentName: 'dev-bot',
+                    trigger: 't2',
+                    triggerName: 't2',
+                    status: 'running',
+                    timestamp: '2026-06-10T08:35:25Z',
+                    task: { status: 'pending', attempts: 2, error: 'Turn timed out after 600000ms' },
+                  },
+                ],
+                total: 1,
+                capacity: 1000,
+                page: 1,
+                pageSize: 50,
+                totalPages: 1,
+              }),
+              { status: 200 },
+            ),
+          )
+        }
+        if (url.includes('/observability/conversations') && url.includes('invocation=inv-2')) {
+          return Promise.resolve(new Response(JSON.stringify({ messages: [], total: 0 }), { status: 200 }))
+        }
+        if (url.includes('/events/evt-')) {
+          return Promise.resolve(new Response(JSON.stringify(sampleEvent), { status: 200 }))
+        }
+        return Promise.resolve(new Response('{}', { status: 200 }))
+      }),
+    )
+    renderEventView('/observability/events/evt-1234567890000000001')
+    await waitFor(() =>
+      expect(screen.getByText(/Waiting in queue/)).toBeInTheDocument(),
+    )
+    expect(screen.getByText(/attempt 2 failed, retrying/)).toBeInTheDocument()
+    expect(screen.getByText('queued · attempt 2')).toBeInTheDocument()
+    expect(screen.queryByText(/No conversation recorded/)).not.toBeInTheDocument()
+  })
 })
