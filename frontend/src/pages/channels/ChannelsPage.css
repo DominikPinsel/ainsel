@@ -1,0 +1,79 @@
+.channels-page {
+  display: grid;
+  gap: 24px;
+}
+
+.channel-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 16px;
+}
+
+.channel-card {
+  border: 1px solid var(--rule-soft);
+  border-radius: var(--radius);
+  background: var(--paper-2);
+  padding: 16px;
+  display: grid;
+  gap: 10px;
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.channel-card:hover {
+  border-color: var(--signal);
+  box-shadow: var(--shadow);
+}
+
+.channel-card .ch-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.channel-card .ch-name .ch-mark {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: var(--signal);
+  flex: none;
+}
+
+.channel-card .ch-mark.builtin { background: var(--ink-4); border-radius: var(--radius-pill); }
+.channel-card .ch-mark.agent { background: var(--ink-2); border-radius: var(--radius-pill); }
+
+.channel-card .ch-roles {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.channel-card .ch-stats {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  border-top: 1px solid var(--rule-ghost);
+  padding-top: 10px;
+  margin-top: 2px;
+}
+
+.channel-card .ch-figure {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1;
+}
+
+.channel-card .ch-figure-label {
+  font-size: 11px;
+  color: var(--ink-3);
+  margin-top: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.channel-card .ch-figure.err { color: var(--err); }

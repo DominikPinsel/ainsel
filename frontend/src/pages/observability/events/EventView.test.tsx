@@ -107,7 +107,8 @@ describe('EventView', () => {
 
   it('renders event metadata', async () => {
     renderEventView('/observability/events/evt-1234567890000000000')
-    await waitFor(() => expect(screen.getByText('c-111')).toBeInTheDocument())
+    // connector appears in the KPI figure and again as the journey's home channel
+    await waitFor(() => expect(screen.getAllByText('c-111').length).toBeGreaterThanOrEqual(2))
     expect(screen.getByText('MATCH')).toBeInTheDocument()
   })
 
@@ -120,7 +121,8 @@ describe('EventView', () => {
 
   it('renders matches', async () => {
     renderEventView('/observability/events/evt-1234567890000000000')
-    await waitFor(() => expect(screen.getByText('doc-writer')).toBeInTheDocument())
+    // agent appears in the matches list, the journey fan-out, and the invocation summary
+    await waitFor(() => expect(screen.getAllByText('doc-writer').length).toBeGreaterThanOrEqual(2))
     // review-bot appears in the matches list and in the invocation summary
     expect(screen.getAllByText('review-bot').length).toBeGreaterThanOrEqual(2)
   })

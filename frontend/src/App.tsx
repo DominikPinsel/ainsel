@@ -20,6 +20,8 @@ import { ChatView } from './pages/chat/ChatView'
 import { ImageDetailPage as ImageDetail } from './pages/images/ImageDetailPage'
 import { ImageList } from './pages/images/ImageList'
 import { Login } from './pages/login/Login'
+import { ChannelsPage } from './pages/channels/ChannelsPage'
+import { ChannelDetailPage } from './pages/channels/ChannelDetailPage'
 import { Observability } from './pages/observability/Observability'
 import { EventsDetail } from './pages/observability/events/EventsDetail'
 import { EventView } from './pages/observability/events/EventView'
@@ -112,6 +114,8 @@ export default function App() {
               <Route path="/error-log" element={<Navigate to="/observability/errors" replace />} />
 
               <Route path="/activity" element={<Activity />} />
+              <Route path="/channels" element={<ChannelsPage />} />
+              <Route path="/channels/:name" element={<ChannelDetailPage />} />
               <Route path="/observability" element={<Observability />} />
               <Route path="/observability/events" element={<EventsDetail />} />
               <Route path="/observability/events/:id" element={<EventView />} />

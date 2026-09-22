@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import { useConversations } from '../../../api/conversations'
 import { useEvent } from '../../../api/events'
 import { useInvocations, invocationStatusVariant, type InvocationEntry } from '../../../api/invocations'
+import { EventJourney } from '../../../components/journey/EventJourney'
 import { Titleblock } from '../../../layout/Titleblock'
 import { Panel } from '../../../primitives/Panel'
 import { ScrollToTop } from '../../../primitives/ScrollToTop'
@@ -192,6 +193,24 @@ export function EventView() {
                 ))}
               </Panel>
             ) : null}
+
+            <Panel
+              title="Channel journey"
+              className="cropped"
+              right={
+                data.connector ? (
+                  <Link to={`/channels/${encodeURIComponent(data.connector)}`} className="label">
+                    Trace channel →
+                  </Link>
+                ) : undefined
+              }
+            >
+              <EventJourney
+                connector={data.connector}
+                timestamp={data.timestamp}
+                matches={data.matches ?? []}
+              />
+            </Panel>
 
             {invocations.isLoading ? (
               <Panel className="cropped">
