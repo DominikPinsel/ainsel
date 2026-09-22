@@ -267,7 +267,7 @@ as ambiguous with the candidate ids listed rather than guessed.
 | `get_stats` | read | Dashboard summary: agent/trigger/connector counts, healthy subset, last-hour errors, aggregate tokens. |
 | `get_recent_errors` | read | Cross-agent error summary (optional `agent`, `since`, `limit`, `severity`, `source`). |
 
-### Events (NATS)
+### Events (Event Queue)
 
 | Tool | Mode | What it answers |
 |------|------|-----------------|
@@ -382,6 +382,6 @@ The server only needs `HUB_URL` to reach the hub; everything else
 - [`services/mcp/README.md`](../services/mcp/README.md) — service-level README, env vars, build
 - [`services/chat-mcp/README.md`](../services/chat-mcp/README.md) — the **chat sidecar** MCP (different scope: gives an _agent pod_ chat tools; this doc is about the **platform** MCP for operators)
 - [Hub REST API](api-reference.md) — what the hub-backed tools proxy to
-- [Event schema](event-schema.md) — payload shape returned by the NATS tools
+- [Event schema](event-schema.md) — payload shape returned by the event-queue tools
 - [Administrator guide](administrator-guide.md) — the "Talking to AInsel via MCP" section
 - [Architecture](architecture.md) — where the MCP server sits in the platform

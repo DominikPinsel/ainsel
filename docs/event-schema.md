@@ -47,18 +47,17 @@ to understand or normalize the source's payload format.
 The previous canonical schema (with `type`, `subject`, `actor`, `action`
 fields) was superseded.
 
-## NATS Subject
+## Routing
 
-Events are published to the NATS subject `events.<connector>`. The event
-type is **not** part of the subject — all events from a connector go to
-the same subject.
+Events are inserted into the hub's PostgreSQL `events` table, stamped with
+the connector that produced them. The event type is **not** a column — it is
+derived from the webhook headers at match time (see `type` under trigger
+matching below).
 
-| Subject | Example |
-|---------|---------|
-| `events.<connector>` | `events.forgejo` |
-
-The hub subscribes to `events.*` (all connector subjects) and performs
-trigger matching in-process.
+The hub's router polls unrouted events (every 2 seconds) and performs
+trigger matching in-process. For filtering in the observability API, events
+are addressed by a two-level **derived subject** `<connector>.<eventType>`
+(e.g. `forgejo.push`, with `*` / `>` wildcards).
 
 ## Trigger Matching
 

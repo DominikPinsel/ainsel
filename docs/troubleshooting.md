@@ -288,4 +288,4 @@ kubectl logs -n <namespace> deploy/ainsel-connector-operator --tail=100
 kubectl get events -n <namespace> --sort-by='.lastTimestamp'
 ```
 
-If Loki is configured in your cluster, use its query interface to aggregate logs across all pods in the namespace by filtering on `namespace=<namespace>`. This is especially useful for correlating a NATS event with the hub routing decision and the agent pod startup that followed it.
+If Loki is configured in your cluster, use its query interface to aggregate logs across all pods in the namespace by filtering on `namespace=<namespace>`. This is especially useful for correlating an ingested event with the hub routing decision and the agent pod startup that followed it.

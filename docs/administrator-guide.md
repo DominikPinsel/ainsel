@@ -67,11 +67,11 @@ invoke this agent". You configure `eventType` (exact or wildcard),
 
 **CronTrigger.** A time-based trigger: "at this cron schedule, send
 this prompt to this agent". Unlike a webhook `Trigger` it has no
-connector — the hub runs an internal scheduler and pushes a
-synthetic event to the agent's NATS subject. Use it for anything an
+connector — the hub runs an internal scheduler and enqueues a
+task for the trigger's agent directly. Use it for anything an
 agent should do on a clock rather than in reaction to a webhook
-(daily digests, nightly sweeps). CRD: `CronTrigger`
-(see [`crd-reference.md`](crd-reference.md#crontrigger)).
+(daily digests, nightly sweeps). Cron triggers are DB-backed:
+see [`crd-reference.md`](crd-reference.md#crontrigger) for the API schema.
 
 **MCP servers.** Extend an agent's tool surface via the
 [Model Context Protocol](https://modelcontextprotocol.io). AInsel
@@ -109,9 +109,9 @@ Six steps from a fresh cluster to a working agent.
 3. **Define an agent.** Create an `Agent` CRD with a `displayName`,
    `runtime.provider`, `llm.model`, `imageRef`, a `persona` (inline or
    ConfigMap), and an `enabledTools` list. The agent operator
-   reconciles a Deployment, a NATS consumer, and a KEDA ScaledObject
-   if scaling is configured. Verify `kubectl get agents -n ainsel`
-   shows `Ready=True`.
+   reconciles a Deployment (replica count from `spec.scaling`) and a
+   per-agent metrics Service.
+   Verify `kubectl get agents -n ainsel` shows `Ready=True`.
 
 4. **Define a trigger.** Create a `Trigger` CRD that maps an event
    type and filters to your agent. Verify `kubectl get triggers
@@ -541,10 +541,10 @@ acts on it — e.g. a daily standup digest, a nightly stale-issue
 reminder, or a periodic dependency-check sweep.
 
 A cron trigger is a self-contained schedule: it references an agent,
-a 5-field cron expression, and a prompt. The hub emits a synthetic
-event on the schedule and pushes it to the agent's NATS subject, so
-the existing pull-based delivery model (and invocation tracking)
-applies unchanged. There is no connector.
+a 5-field cron expression, and a prompt. The hub inserts a synthetic
+event (connector `cron`) into the `events` table and enqueues the task
+for the trigger's agent directly, so the existing pull-based delivery
+model (and invocation tracking) applies unchanged. There is no connector.
 
 **CronTrigger:**
 

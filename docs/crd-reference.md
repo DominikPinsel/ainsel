@@ -341,8 +341,8 @@ filters:
 
 Schedules a recurring prompt delivered to an agent on a cron schedule.
 Unlike a webhook-driven `Trigger`, a `CronTrigger` has no connector — the
-hub emits a synthetic event on the schedule and publishes it directly to the
-agent's NATS subject (`agent.<agentRef>`).
+hub emits a synthetic event on the schedule (connector `cron`) and enqueues
+the task directly for the trigger's agent.
 
 ### Spec
 

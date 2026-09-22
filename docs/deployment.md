@@ -8,7 +8,7 @@
 - Forgejo instance
 - kubectl with cluster access
 
-**NATS:** The chart bundles a NATS instance by default (`nats.enabled: true` in `values.yaml`). You do **not** need to deploy NATS separately unless you want to use an external NATS server. To use an external server, set `nats.enabled: false` in your `values.yaml` and point `hub.nats.url` at your existing NATS endpoint.
+**PostgreSQL:** The chart bundles a PostgreSQL instance by default (`postgres.enabled: true` in `values.yaml`) — it backs the event queue, triggers, chat sessions, and all other hub state. The hub connects using the `HUB_DB_URL` secret (`ainsel-hub-db`). You do **not** need to deploy PostgreSQL separately; to use an external server, set `postgres.enabled: false` and provide your own secret with a `dsn` key (`postgres.auth.existingSecret`).
 
 ## Step 1: Building Images
 

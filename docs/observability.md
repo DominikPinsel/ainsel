@@ -73,7 +73,7 @@ The following counters are exported by the hub. No other ainsel components expor
 
 | Metric | Type | Description |
 |--------|------|-------------|
-| `hub_events_consumed_total` | counter | Events received from the NATS EVENTS stream |
+| `hub_events_consumed_total` | counter | Events fetched by the router from the `events` table |
 | `hub_triggers_matched_total` | counter | Events that matched at least one trigger rule |
 | `hub_events_routed_total` | counter | Events successfully dispatched to an agent |
 | `hub_routing_errors_total` | counter | Events that failed to route to an agent |
