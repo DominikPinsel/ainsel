@@ -12,6 +12,7 @@ import { ConfirmModal } from '../../primitives/ConfirmModal'
 import { Input } from '../../primitives/Input'
 import { Pager } from '../../primitives/Pager'
 import { Panel } from '../../primitives/Panel'
+import { tokenStatus } from './tokenStatus'
 
 function CreateTokenModal({
   open,
@@ -235,8 +236,8 @@ export function TokenManager() {
                       {tok.lastUsedAt ? new Date(tok.lastUsedAt).toLocaleDateString() : '—'}
                     </td>
                     <td style={{ padding: '8px 16px' }}>
-                      <span className={tok.revokedAt ? 'label' : 'tag tag-green'}>
-                        {tok.revokedAt ? 'Revoked' : 'Active'}
+                      <span className={tokenStatus(tok).className}>
+                        {tokenStatus(tok).label}
                       </span>
                     </td>
                     <td style={{ padding: '8px 16px', textAlign: 'right' }}>

@@ -3,7 +3,7 @@ import type { ConversationMessage, ConversationRole } from '../../../api/convers
 import { Tag } from '../../../primitives/Tag'
 import { formatISO } from '../../../utils/time'
 
-type Props = { messages: ConversationMessage[]; total?: number }
+type Props = { messages: ConversationMessage[]; total?: number; emptyState?: ReactNode }
 
 /**
  * Renders the agent conversation captured for an invocation, in message
@@ -12,11 +12,11 @@ type Props = { messages: ConversationMessage[]; total?: number }
  * toolCall), toolResult messages hold `{toolCallId, isError, content}`.
  * Parsing is defensive — anything unexpected falls back to raw text.
  */
-export function ConversationTranscript({ messages, total }: Props) {
+export function ConversationTranscript({ messages, total, emptyState }: Props) {
   if (messages.length === 0) {
     return (
       <div className="label" style={{ padding: '4px 0' }}>
-        No conversation recorded.
+        {emptyState ?? 'No conversation recorded.'}
       </div>
     )
   }
