@@ -60,6 +60,7 @@ describe('Spine', () => {
     renderAt('/dashboard')
     const expected = [
       'Dashboard',
+      'Channels',
       'Activity',
       'Observability',
       'Agents',
