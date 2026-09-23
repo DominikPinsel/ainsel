@@ -100,7 +100,7 @@ a.journey-channel:hover {
 }
 
 .journey-channel .ch-mark.produced { background: var(--ink); }
-.journey-channel .ch-mark.builtin { background: var(--ink-4); border-radius: var(--radius-pill); }
+.journey-channel .ch-mark.direct { background: var(--ink-4); border-radius: var(--radius-pill); }
 
 .journey-meta {
   font-size: 12px;
@@ -126,42 +126,4 @@ a.journey-channel:hover {
   font-size: 13px;
   color: var(--ink-3);
   background: var(--paper);
-}
-
-/* flow diagram on the channels overview */
-.channel-flow {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  padding: 4px 0;
-}
-
-.channel-flow .flow-node {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  border: 1px solid var(--rule-soft);
-  border-radius: var(--radius-pill);
-  padding: 5px 12px;
-  font-size: 12.5px;
-  background: var(--paper-2);
-}
-
-.channel-flow .flow-node .ch-mark {
-  width: 8px;
-  height: 8px;
-  border-radius: 2px;
-  background: var(--signal);
-}
-
-.channel-flow .flow-node .ch-mark.agent {
-  border-radius: var(--radius-pill);
-  background: var(--ink-2);
-}
-
-.channel-flow .flow-arrow {
-  color: var(--ink-4);
-  font-size: 14px;
-  letter-spacing: 2px;
 }

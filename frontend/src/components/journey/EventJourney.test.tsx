@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { screen, render } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import { EventJourney, ChannelFlowDiagram } from './EventJourney'
+import { EventJourney } from './EventJourney'
 
 function renderJourney(ui: React.ReactElement) {
   return render(<MemoryRouter>{ui}</MemoryRouter>)
@@ -59,14 +59,22 @@ describe('EventJourney', () => {
     expect(screen.getByTestId('event-journey')).toBeInTheDocument()
     expect(container.querySelectorAll('.journey-step')).toHaveLength(0)
   })
-})
 
-describe('ChannelFlowDiagram', () => {
-  it('shows producers, subscription transfer and consumers', () => {
-    render(<MemoryRouter><ChannelFlowDiagram /></MemoryRouter>)
-    expect(screen.getByText('forgejo')).toBeInTheDocument()
-    expect(screen.getByText('cron')).toBeInTheDocument()
-    expect(screen.getByText(/subscriptions/)).toBeInTheDocument()
-    expect(screen.getByText('code-reviewer')).toBeInTheDocument()
+  it('renders cron/chat as direct births without a channel link', () => {
+    renderJourney(
+      <EventJourney
+        connector="cron"
+        timestamp="2026-06-10T08:31:25Z"
+        matches={[{ trigger: '', agent: 'review-bot', runStatus: 'success' }]}
+      />,
+    )
+    expect(screen.getByText(/born directly in the agent inboxes/i)).toBeInTheDocument()
+    // the synthetic source is NOT a channel — the cron chip must not link
+    const cronChip = screen.getByText('cron').closest('a')
+    expect(cronChip).toBeNull()
+    // but the destination inbox still links
+    expect(
+      screen.getByText('review-bot').closest('a'),
+    ).toHaveAttribute('href', '/channels/agent/review-bot')
   })
 })

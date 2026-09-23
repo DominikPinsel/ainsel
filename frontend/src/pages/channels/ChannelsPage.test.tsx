@@ -4,22 +4,37 @@ import { Route, Routes } from 'react-router-dom'
 import { ChannelsPage } from './ChannelsPage'
 import { renderWithProviders } from '../../test/renderWithProviders'
 
-function mockFetch(items: { agents: unknown[]; connectors: unknown[] }) {
+function mockFetch(items: {
+  agents?: unknown[]
+  connectors?: unknown[]
+  triggers?: unknown[]
+}) {
   vi.stubGlobal(
     'fetch',
     vi.fn((url: string) => {
       if (url.includes('/agents')) {
+        const a = items.agents ?? []
         return Promise.resolve(
           new Response(
-            JSON.stringify({ items: items.agents, total: items.agents.length, page: 1, pageSize: 500, totalPages: 1 }),
+            JSON.stringify({ items: a, total: a.length, page: 1, pageSize: 500, totalPages: 1 }),
             { status: 200 },
           ),
         )
       }
       if (url.includes('/connectors')) {
+        const c = items.connectors ?? []
         return Promise.resolve(
           new Response(
-            JSON.stringify({ items: items.connectors, total: items.connectors.length, page: 1, pageSize: 500, totalPages: 1 }),
+            JSON.stringify({ items: c, total: c.length, page: 1, pageSize: 500, totalPages: 1 }),
+            { status: 200 },
+          ),
+        )
+      }
+      if (url.includes('/triggers')) {
+        const t = items.triggers ?? []
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ items: t, total: t.length, page: 1, pageSize: 200, totalPages: 1 }),
             { status: 200 },
           ),
         )
@@ -44,64 +59,78 @@ function renderPage() {
 describe('ChannelsPage', () => {
   afterEach(() => vi.unstubAllGlobals())
 
-  it('renders the page heading and flow illustration', () => {
-    mockFetch({ agents: [], connectors: [] })
+  it('renders the heading and explains the model without role language', () => {
+    mockFetch({})
     renderPage()
     expect(screen.getByRole('heading', { name: /channels/i })).toBeInTheDocument()
-    expect(screen.getAllByText(/subscriptions/i).length).toBeGreaterThan(0)
+    expect(screen.getByText(/transfers/i)).toBeInTheDocument()
+    // produces/consumes are no longer channel properties
+    expect(screen.queryByText('produces')).not.toBeInTheDocument()
+    expect(screen.queryByText('consumes')).not.toBeInTheDocument()
   })
 
-  it('lists channels derived from connectors, agents and built-ins with descriptions', async () => {
+  it('shows channels in a table with descriptions', async () => {
     mockFetch({
       agents: [{ id: 'a1', name: 'review-bot' }],
       connectors: [{ id: 'c1', name: 'forgejo' }],
     })
     renderPage()
     await waitFor(() => {
-      expect(screen.getAllByText('forgejo').length).toBeGreaterThan(0)
-      expect(screen.getAllByText('review-bot').length).toBeGreaterThan(0)
-      expect(screen.getAllByText('cron').length).toBeGreaterThan(0)
-      expect(screen.getAllByText('chat').length).toBeGreaterThan(0)
+      expect(screen.getByRole('link', { name: 'forgejo' })).toBeInTheDocument()
+      expect(screen.getByRole('link', { name: 'review-bot' })).toBeInTheDocument()
     })
-    expect(screen.getByText('Ingested from the forgejo connector')).toBeInTheDocument()
-    expect(screen.getByText('Inbox of agent review-bot')).toBeInTheDocument()
-    // role badges
-    expect(screen.getAllByText('produces').length).toBeGreaterThanOrEqual(3)
-    expect(screen.getByText('consumes')).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: /channel/i })).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: /description/i })).toBeInTheDocument()
+    expect(screen.getByText('Where forgejo events arrive')).toBeInTheDocument()
+    expect(screen.getByText('The inbox agent review-bot drains')).toBeInTheDocument()
+    // no built-in cron/chat channels
+    expect(screen.queryByText('cron')).not.toBeInTheDocument()
+    expect(screen.queryByText('chat')).not.toBeInTheDocument()
   })
 
-  it('does not collapse same-named channels: connector and agent are two cards', async () => {
+  it('does not collapse same-named channels: connector and agent are two rows', async () => {
     mockFetch({
       agents: [{ id: 'a1', name: 'forgejo' }],
       connectors: [{ id: 'c1', name: 'forgejo' }],
     })
     renderPage()
     await waitFor(() => {
-      const links = screen
-        .getAllByText('forgejo')
-        .map((el) => el.closest('a'))
-        .filter((a): a is HTMLAnchorElement => a !== null)
-      const hrefs = links.map((a) => a.getAttribute('href'))
-      expect(hrefs).toContain('/channels/connector/forgejo')
-      expect(hrefs).toContain('/channels/agent/forgejo')
+      expect(screen.getAllByRole('link', { name: 'forgejo' })).toHaveLength(2)
     })
-    // both descriptions are visible so the two cards are distinguishable
-    expect(screen.getByText('Ingested from the forgejo connector')).toBeInTheDocument()
-    expect(screen.getByText('Inbox of agent forgejo')).toBeInTheDocument()
+    const links = screen.getAllByRole('link').map((a) => a.getAttribute('href'))
+    expect(links).toContain('/channels/connector/forgejo')
+    expect(links).toContain('/channels/agent/forgejo')
+    expect(screen.getByText('Where forgejo events arrive')).toBeInTheDocument()
+    expect(screen.getByText('The inbox agent forgejo drains')).toBeInTheDocument()
   })
 
-  it('links channel cards to the origin-namespaced detail route', async () => {
+  it('lists real channel-to-channel connections from subscriptions', async () => {
+    mockFetch({
+      agents: [{ id: 'a1', name: 'review-bot' }],
+      connectors: [{ id: 'c1', name: 'forgejo' }],
+      triggers: [
+        { id: 't1', name: 'on-issues', agentRef: 'a1', connectorRef: 'c1', filters: [] },
+      ],
+    })
+    renderPage()
+    await waitFor(() => {
+      expect(screen.getByText(/Connections/i)).toBeInTheDocument()
+      expect(screen.getByText('on-issues')).toBeInTheDocument()
+      expect(screen.getByText(/Born in/i)).toBeInTheDocument()
+      expect(screen.getByText(/Transferred into/i)).toBeInTheDocument()
+    })
+  })
+
+  it('explains the empty connection map', async () => {
     mockFetch({
       agents: [{ id: 'a1', name: 'review-bot' }],
       connectors: [{ id: 'c1', name: 'forgejo' }],
     })
     renderPage()
     await waitFor(() => {
-      const card = screen
-        .getAllByText('forgejo')
-        .map((el) => el.closest('a'))
-        .find((a) => a?.getAttribute('href') === '/channels/connector/forgejo')
-      expect(card).not.toBeUndefined()
+      expect(
+        screen.getByText(/No subscriptions yet/i),
+      ).toBeInTheDocument()
     })
   })
 })

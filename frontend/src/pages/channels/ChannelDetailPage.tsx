@@ -1,5 +1,6 @@
 import { Link, useParams } from 'react-router-dom'
 import {
+  buildConnections,
   channelPath,
   useChannelCounts,
   useChannels,
@@ -78,17 +79,17 @@ function EventLine({ entry }: { entry: ActivityEntry }) {
   )
 }
 
-/** Which agent inboxes subscribe to this (connector) channel. */
+/** Which agent inboxes subscribe to this channel, and what they pull. */
 function SubscribersPanel({ channel }: { channel: ChannelSummary }) {
   const { channels } = useChannels()
   const { data, isLoading, error } = useTriggers({ pageSize: 200 })
   // Hub issue #63: the triggers list ignores filter params — match
-  // client-side by connectorRef (the channel's owning connector id).
-  const subs = (data?.items ?? []).filter(
-    (t) => channel.entityId !== undefined && t.connectorRef === channel.entityId,
-  )
-  const byAgentId = new Map(
-    channels.filter((c) => c.origin === 'agent').map((c) => [c.entityId ?? c.name, c]),
+  // client-side. A connection belongs to this channel when its source
+  // resolves to the channel (or names its connector entity directly).
+  const subs = buildConnections(channels, data?.items).filter(
+    (c) =>
+      c.from?.id === channel.id ||
+      (channel.entityId !== undefined && c.fromRef === channel.entityId),
   )
 
   return (
@@ -99,16 +100,16 @@ function SubscribersPanel({ channel }: { channel: ChannelSummary }) {
         <SectionStatus state="error" />
       ) : subs.length === 0 ? (
         <div className="label" style={{ padding: '4px 0' }}>
-          No agent inbox subscribes to this channel yet — events born here stay
-          unmatched until one does.
+          No agent inbox subscribes to this channel yet — events born here
+          stay until one does.
         </div>
       ) : (
         <div>
-          {subs.map((t) => {
-            const target = t.agentRef ? byAgentId.get(t.agentRef) : undefined
+          {subs.map((sub) => {
+            const target = sub.to
             return (
               <div
-                key={t.id}
+                key={`${sub.subscription}#${sub.toRef ?? ''}`}
                 style={{
                   display: 'grid',
                   gridTemplateColumns: '2fr auto 1fr',
@@ -120,15 +121,16 @@ function SubscribersPanel({ channel }: { channel: ChannelSummary }) {
                 }}
               >
                 <span>
-                  <b>{t.name}</b>
-                  <span style={{ color: 'var(--ink-4)' }}> · {String(t.filters?.length ?? 0)} filters</span>
+                  <b>{sub.subscription}</b>
                 </span>
                 <span style={{ color: 'var(--ink-4)' }}>→</span>
                 <span style={{ textAlign: 'right' }}>
                   {target ? (
                     <Link to={channelPath(target.id)}>{target.displayName}</Link>
                   ) : (
-                    <span style={{ color: 'var(--ink-4)' }}>unknown inbox</span>
+                    <span style={{ color: 'var(--ink-4)' }}>
+                      {sub.toRef ? `agent ${sub.toRef}` : 'unknown inbox'}
+                    </span>
                   )}
                 </span>
               </div>
@@ -150,8 +152,7 @@ export function ChannelDetailPage() {
     name,
     displayName: name,
     description: '',
-    origin: origin === 'agent' ? 'agent' : 'builtin' === origin ? 'builtin' : 'connector',
-    roles: origin === 'agent' ? ['consumes'] : ['produces'],
+    origin: origin === 'agent' ? 'agent' : 'connector',
   }
   const counts = useChannelCounts(resolved)
 
@@ -228,17 +229,6 @@ export function ChannelDetailPage() {
             </div>
           </div>
         </div>
-
-        {resolved.origin === 'builtin' ? (
-          <Panel title="Note" className="cropped">
-            <div className="label" style={{ color: 'var(--ink-3)' }}>
-              Built-in source. Under the target design, schedules and chat
-              messages are <b>born directly on the consuming agent&apos;s channel</b> —
-              the same event flow will surface here per agent inbox. This view lists
-              the historical synthetic-source events.
-            </div>
-          </Panel>
-        ) : null}
 
         {isAgentInbox ? (
           <>

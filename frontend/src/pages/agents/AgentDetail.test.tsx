@@ -630,7 +630,7 @@ describe('AgentDetail', () => {
     expect(screen.getByRole('tab', { name: /channel/i })).toBeInTheDocument()
     await userEvent.click(screen.getByRole('tab', { name: /channel/i }))
     expect(await screen.findByText('agent inbox')).toBeInTheDocument()
-    expect(screen.getByText('Inbox of agent doc-writer')).toBeInTheDocument()
+    expect(screen.getByText('The inbox agent doc-writer drains')).toBeInTheDocument()
     expect(
       screen.getByRole('link', { name: /open channel/i }),
     ).toHaveAttribute('href', '/channels/agent/doc-writer')

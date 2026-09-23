@@ -134,7 +134,7 @@ describe('ChannelDetailPage', () => {
     renderAt('/channels/connector/forgejo')
     expect(screen.getByRole('heading', { name: /channel\s+forgejo/i })).toBeInTheDocument()
     await waitFor(() => {
-      expect(screen.getByText('Ingested from the forgejo connector')).toBeInTheDocument()
+      expect(screen.getByText('Where forgejo events arrive')).toBeInTheDocument()
       expect(screen.getByText('evt-1')).toBeInTheDocument()
     })
     // the review-bot inbox subscribes to this connector's channel
@@ -153,7 +153,7 @@ describe('ChannelDetailPage', () => {
     renderAt('/channels/agent/review-bot')
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: /channel\s+review-bot/i })).toBeInTheDocument()
-      expect(screen.getByText('Inbox of agent review-bot')).toBeInTheDocument()
+      expect(screen.getByText('The inbox agent review-bot drains')).toBeInTheDocument()
     })
     // the inbox owns its subscription + schedule configuration
     await waitFor(() => {
@@ -168,11 +168,13 @@ describe('ChannelDetailPage', () => {
     })
   })
 
-  it('marks built-in channels and links their timelines', async () => {
+  it('has no built-in channels — legacy cron/chat routes render as unknown', async () => {
     renderAt('/channels/builtin/cron')
-    expect(screen.getByRole('heading', { name: /channel\s+cron/i })).toBeInTheDocument()
+    // Schedules and chat are direct births on agent inboxes, not channels.
+    // The fallback view still shows the historical events for the label.
     await waitFor(() => {
-      expect(screen.getByText(/born directly on the consuming agent/i)).toBeInTheDocument()
+      expect(screen.getByText(/Unknown channel/i)).toBeInTheDocument()
+      expect(screen.getByText('id builtin:cron')).toBeInTheDocument()
     })
   })
 })
