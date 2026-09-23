@@ -76,13 +76,20 @@ See [Image Variants](#image-variants) below for build commands.
 
 The CI builds variants as **separate image repositories** so agents can
 pick exactly the toolchain they need without pulling unrelated SDKs.
-Each variant extends the base `ainsel-pi` image.
+Each variant extends the base `ainsel-pi` image, built in the same run.
 
 | Image | Dockerfile | What's added |
 | --- | ---------- | ------------ |
-| `ainsel/ainsel-pi:main` / `:<sha>` | `Dockerfile` | Base image (Node.js + pi + system tools) |
-| `ainsel/ainsel-pi-go:1.24` / `:1.24-<sha>` | `Dockerfile.go` | Go 1.24 + golangci-lint |
-| `ainsel/ainsel-pi-maui:8.0` / `:8.0-<sha>` | `Dockerfile.maui` | .NET 8 SDK + Android SDK + MAUI Android workload |
+| `dpinsel/ainsel-pi:dev` / `:<sha>` | `Dockerfile` | Base image (Node.js + pi + system tools) |
+| `dpinsel/ainsel-pi-go:1.24` | `Dockerfile.go` | Go 1.24 + golangci-lint |
+| `dpinsel/ainsel-pi-maui:8.0` | `Dockerfile.maui` | .NET 8 SDK + Android SDK + MAUI Android workload |
+
+Variants publish **only** their floating tag. They used to publish a
+`1.24-<sha>` / `8.0-<sha>` tag per build too, but nothing ever pulled a variant by
+that tag, each one is ~3 GB, and together they were 88 GB of the registry - see
+[`CONTRIBUTING.md`](../CONTRIBUTING.md). Pin a variant to a base by digest
+instead of by build tag. A variant always builds on the base produced by its own
+run (`BASE_TAG=<sha>`), never on whatever `:dev` happens to point at.
 
 ### Adding a new variant
 
@@ -91,7 +98,8 @@ Each variant extends the base `ainsel-pi` image.
 3. Keep `USER agent` at the end so the runtime stays non-root.
 4. Add a corresponding build-push step in the pi CI workflows,
    pushing to a new repository
-   (`ainsel/ainsel-pi-<variant>:<version>`).
+   (`dpinsel/ainsel-pi-<variant>:<version>`). Publish the floating tag only,
+   on develop - see the variant note above.
 5. Update the table above.
 
 ### Building locally
