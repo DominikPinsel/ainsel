@@ -84,7 +84,6 @@ function stubChannels(payload: unknown = channelPage) {
 
 afterEach(() => {
   vi.unstubAllGlobals()
-  localStorage.clear()
 })
 
 describe('useChannels', () => {

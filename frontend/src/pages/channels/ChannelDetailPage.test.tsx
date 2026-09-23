@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { Route, Routes } from 'react-router-dom'
 import { ChannelDetailPage } from './ChannelDetailPage'
@@ -165,10 +165,6 @@ function renderAt(id: string) {
     { route: `/channels/${encodeURIComponent(id)}` },
   )
 }
-
-beforeEach(() => {
-  localStorage.clear()
-})
 
 afterEach(() => {
   vi.unstubAllGlobals()

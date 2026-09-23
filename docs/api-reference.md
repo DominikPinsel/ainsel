@@ -465,6 +465,80 @@ Update a CronTrigger. All body fields are optional; omitted fields are unchanged
 
 ---
 
+## Channels
+
+A channel is a named stream events live in. Channels live in the hub's Postgres (`channel_id` on every stored event), not in CRDs: one **connector** channel per `WebhookConnector` (where its events are born), one **agent** channel per `Agent` (its inbox), plus **custom** grouping channels. Identity is the channel id, never the name — a connector and an agent can both be labelled `forgejo`.
+
+Subscriptions are read from two registries and reported together: `trigger` edges (connector → agent inbox, still owned by the trigger registry) and `bridge` edges (channel → channel, owned by the channel graph; at least one end must be custom and the graph must stay acyclic).
+
+### GET /api/v1/channels
+
+List channels with their traffic counts, sorted by activity then id. Supports `page`/`pageSize`. Query parameters: `kind` (`connector`|`agent`|`custom`), `since` (RFC 3339 start of the count window, default 24h ago).
+
+**Response:** `{ items, total, page, pageSize, totalPages, window }`, each item:
+
+```json
+{
+  "id": "ch-9f3c1a02",
+  "kind": "connector",
+  "name": "forgejo",
+  "description": "Events published by connector \"forgejo\"",
+  "entityRef": "forgejo",
+  "orphaned": false,
+  "createdAt": "2026-07-08T09:00:00Z",
+  "updatedAt": "2026-07-08T09:00:00Z",
+  "counts": { "events": 12, "unmatched": 3, "failed": 1 },
+  "bridges": 1,
+  "subscriptions": 2
+}
+```
+
+`counts.events` counts births in the window (for an inbox, everything that reached it, born there or transferred in); `unmatched` those that no subscription transferred onward; `failed` those whose run ended in failure.
+
+### POST /api/v1/channels
+
+Create a custom grouping channel. Body: `{ "name", "description?", "groupId?" }` — `groupId` is required when access control is enabled. Provisioned kinds are not creatable here.
+
+**Response:** `201 Created` with the channel.
+
+### GET /api/v1/channels/{id}
+
+One channel plus its `incoming` / `outgoing` subscription arrays.
+
+### PUT /api/v1/channels/{id}
+
+Rename a custom channel or change its description. Body: `{ "name?", "description?" }`. Provisioned channels carry their entity's name.
+
+### DELETE /api/v1/channels/{id}
+
+Delete a custom channel.
+
+**Response:** `204 No Content`; `409 Conflict` while any subscription is attached.
+
+### GET /api/v1/channels/{id}/events
+
+The channel's timeline — events born in it plus events transferred into it. Query parameters: `limit` (default 50, max 200), `offset`, `since`, `agent`, `subject`, `status`. Same envelope as [`GET /api/v1/events`](#get-apiv1events).
+
+### POST /api/v1/channels/{id}/bridges
+
+Transfer the channel's events into another. Body: `{ "to", "name?" }`.
+
+**Response:** `201 Created` with the bridge; `400` on a self-edge, when neither end is custom, on a cycle, or when joining two provisioned channels (that pairing is a trigger); `409` when the edge already exists.
+
+### DELETE /api/v1/channels/{id}/bridges/{bridgeId}
+
+Remove a bridge. `{id}` must be the bridge's source channel.
+
+**Response:** `204 No Content`; `404` when the bridge is not attached to that channel.
+
+### GET /api/v1/channel-subscriptions
+
+Every edge in the graph in one call, both registries merged. **Response:** `{ items, total }`. An edge is reported only when the caller may see both endpoints.
+
+**Authorization:** a connector channel is authorized as its **connector**, an agent channel as its **agent**, a custom channel as a **channel** resource — existing grants cover provisioned streams without a new permission step.
+
+---
+
 ## Invocations
 
 Invocations record one dispatch of an event to an agent. They are persisted in the `invocations` Postgres table (48h retention) so they survive hub restarts; the endpoint returns `503 Service Unavailable` when invocation history is not configured.
