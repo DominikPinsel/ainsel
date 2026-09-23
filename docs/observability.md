@@ -82,7 +82,14 @@ The following counters are exported by the hub. No other ainsel components expor
 
 ### Enabling Prometheus scraping
 
-Set `observability.prometheus.url` in `values.yaml` to the URL of your Prometheus instance. The hub uses this URL to proxy metric queries through the `/api/v1/observability/metrics/*` endpoints.
+The hub UI labels metric-backed panels **telemetry**: when the hub has no Prometheus
+client, every `/api/v1/observability/metrics/*` call returns `503` and the panels
+replace their content with **"Telemetry not configured"**. That message means exactly
+one thing — `observability.prometheus.url` is unset — and
+[Troubleshooting → "Dashboard says Telemetry not configured"](troubleshooting)
+walks through confirming and fixing it.
+
+Set `observability.prometheus.url` in `values.yaml` to the URL of your Prometheus instance. The hub uses this URL to proxy metric queries through the `/api/v1/observability/metrics/*` endpoints. Configure it and restart the hub; the client is built once at startup.
 
 To have Prometheus scrape the hub's own `/metrics` endpoint, enable the ServiceMonitor or PodMonitor resources in `values.yaml`:
 
@@ -106,15 +113,19 @@ Both Loki and Prometheus are **optional**. The platform continues to function fu
 | Backend | Effect when absent |
 |---------|--------------------|
 | **Loki** | `GET /api/v1/observability/logs` returns an error. All other platform functionality works normally. |
-| **Prometheus** | `GET /api/v1/observability/metrics/*` returns an error. All other platform functionality works normally. |
+| **Prometheus** | `GET /api/v1/observability/metrics/*` returns `503`, and the dashboard and Observability panels show **"Telemetry not configured"** in place of their charts. All other platform functionality works normally. |
 
-The platform health endpoint reports the status of all configured backends:
+The platform health endpoint reports the status of every pod in the hub's namespace:
 
 ```
 GET /api/v1/platform/health
 ```
 
-Check this endpoint to confirm whether Loki and Prometheus are reachable before troubleshooting missing log or metric data.
+It returns an array of pod summaries (`name`, `phase`, `ready`, `restarts`, per-container
+state) — useful for spotting a crash-looping component, but it does **not** probe
+Prometheus or the log backend, so it cannot tell you whether telemetry is configured.
+For that, check the env var and the hub's startup log as described in
+[Troubleshooting](troubleshooting).
 
 ## Operator metrics
 

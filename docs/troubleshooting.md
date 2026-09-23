@@ -160,6 +160,98 @@ Remember that MCP servers are reached from **two** clients: hub-backend (tool di
 
 ---
 
+## Dashboard says "Telemetry not configured"
+
+The hub answers `503 Service Unavailable` on an observability endpoint whose backend is
+not wired up, and the UI replaces that panel's body with **Telemetry not configured**.
+Nothing is broken: the hub's own records — agents, events, invocations, activity, chat —
+still render. Only the metric-backed panels go empty.
+
+You will see it on the dashboard **Throughput · 24h** panel, and on any
+**Observability** panel that reads `/api/v1/observability/metrics/*` (summary,
+timeseries, token counters, per-agent tables).
+
+**Cause.** `observability.prometheus.url` is empty in `values.yaml`, which is the chart
+default. When it is empty the chart never sets `HUB_PROMETHEUS_URL` on the hub, the hub
+starts without a Prometheus client, and every metrics query answers 503 with
+`metrics backend not configured`.
+
+Check it from outside the pod — the hub image is distroless and has no shell, so
+`kubectl exec … printenv` cannot work:
+
+```bash
+# Is the variable on the hub deployment at all? No output = not configured.
+kubectl -n <namespace> get deploy hub-backend -o json \
+  | jq -r '.spec.template.spec.containers[].env[]?
+      | select(.name=="HUB_PROMETHEUS_URL") | .value'
+
+# What did the hub record about it at startup?
+kubectl -n <namespace> logs deploy/hub-backend | grep -i prometheus
+```
+
+Logs are JSON, so the unconfigured state reads:
+
+```json
+{"time":"2026-09-23T10:04:12Z","level":"WARN","msg":"HUB_PROMETHEUS_URL not set, token queries will fail"}
+```
+
+A configured hub logs `{"time":"…","level":"INFO","msg":"prometheus client configured","url":"http://prometheus…"}`
+instead.
+
+**Fix.** Point the hub at a Prometheus it can reach:
+
+```yaml
+observability:
+  prometheus:
+    url: "http://prometheus.monitoring.svc.cluster.local:9090"
+```
+
+```bash
+helm upgrade ainsel ./chart -n <namespace> -f values.yaml
+kubectl rollout status -n <namespace> deploy/hub-backend
+```
+
+The hub reads `HUB_PROMETHEUS_URL` once, while wiring itself up, so a pod that started
+before the change keeps logging the warning. Changing this value rewrites the pod
+template, so `helm upgrade` rolls the pods for you — `rollout status` is there to prove
+it finished. If the panels are still empty after that, force fresh pods and re-read the
+log:
+
+```bash
+kubectl rollout restart -n <namespace> deploy/hub-backend
+kubectl -n <namespace> logs deploy/hub-backend | grep -i prometheus
+```
+
+The last command is the ground truth: `prometheus client configured` means the hub has
+a client, `HUB_PROMETHEUS_URL not set` means the pod you are reading did not get the
+value.
+
+**Variable present, message still there?** Two things to separate:
+
+- The pods you are looking at predate the value. A Deployment can carry it while an old
+  ReplicaSet's pods do not, and a mixed fleet is exactly what makes this message
+  intermittent across reloads. Ask each running pod what it actually has:
+
+  ```bash
+  kubectl -n <namespace> get pods -l app.kubernetes.io/component=hub-backend -o json \
+    | jq -r '.items[] | .metadata.name + "  " + ( [.spec.containers[].env[]?
+        | select(.name=="HUB_PROMETHEUS_URL") | .value]
+        | if length == 0 then "(unset)" else join(",") end )'
+  ```
+
+  Any line ending in `(unset)` is a pod started before the change — restart the
+  deployment to replace it.
+- The panel is a **logs** panel, not a metrics one. Those report
+  `log backend not configured`, which means the hub has no database — start from
+  [Hub pod not starting](#hub-pod-not-starting) instead. A wrong or unreachable URL
+  does *not* produce this message; it produces an empty panel or a load error, because
+  the hub only 503s when it has no client at all.
+
+To scrape the hub's own metrics once Prometheus is configured, enable the
+ServiceMonitor or PodMonitor — see [Observability](observability).
+
+---
+
 ## Checking platform health
 
 The hub exposes a health endpoint that checks all internal subsystems (database, operator connectivity):
