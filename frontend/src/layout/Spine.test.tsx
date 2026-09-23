@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, vi } from 'vitest'
 import { Spine } from './Spine'
+import { recordAgentView } from '../agentRecents'
 
 function emptyAgentsResponse() {
   return new Response(
@@ -11,20 +12,35 @@ function emptyAgentsResponse() {
   )
 }
 
-function renderAt(path: string) {
+function renderAt(path: string, scope = 'anon') {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0, staleTime: 0 } },
   })
   return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[path]}>
-        <Spine operator="kim" />
+        <Spine operator="kim" recentsScope={scope} />
       </MemoryRouter>
     </QueryClientProvider>,
   )
 }
 
+function agentsResponse(items: unknown[]) {
+  return new Response(
+    JSON.stringify({
+      items,
+      total: items.length,
+      page: 1,
+      pageSize: 200,
+      totalPages: 1,
+    }),
+    { status: 200 },
+  )
+}
+
 beforeEach(() => {
+  // Recents live in localStorage, which survives between tests in a file.
+  localStorage.clear()
   vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(emptyAgentsResponse())))
 })
 afterEach(() => {
@@ -103,27 +119,19 @@ describe('Spine', () => {
     )
   })
 
-  it('shows the three most recently updated agents under Agents', async () => {
+  it('pads to five with the most recently updated agents when nothing was clicked', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(() =>
         Promise.resolve(
-          new Response(
-            JSON.stringify({
-              items: [
-                { id: 'a-old', name: 'ancient-agent', updatedAt: '2026-01-01T00:00:00Z' },
-                { id: 'a-1', name: 'nightly-sweeper', updatedAt: '2026-09-01T00:00:00Z' },
-                { id: 'a-2', name: 'pr-reviewer', updatedAt: '2026-09-08T00:00:00Z' },
-                { id: 'a-3', name: 'issue-triager', updatedAt: '2026-09-09T00:00:00Z' },
-                { id: 'a-4', name: 'doc-writer', updatedAt: '2026-09-07T00:00:00Z' },
-              ],
-              total: 5,
-              page: 1,
-              pageSize: 200,
-              totalPages: 1,
-            }),
-            { status: 200 },
-          ),
+          agentsResponse([
+            { id: 'a-old', name: 'ancient-agent', updatedAt: '2026-01-01T00:00:00Z' },
+            { id: 'a-1', name: 'nightly-sweeper', updatedAt: '2026-09-01T00:00:00Z' },
+            { id: 'a-2', name: 'pr-reviewer', updatedAt: '2026-09-08T00:00:00Z' },
+            { id: 'a-3', name: 'issue-triager', updatedAt: '2026-09-09T00:00:00Z' },
+            { id: 'a-4', name: 'doc-writer', updatedAt: '2026-09-07T00:00:00Z' },
+            { id: 'a-5', name: 'least-relevant', updatedAt: '2025-01-01T00:00:00Z' },
+          ]),
         ),
       ),
     )
@@ -132,14 +140,72 @@ describe('Spine', () => {
     const newest = await screen.findByRole('link', { name: /issue-triager/i })
     expect(newest).toHaveAttribute('href', '/agents/a-3')
     expect(screen.getByRole('link', { name: /pr-reviewer/i })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /doc-writer/i })).toBeInTheDocument()
-    // Only the three most recent make the cut.
+    // Five now, not three: the two oldest of the six get cut.
+    expect(screen.getByRole('link', { name: /nightly-sweeper/i })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /ancient-agent/i })).toBeInTheDocument()
     expect(
-      screen.queryByRole('link', { name: /nightly-sweeper/i }),
+      screen.queryByRole('link', { name: /least-relevant/i }),
     ).not.toBeInTheDocument()
+    // None of these were clicked, so all of them are filler.
+    expect(document.querySelectorAll('.nav-sublink.padded')).toHaveLength(5)
+  })
+
+  it('lists agents this user clicked before the recently updated ones', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          agentsResponse([
+            { id: 'a-1', name: 'nightly-sweeper', updatedAt: '2026-09-01T00:00:00Z' },
+            { id: 'a-2', name: 'pr-reviewer', updatedAt: '2026-09-08T00:00:00Z' },
+            { id: 'a-3', name: 'issue-triager', updatedAt: '2026-09-09T00:00:00Z' },
+          ]),
+        ),
+      ),
+    )
+    // Click order: pr-reviewer, then nightly-sweeper. nightly-sweeper is the
+    // *oldest* by updatedAt, so it only comes out on top if the click history
+    // is what ordered this list — plain updatedAt would put issue-triager
+    // first and would not be distinguishable from a coincidence.
+    recordAgentView('kim', 'a-2')
+    recordAgentView('kim', 'a-1')
+
+    renderAt('/agents', 'kim')
+    await screen.findByRole('link', { name: /nightly-sweeper/i })
+    const links = Array.from(
+      document.querySelectorAll('.nav-recent .nav-sublink .name'),
+    ).map((el) => el.textContent)
+    // issue-triager is unclicked but newest, so it pads the last slot.
+    expect(links).toEqual(['nightly-sweeper', 'pr-reviewer', 'issue-triager'])
+    // Clicked ones are theirs (not padded); the single pad slot is.
     expect(
-      screen.queryByRole('link', { name: /ancient-agent/i }),
+      Array.from(document.querySelectorAll('.nav-recent .nav-sublink')).map((el) =>
+        el.classList.contains('padded'),
+      ),
+    ).toEqual([false, false, true])
+  })
+
+  it('drops a remembered agent the hub no longer returns', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          agentsResponse([
+            { id: 'a-1', name: 'nightly-sweeper', updatedAt: '2026-09-01T00:00:00Z' },
+          ]),
+        ),
+      ),
+    )
+    // Deleted, or access revoked since: the id is still in storage, but the
+    // list API is RBAC-filtered and must decide what renders.
+    recordAgentView('kim', 'gone-agent')
+
+    renderAt('/agents', 'kim')
+    await screen.findByRole('link', { name: /nightly-sweeper/i })
+    expect(
+      screen.queryByRole('link', { name: /gone-agent/i }),
     ).not.toBeInTheDocument()
+    expect(document.querySelectorAll('.nav-recent .nav-sublink')).toHaveLength(1)
   })
 
   it('renders no recent agents when the user has none', async () => {

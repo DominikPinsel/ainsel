@@ -22,6 +22,8 @@ A connector turns webhook deliveries (from Forgejo today) into a canonical event
 
 The sidebar mirrors this: **Fleet** holds the agents you operate, **Library** holds the shared building blocks they draw from, and **Admin** holds users, groups and connectors. Anything an agent owns outright is edited on that agent's detail tabs, not in the library.
 
+Under **Agents**, the sidebar also lists up to five shortcuts: the agents you last opened, filled out with the most recently updated ones if you have opened fewer. That list is per account and per browser — it is not synced when you switch machines, and it only ever shows agents the hub lets you read.
+
 ## How to get started
 
 1. **Deploy** — Install the Helm chart into a Kubernetes namespace. See the [Deployment Guide](deployment).
