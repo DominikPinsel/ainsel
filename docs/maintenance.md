@@ -23,7 +23,7 @@ reported as `UNKNOWN`, and the goal is to keep that list empty.
 | variant build | `<major.minor>-<short-sha>`, e.g. `1.24-0ae751b` | `dev-image-pi.yml` | yes |
 | mutable | `:dev` | `dev-image-*.yml`, `develop` only | **never** |
 | float | `:1.24`, `:8.0` | `dev-image-pi.yml` | **never** |
-| cache | `buildcache`, `buildcache-v2` | buildx registry cache | **never** |
+| cache | `buildcache`, `buildcache-v2` | no workflow — dead since `b66f4adc` (2026-07-20) | yes, see below |
 | release | `:X.Y.Z`, `:vX.Y.Z`, `<float>-X.Y.Z` | `release.yml` | only by an explicit purge |
 | `:latest` | `:latest` | `release.yml` | **never** |
 
@@ -48,7 +48,17 @@ Enforced by `scripts/hub-retention.py`, scheduled by
 The two floors are per class on purpose. Ranking is also per class, so a repo's
 protected tags cannot push a build's own tag out of its window.
 
-At the time of writing, the default policy collects **219 of 456 tags, 83.94 GB**
+**Cache tags are judged by evidence, not age.** A `buildcache*` tag is only
+worth keeping while something writes it, so the tool reads `.github/workflows/`
+for a `cache-to: type=registry:` line and protects the tags only if it finds one.
+No workflow configures a registry cache today — every build is cold, and the four
+`buildcache` / `buildcache-v2` tags left on the frontend and agent-operator repos
+are leftovers of the pre-migration pipeline (~2.4 GB). A checkout whose workflows
+cannot be read is treated as live (fail-protective), and `--keep-cache-tags`
+forces protection. If caching is ever added back, the tags protect themselves
+again with no change here.
+
+At the time of writing, the default policy collects **223 of 456 tags, 86.38 GB**
 (logical, an upper bound — layers shared with kept tags are not actually freed
 until the registry garbage-collects them).
 
@@ -60,6 +70,7 @@ report needs no credentials:
 ```bash
 python3 scripts/hub-retention.py                       # whole namespace, dry run
 python3 scripts/hub-retention.py --repo ainsel-pi-maui # one repo
+python3 scripts/hub-retention.py --keep-cache-tags     # protect buildcache* anyway
 python3 scripts/hub-retention.py --json | jq 'to_entries[].value | map(select(.disposition == "delete")) | length'
 ```
 

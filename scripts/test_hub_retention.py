@@ -59,7 +59,7 @@ class TestClassify(unittest.TestCase):
         self.assertEqual(hr.classify("8.0-0ae751b"), "variant-sha")
 
     def test_live_tags_are_protected(self):
-        for name in ("latest", "dev", "main", "buildcache", "buildcache-v2"):
+        for name in ("latest", "dev", "main"):
             self.assertEqual(hr.classify(name), "protected", name)
         # pi variant floating tags are what agents actually pull.
         for name in ("1.24", "8.0"):
@@ -242,6 +242,69 @@ class TestReleasePurge(unittest.TestCase):
             self.assertEqual(hr.release_core(name), want, name)
 
 
+class TestCacheTags(unittest.TestCase):
+    """`buildcache*` is protected only while a workflow configures a registry cache."""
+
+    def setUp(self):
+        import tempfile
+
+        self.tmp = Path(tempfile.mkdtemp())
+
+    def write_workflow(self, text):
+        (self.tmp / "dev-image-frontend.yml").write_text(text, encoding="utf-8")
+
+    def test_cache_tag_names(self):
+        self.assertEqual(hr.classify("buildcache"), "cache")
+        self.assertEqual(hr.classify("buildcache-v2"), "cache")
+        self.assertEqual(hr.classify("buildcachex"), "unknown")
+        self.assertEqual(hr.classify("cache-build"), "unknown")
+
+    def test_live_cache_is_protected_dead_cache_is_not(self):
+        live = dispositions([tag("buildcache", 62)], registry_cache_live=True)["buildcache"]
+        self.assertEqual(live, hr.Disposition.KEEP_PROTECTED)
+        dead = dispositions([tag("buildcache", 62)], registry_cache_live=False)["buildcache"]
+        self.assertEqual(dead, hr.Disposition.DELETE)
+
+    def test_age_is_irrelevant_to_the_cache_rule(self):
+        # A cache tag is dead because nothing writes it, not because it is old.
+        for age in (1, 400):
+            got = dispositions([tag("buildcache-v2", age)], registry_cache_live=False)[
+                "buildcache-v2"
+            ]
+            self.assertEqual(got, hr.Disposition.DELETE, f"age={age}")
+
+    def test_detector_reads_the_workflows_it_is_pointed_at(self):
+        self.write_workflow(
+            "      - name: Build\n        uses: docker/build-push-action@v7\n"
+            "        with:\n          cache-to: type=registry,ref=dpinsel/x:buildcache,mode=max\n"
+        )
+        self.assertTrue(hr.registry_cache_live(self.tmp))
+        self.write_workflow(
+            "      - name: Build\n        uses: docker/build-push-action@v7\n"
+            "        with:\n          push: true\n"
+        )
+        self.assertFalse(hr.registry_cache_live(self.tmp))
+
+    def test_gha_cache_does_not_protect_registry_tags(self):
+        # type=gha is a different cache backend; it must not keep buildcache alive.
+        self.write_workflow("          cache-to: type=gha,scope=frontend\n")
+        self.assertFalse(hr.registry_cache_live(self.tmp))
+
+    def test_unreadable_checkout_fails_protective_not_deleted(self):
+        # An empty or missing workflow dir must never be the reason a live cache
+        # gets collected.
+        self.assertTrue(hr.registry_cache_live(self.tmp))
+        self.assertTrue(hr.registry_cache_live(self.tmp / "does-not-exist"))
+
+    def test_cache_tags_do_not_consume_keep_newest_slots(self):
+        # A dead cache tag must not push a live build tag out of its window.
+        builds = [tag(f"{i:07d}", 900) for i in range(2)]
+        got = names(plan(builds + [tag("buildcache", 900)], keep_newest=2, registry_cache_live=False))
+        self.assertEqual(got, ["buildcache"])
+        fresh = names(plan(builds + [tag("buildcache", 1)], keep_newest=2))
+        self.assertEqual(fresh, [])
+
+
 class TestPolicyGuard(unittest.TestCase):
     """The apply-path guard against a fat-fingered threshold."""
 
@@ -282,18 +345,18 @@ class TestSummarise(unittest.TestCase):
 
     def test_markdown_reports_dry_run_and_counts(self):
         decisions = {"ainsel-test": plan([tag("abcdef1", 900), tag("1234567", 1)], keep_newest=0)}
-        md = hr.write_markdown(decisions, applied=False)
+        md = hr.write_markdown(decisions, applied=False, policy=policy())
         self.assertIn("dry-run (nothing deleted)", md)
         self.assertIn("**1 tags collected.**", md)
         self.assertIn("`ainsel-test`", md)
 
     def test_markdown_flags_unmatched_tags(self):
-        md = hr.write_markdown({"ainsel-test": plan([tag("weird-name", 900)])}, applied=False)
+        md = hr.write_markdown({"ainsel-test": plan([tag("weird-name", 900)])}, applied=False, policy=policy())
         self.assertIn("Tags no rule matched", md)
         self.assertIn("`ainsel-test:weird-name`", md)
 
     def test_markdown_says_applied_when_it_did(self):
-        md = hr.write_markdown({"ainsel-test": plan([tag("abcdef1", 900)])}, applied=True)
+        md = hr.write_markdown({"ainsel-test": plan([tag("abcdef1", 900)])}, applied=True, policy=policy())
         self.assertIn("apply (tags were deleted)", md)
 
 

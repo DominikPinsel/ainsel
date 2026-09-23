@@ -16,10 +16,12 @@ Safety stance, in order of importance:
   * A tag is only ever deleted if it matches a known *disposable* pattern.
     Anything unrecognised is reported as `unknown` and left alone, so a new
     naming scheme surfaces in the report instead of being silently collected.
-  * `latest`, `dev`, `main`, `buildcache*` and every release tag
-    (`X.Y.Z` / `vX.Y.Z`) are protected. Release tags are only reconsidered by
-    an explicit `--include-release-tags`, which additionally demands `--yes`
-    and a published release newer than the tag in question.
+  * `latest`, `dev`, `main`, every release tag (`X.Y.Z` / `vX.Y.Z`) and a live
+    build cache are protected. `buildcache*` is judged by whether any workflow
+    still configures a registry cache - an age guess would be wrong in both
+    directions - and `--keep-cache-tags` forces protection. Release tags are only
+    reconsidered by an explicit `--include-release-tags`, which additionally
+    demands `--yes` and a published release newer than the tag in question.
   * Deletion is one API call per tag with no cascading: sibling tags that
     share a manifest are untouched, so removing `:<sha>` never moves `:dev`.
 
@@ -43,6 +45,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
+from pathlib import Path
 
 API = "https://hub.docker.com/v2"
 USER_AGENT = "ainsel-hub-retention"
@@ -64,7 +67,6 @@ REPOS = [
 
 # Tags whose deletion would break something.
 PROTECTED_EXACT = {"latest", "dev", "main"}
-PROTECTED_PREFIX = ("buildcache",)
 RE_SEMVER = re.compile(r"^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$")
 # Floating major.minor tags that the pi variants move in place (`1.24`, `8.0`).
 RE_FLOAT = re.compile(r"^\d+\.\d+$")
@@ -74,6 +76,9 @@ RE_VARIANT_RELEASE = re.compile(r"^\d+\.\d+-v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$"
 # Tags this script is allowed to delete.
 RE_SHORT_SHA = re.compile(r"^[0-9a-f]{7}$")
 RE_VARIANT_SHA = re.compile(r"^\d+\.\d+-[0-9a-f]{7}$")
+# buildx registry cache. Whether these are live is a fact about the workflows,
+# not an age guess - see registry_cache_live().
+RE_CACHE = re.compile(r"^buildcache(?:-v\d+)?$")
 
 
 class Disposition:
@@ -115,6 +120,9 @@ class Policy:
     max_age_days: int = 30
     keep_newest: int = 20
     keep_newest_variant: int = 5
+    #: False only when the workflows provably configure no registry cache.
+    #: Defaults to True so an unreadable checkout can never delete a live cache.
+    registry_cache_live: bool = True
     include_release_tags: bool = False
     #: Explicit human confirmation, required alongside --include-release-tags.
     confirmed: bool = False
@@ -126,8 +134,10 @@ class Policy:
 
 def classify(name: str) -> str:
     """Which retention class a tag belongs to: protected, disposable or unknown."""
-    if name in PROTECTED_EXACT or name.startswith(PROTECTED_PREFIX):
+    if name in PROTECTED_EXACT:
         return "protected"
+    if RE_CACHE.match(name):
+        return "cache"
     if RE_FLOAT.match(name):
         return "protected"
     if RE_VARIANT_RELEASE.match(name):
@@ -165,6 +175,18 @@ def decide_one(repo: str, tag: Tag, rank: int, policy: Policy) -> Decision:
     if kind in ("protected", "unknown"):
         label = Disposition.KEEP_PROTECTED if kind == "protected" else Disposition.KEEP_UNKNOWN
         return Decision(repo, tag, label, f"{kind} tag is never collected")
+
+    if kind == "cache":
+        if policy.registry_cache_live:
+            return Decision(
+                repo, tag, Disposition.KEEP_PROTECTED, "build cache, still configured"
+            )
+        return Decision(
+            repo,
+            tag,
+            Disposition.DELETE,
+            "build cache of a pipeline that configures no registry cache",
+        )
 
     if kind == "release":
         if not policy.include_release_tags:
@@ -211,6 +233,37 @@ def release_purge_blocked(policy: Policy) -> str | None:
 
 
 RE_REPO = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def registry_cache_live(workflow_dir: Path) -> bool:
+    """Whether any CI workflow configures a buildx *registry* cache.
+
+    `buildcache` / `buildcache-v2` tags are only worth keeping while something
+    writes them. Nothing in `.github/workflows/` has passed `cache-to` since
+    commit b66f4adc (2026-07-20), which makes the four surviving cache tags
+    leftovers of the pre-migration pipeline rather than a live cache - but the
+    answer is read from the workflows instead of being hardcoded, so it stays
+    true if registry caching is ever added back.
+
+    Anything that cannot be read returns True: an absent or unreadable checkout
+    must never be the reason a live cache gets deleted.
+    """
+    try:
+        workflows = sorted(Path(workflow_dir).glob("*.yml"))
+        if not workflows:
+            return True
+        for file in workflows:
+            try:
+                text = file.read_text(encoding="utf-8")
+            except OSError:
+                return True
+            for line in text.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("cache-to:") and "type=registry" in stripped:
+                    return True
+    except OSError:
+        return True
+    return False
 
 
 def policy_problems(policy: Policy, repos: list[str]) -> list[str]:
@@ -341,10 +394,16 @@ def summarise(decisions: list[Decision]) -> dict:
     return out
 
 
-def print_report(plans: dict[str, list[Decision]], applied: bool) -> int:
+def print_report(plans: dict[str, list[Decision]], applied: bool, policy: Policy) -> int:
     summary = summarise([d for ds in plans.values() for d in ds])
     total_del = sum(s["delete"] for s in summary.values())
     total_bytes = sum(s["bytes"] for s in summary.values())
+
+    print(
+        "registry cache: "
+        + ("configured by CI - buildcache* protected" if policy.registry_cache_live else
+           "not configured by any workflow - buildcache* are collectable")
+    )
 
     for repo, decisions in sorted(plans.items()):
         s = summary[repo]
@@ -372,12 +431,22 @@ def print_report(plans: dict[str, list[Decision]], applied: bool) -> int:
     return total_del
 
 
-def write_markdown(plans: dict[str, list[Decision]], applied: bool) -> str:
+def write_markdown(plans: dict[str, list[Decision]], applied: bool, policy: Policy) -> str:
     summary = summarise([d for ds in plans.values() for d in ds])
     lines = [
         "## Docker Hub tag retention",
         "",
         f"Mode: `{'apply (tags were deleted)' if applied else 'dry-run (nothing deleted)'}`",
+        "",
+        f"Registry cache: "
+        + (
+            "configured by CI, `buildcache*` protected"
+            if policy.registry_cache_live
+            else "not configured by any workflow, `buildcache*` collectable"
+        ),
+        "",
+        f"Policy: collect after {policy.max_age_days}d, keep newest "
+        f"{policy.keep_newest} build / {policy.keep_newest_variant} variant tags per repo",
         "",
         "| repo | tags | delete | kept | logical GB |",
         "|---|---|---|---|---|",
@@ -416,6 +485,17 @@ def main(argv: list[str] | None = None) -> int:
         default=5,
         help="floor for the multi-GB pi variant <float>-<sha> tags",
     )
+    p.add_argument(
+        "--workflows",
+        default=None,
+        help="CI workflow directory used to decide if a registry cache is live "
+        "(default: .github/workflows next to this script)",
+    )
+    p.add_argument(
+        "--keep-cache-tags",
+        action="store_true",
+        help="protect buildcache* even though no workflow configures a registry cache",
+    )
     p.add_argument("--apply", action="store_true", help="actually delete (needs credentials)")
     p.add_argument(
         "--include-release-tags",
@@ -439,6 +519,12 @@ def main(argv: list[str] | None = None) -> int:
         max_age_days=args.max_age_days,
         keep_newest=args.keep_newest,
         keep_newest_variant=args.keep_newest_variant,
+        registry_cache_live=args.keep_cache_tags
+        or registry_cache_live(
+            Path(args.workflows)
+            if args.workflows
+            else Path(__file__).resolve().parent.parent / ".github" / "workflows"
+        ),
         include_release_tags=args.include_release_tags,
         confirmed=args.yes,
         latest_release=args.latest_release,
@@ -506,11 +592,11 @@ def main(argv: list[str] | None = None) -> int:
         }
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
-        print_report(plans, args.apply)
+        print_report(plans, args.apply, policy)
 
     if args.markdown:
         with open(args.markdown, "w", encoding="utf-8") as fh:
-            fh.write(write_markdown(plans, args.apply))
+            fh.write(write_markdown(plans, args.apply, policy))
 
     if args.apply:
         failures = 0
