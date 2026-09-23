@@ -121,7 +121,9 @@ repository on Forgejo, not here.
 | `ci-<component>.yml` (10) | PR based on `main` or `develop`, path-filtered | build, test, lint that component |
 | `pr-title.yml` | PR opened, edited or updated | reject a PR title release-please could not parse |
 | `ci-chart.yml` | same, for `chart/**` and `operators/*/config/crd/**` | helm lint, template with default/example/medium/large values, CRD sync check |
+| `ci-workflows.yml` | same, for `dev-image-*.yml` and their test | assert the publish decision for every event/branch combination |
 | `dev-image-<component>.yml` (8) | push to `main` or `develop`, path-filtered | build and push images (see tags below) |
+| `dev-image-<component>.yml` (8) | PR, or a dispatch without `publish`, path-filtered | **build only** - no login, no push, image discarded |
 | `gitleaks.yml` | push and PR on `main`/`develop` | secret scanning |
 | `deploy-docs-pages.yml` | push to `main` on docs paths | publish the docs site |
 | `release.yml` | push to `main`, or dispatch | release-please maintains the release PR; when one merges, publish images + chart and verify |
@@ -140,6 +142,27 @@ workflow:
 Nothing on `main` writes `:dev`. Main builds used to overwrite it on every
 push, which took the dev cluster down by replacing its images with code that
 lacked migrations develop had already applied - see PR #182.
+
+Publishing is a single decision computed in each workflow's `Compute image
+metadata` step, never re-derived from `github.event_name` in the build steps. Two
+leaks closed by that:
+
+- a PR run is a compile check on the Dockerfile and nothing more - the image is
+  loaded into the runner and discarded, so a branch never produces a registry
+  tag. There is no image to deploy from a PR: merge to `develop` for that.
+- `workflow_dispatch` is not restricted to a branch, so a dispatch from any
+  feature branch used to publish a `:<short-sha>` tag no review had looked at. It
+  now publishes only when the `publish` input is set.
+
+`scripts/test-dev-image-workflows.py` executes each workflow's real step body over
+every event/branch combination and fails if either stops being true; it is wired
+into `ci-workflows.yml` because a YAML `run:` block is otherwise unchecked until a
+build talks to the live registry.
+
+The pi variants additionally move their floating `:1.24` / `:8.0` tags on
+`develop` only, and always build against the base produced by their own run rather
+than whatever `:dev` happens to point at. They publish no per-build tag at all -
+see [`pi/README.md`](pi/README.md).
 
 ## Commit conventions
 
