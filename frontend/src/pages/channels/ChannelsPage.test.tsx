@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { screen, waitFor } from '@testing-library/react'
+import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { Route, Routes } from 'react-router-dom'
 import { ChannelsPage } from './ChannelsPage'
 import { renderWithProviders } from '../../test/renderWithProviders'
@@ -118,6 +118,56 @@ describe('ChannelsPage', () => {
       expect(screen.getByText('on-issues')).toBeInTheDocument()
       expect(screen.getByText(/Born in/i)).toBeInTheDocument()
       expect(screen.getByText(/Transferred into/i)).toBeInTheDocument()
+    })
+  })
+
+  it('shows custom channels from local storage, marked as grouping-only', async () => {
+    localStorage.setItem(
+      'ainsel.customChannels.v1',
+      JSON.stringify({
+        channels: [
+          { id: 'custom:team-inbox', name: 'team-inbox', description: 'squad grouping', createdAt: 'x' },
+        ],
+        bridges: [{ id: 'b1', from: 'connector:forgejo', to: 'custom:team-inbox', name: 'all-issues' }],
+      }),
+    )
+    mockFetch({
+      agents: [{ id: 'a1', name: 'review-bot' }],
+      connectors: [{ id: 'c1', name: 'forgejo' }],
+    })
+    renderPage()
+    await waitFor(() => {
+      expect(screen.getAllByRole('link', { name: 'team-inbox' })[0]).toHaveAttribute(
+        'href',
+        '/channels/custom/team-inbox',
+      )
+    })
+    expect(screen.getByText('squad grouping')).toBeInTheDocument()
+    expect(screen.getByText('grouping only')).toBeInTheDocument()
+    // attached to a bridge → not deletable
+    expect(screen.getByText('subscribed')).toBeInTheDocument()
+    // the local bridge appears in the connections map, marked as preview
+    expect(screen.getByText('all-issues')).toBeInTheDocument()
+    expect(screen.getByText('local preview')).toBeInTheDocument()
+  })
+
+  it('creates a custom channel through the New channel form', async () => {
+    mockFetch({})
+    renderPage()
+    fireEvent.click(screen.getByRole('button', { name: 'New channel' }))
+    fireEvent.change(screen.getByLabelText('Channel name'), { target: { value: 'team-inbox' } })
+    fireEvent.change(screen.getByLabelText('Channel description'), {
+      target: { value: 'squad grouping' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Create channel' }))
+    await waitFor(() => {
+      expect(screen.getAllByRole('link', { name: 'team-inbox' })[0]).toBeInTheDocument()
+    })
+    const store = JSON.parse(localStorage.getItem('ainsel.customChannels.v1') ?? '{"channels":[]}')
+    expect(store.channels[0]).toMatchObject({
+      id: 'custom:team-inbox',
+      name: 'team-inbox',
+      description: 'squad grouping',
     })
   })
 

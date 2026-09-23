@@ -120,15 +120,21 @@ function mockFetch() {
 function renderAt(route: string) {
   return renderWithProviders(
     <Routes>
-      <Route path="/channels/:origin/:name" element={<ChannelDetailPage />} />
+      <Route path="/channels/:kind/:name" element={<ChannelDetailPage />} />
     </Routes>,
     { route },
   )
 }
 
 describe('ChannelDetailPage', () => {
-  beforeEach(mockFetch)
-  afterEach(() => vi.unstubAllGlobals())
+  beforeEach(() => {
+    localStorage.clear()
+    mockFetch()
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    localStorage.clear()
+  })
 
   it('renders a connector channel: timeline + subscribed inboxes', async () => {
     renderAt('/channels/connector/forgejo')
@@ -142,11 +148,14 @@ describe('ChannelDetailPage', () => {
       expect(screen.getByText(/subscribed inboxes/i)).toBeInTheDocument()
       expect(screen.getByText('on-issues')).toBeInTheDocument()
       expect(
-        screen.getByRole('link', { name: 'review-bot' }),
+        screen.getAllByRole('link', { name: 'review-bot' })[0],
       ).toHaveAttribute('href', '/channels/agent/review-bot')
     })
     // connector channels do not own subscription editing
     expect(screen.queryByText('Subscriptions')).not.toBeInTheDocument()
+    // the relation tree shows the edge out of this channel
+    expect(screen.getByText(/Relations/i)).toBeInTheDocument()
+    expect(screen.getByText('via on-issues')).toBeInTheDocument()
   })
 
   it('renders an agent inbox channel: subscriptions, schedules, timeline, runs', async () => {
@@ -165,6 +174,57 @@ describe('ChannelDetailPage', () => {
       expect(screen.getByText(/inv-1/)).toBeInTheDocument()
       // SUCCESS appears both for the event fan-out and the invocation run
       expect(screen.getAllByText('SUCCESS').length).toBeGreaterThanOrEqual(2)
+    })
+  })
+
+  it('renders a custom channel with its bridges, tree, and gated delete', async () => {
+    localStorage.setItem(
+      'ainsel.customChannels.v1',
+      JSON.stringify({
+        channels: [
+          { id: 'custom:team-inbox', name: 'team-inbox', description: 'grouped', createdAt: 'x' },
+        ],
+        bridges: [{ id: 'b1', from: 'connector:forgejo', to: 'custom:team-inbox', name: 'all-issues' }],
+      }),
+    )
+    renderAt('/channels/custom/team-inbox')
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: /channel\s+team-inbox/i })).toBeInTheDocument()
+      expect(screen.getByText('grouped')).toBeInTheDocument()
+    })
+    // bridge editor lists the inbound bridge and the tree shows it
+    expect(screen.getByText(/Bridges . 1/)).toBeInTheDocument()
+    expect(screen.getByText('all-issues')).toBeInTheDocument()
+    expect(screen.getByText('bridged locally · all-issues')).toBeInTheDocument()
+    // custom channels hold no hub events
+    expect(screen.queryByText(/Channel timeline/i)).not.toBeInTheDocument()
+    // in use → delete is offered but disabled
+    const del = screen.getByRole('button', { name: 'Delete channel' })
+    expect(del).toBeDisabled()
+  })
+
+  it('deletes an unreferenced custom channel after confirmation', async () => {
+    localStorage.setItem(
+      'ainsel.customChannels.v1',
+      JSON.stringify({
+        channels: [
+          { id: 'custom:scratch', name: 'scratch', description: 'tmp', createdAt: 'x' },
+        ],
+        bridges: [],
+      }),
+    )
+    renderAt('/channels/custom/scratch')
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Delete channel' })).toBeEnabled()
+    })
+    screen.getByRole('button', { name: 'Delete channel' }).click()
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Confirm delete' })).toBeInTheDocument()
+    })
+    screen.getByRole('button', { name: 'Confirm delete' }).click()
+    await waitFor(() => {
+      const store = JSON.parse(localStorage.getItem('ainsel.customChannels.v1') ?? '{"channels":[1]}')
+      expect(store.channels).toHaveLength(0)
     })
   })
 
