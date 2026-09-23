@@ -17,6 +17,16 @@ export function invocationStatusVariant(s: string): InvocationStatusVariant {
   return 'default'
 }
 
+/**
+ * Queue/dispatch state of the agent_tasks row behind an invocation, when the
+ * hub could resolve one.
+ */
+export type InvocationTaskState = {
+  status: 'pending' | 'claimed' | 'completed' | 'failed'
+  attempts: number
+  error?: string
+}
+
 export type InvocationEntry = {
   id: string
   agent: string
@@ -27,6 +37,10 @@ export type InvocationEntry = {
   durationMs?: number
   status: InvocationStatus
   error?: string
+  // Queue/dispatch state from the agent_tasks row backing this invocation,
+  // when known. Lets the UI explain an empty transcript ("still queued"
+  // vs "ran, produced nothing").
+  task?: InvocationTaskState
 }
 
 export type ListInvocationsParams = {

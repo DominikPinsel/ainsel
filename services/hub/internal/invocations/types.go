@@ -50,6 +50,22 @@ type Invocation struct {
 
 	// Error is the error message when Status is failure or timeout. Empty otherwise.
 	Error string `json:"error,omitempty"`
+
+	// Task mirrors the dispatch state of the underlying agent_tasks row, when
+	// known. It lets the UI distinguish "queued, not started yet" from
+	// "the agent ran but produced no conversation".
+	Task *TaskState `json:"task,omitempty"`
+}
+
+// TaskState is the queue/dispatch state of the agent_tasks row that
+// corresponds to an invocation.
+type TaskState struct {
+	// Status is the agent_tasks status: pending, claimed, completed or failed.
+	Status string `json:"status"`
+	// Attempts is how many times the task has been claimed.
+	Attempts int `json:"attempts"`
+	// Error is the last failure message, if any.
+	Error string `json:"error,omitempty"`
 }
 
 // IsTerminal returns true if the invocation has reached a final status.
