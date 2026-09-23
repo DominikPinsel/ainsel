@@ -27,7 +27,7 @@ const connectorsPayload = {
 }
 
 describe('useChannels', () => {
-  it('merges agents, connectors and built-ins into one deduped list', async () => {
+  it('lists agents, connectors and built-ins as id-addressed channels', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn((url: string) => {
@@ -43,12 +43,43 @@ describe('useChannels', () => {
     try {
       const { result } = renderHook(() => useChannels(), { wrapper })
       await waitFor(() => expect(result.current.isLoading).toBe(false))
-      const names = result.current.channels.map((c) => c.name)
-      expect(names).toEqual(['chat', 'cron', 'forgejo', 'review-bot'])
-      const forgejo = result.current.channels.find((c) => c.name === 'forgejo')
+      const ids = result.current.channels.map((c) => c.id)
+      expect(ids).toEqual(['builtin:chat', 'builtin:cron', 'connector:forgejo', 'agent:review-bot'])
+      const forgejo = result.current.channels.find((c) => c.id === 'connector:forgejo')
       expect(forgejo?.roles).toEqual(['produces'])
-      const bot = result.current.channels.find((c) => c.name === 'review-bot')
+      expect(forgejo?.description).toContain('forgejo connector')
+      expect(forgejo?.entityId).toBe('c1')
+      const bot = result.current.channels.find((c) => c.id === 'agent:review-bot')
       expect(bot?.roles).toEqual(['consumes'])
+      expect(bot?.description).toContain('Inbox of agent')
+      expect(bot?.entityId).toBe('a1')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('keeps same-named channels distinct (connector and agent are two channels)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.includes('/agents')) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ items: [{ id: 'a9', name: 'forgejo' }], total: 1 }), { status: 200 }),
+          )
+        }
+        if (url.includes('/connectors')) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ items: [{ id: 'c9', name: 'forgejo' }], total: 1 }), { status: 200 }),
+          )
+        }
+        return Promise.resolve(new Response('{}', { status: 200 }))
+      }),
+    )
+    try {
+      const { result } = renderHook(() => useChannels(), { wrapper })
+      await waitFor(() => expect(result.current.isLoading).toBe(false))
+      const forgejos = result.current.channels.filter((c) => c.name === 'forgejo')
+      expect(forgejos.map((c) => c.id).sort()).toEqual(['agent:forgejo', 'connector:forgejo'])
     } finally {
       vi.unstubAllGlobals()
     }

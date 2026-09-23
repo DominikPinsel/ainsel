@@ -4,11 +4,14 @@ import { useConnectors } from './connectors'
 import { listEventsPage } from './events'
 
 /**
- * Channels are the named destinations events flow through (see
- * docs/superpowers/specs — Channels design). The backend does not have a
- * channels entity yet, so the channel list is derived from the existing
- * registries: one channel per connector (its producing channel), one per
- * agent (its inbox), plus the two built-in channels `cron` and `chat`.
+ * Channels are the event streams agents and connectors read from / write to
+ * (see docs/superpowers/specs — Channels design). The backend does not have a
+ * channels entity yet, so channels are derived from the existing registries.
+ *
+ * Crucially, a channel is identified by its **UUID-like key**, not its name:
+ * a connector `forgejo` and an agent `forgejo` are two distinct channels that
+ * merely share a display label. Name collisions are expected; every FK,
+ * route, and UI link uses the channel key.
  */
 
 export type ChannelOrigin = 'connector' | 'agent' | 'builtin'
@@ -16,49 +19,82 @@ export type ChannelOrigin = 'connector' | 'agent' | 'builtin'
 export type ChannelRole = 'produces' | 'consumes'
 
 export type ChannelSummary = {
-  /** Stable, human-readable channel name (the future channels.name). */
+  /** Stable channel identifier — the future channels.id. Encodes origin so
+   *  two channels named `forgejo` never collapse into one. */
+  id: string
+  /** Rename-able display label (the future channels.name) — NOT unique. */
   name: string
   displayName: string
+  /** One line of intent (the future channels.description). */
+  description: string
   /** Where the channel comes from — presentation hint only. */
   origin: ChannelOrigin
   roles: ChannelRole[]
+  /** Registry id of the owning entity (agent/connector) when resolvable —
+   *  used to mount that entity's configuration panels. */
+  entityId?: string
 }
 
-/** The built-in synthetic sources the hub publishes into channels. */
+/** The built-in synthetic sources the hub publishes into channels. In the
+ *  target design schedules and chat live on the consuming agent's own
+ *  channel; these built-ins surface the events produced today. */
 export const BUILTIN_CHANNELS: ChannelSummary[] = [
-  { name: 'cron', displayName: 'Cron', origin: 'builtin', roles: ['produces'] },
-  { name: 'chat', displayName: 'Chat', origin: 'builtin', roles: ['produces'] },
+  {
+    id: 'builtin:cron',
+    name: 'cron',
+    displayName: 'cron',
+    description: 'Scheduled ticks (cron)',
+    origin: 'builtin',
+    roles: ['produces'],
+  },
+  {
+    id: 'builtin:chat',
+    name: 'chat',
+    displayName: 'chat',
+    description: 'Messages sent to agents',
+    origin: 'builtin',
+    roles: ['produces'],
+  },
 ]
 
+function idFor(origin: ChannelOrigin, name: string): string {
+  return `${origin}:${name}`
+}
+
 function buildChannelSummaries(
-  agents: { name: string }[] | undefined,
-  connectors: { name: string }[] | undefined,
+  agents: { id: string; name: string }[] | undefined,
+  connectors: { id: string; name: string }[] | undefined,
 ): ChannelSummary[] {
-  const channels = new Map<string, ChannelSummary>()
+  const channels: ChannelSummary[] = []
   for (const c of connectors ?? []) {
-    channels.set(c.name, {
+    channels.push({
+      id: idFor('connector', c.name),
       name: c.name,
       displayName: c.name,
+      description: `Ingested from the ${c.name} connector`,
       origin: 'connector',
       roles: ['produces'],
+      entityId: c.id,
     })
   }
   for (const a of agents ?? []) {
-    const existing = channels.get(a.name)
-    channels.set(a.name, {
+    channels.push({
+      id: idFor('agent', a.name),
       name: a.name,
       displayName: a.name,
+      description: `Inbox of agent ${a.name}`,
       origin: 'agent',
-      roles: existing ? Array.from(new Set([...existing.roles, 'consumes' as const])) : ['consumes'],
+      roles: ['consumes'],
+      entityId: a.id,
     })
   }
-  for (const b of BUILTIN_CHANNELS) {
-    if (!channels.has(b.name)) channels.set(b.name, b)
-  }
-  return Array.from(channels.values()).sort((a, b) => a.name.localeCompare(b.name))
+  channels.push(...BUILTIN_CHANNELS)
+  return channels.sort(
+    (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
+  )
 }
 
-/** Aggregated channel list: connectors + agents + built-ins, deduped. */
+/** Aggregated channel list: connectors + agents + built-ins, keyed by id. */
 export function useChannels() {
   const agents = useAgents({ pageSize: 500 })
   const connectors = useConnectors({ pageSize: 500 })
@@ -88,20 +124,21 @@ function since24h(): string {
  * (`connector` for producing channels, `agent` for consumed channels).
  */
 export function useChannelCounts(channel: ChannelSummary) {
-  const scope = channel.roles.includes('produces') ? { connector: channel.name } : { agent: channel.name }
+  const isProducer = channel.roles.includes('produces')
+  const scope = isProducer ? { connector: channel.name } : { agent: channel.name }
   const since = since24h()
 
   const events = useQuery({
-    queryKey: ['channels', 'counts', channel.name, 'events', scope, since],
+    queryKey: ['channels', 'counts', channel.id, 'events', scope, since],
     queryFn: () => listEventsPage({ ...scope, since, limit: 1 }),
   })
   const unmatched = useQuery({
-    queryKey: ['channels', 'counts', channel.name, 'unmatched', scope, since],
+    queryKey: ['channels', 'counts', channel.id, 'unmatched', scope, since],
     queryFn: () => listEventsPage({ ...scope, since, status: 'unmatched', limit: 1 }),
-    enabled: channel.roles.includes('produces'),
+    enabled: isProducer,
   })
   const failed = useQuery({
-    queryKey: ['channels', 'counts', channel.name, 'failed', scope, since],
+    queryKey: ['channels', 'counts', channel.id, 'failed', scope, since],
     queryFn: () => listEventsPage({ ...scope, since, status: 'error', limit: 1 }),
   })
 
@@ -109,6 +146,23 @@ export function useChannelCounts(channel: ChannelSummary) {
     events24h: events.data?.total ?? 0,
     unmatched24h: unmatched.data?.total ?? 0,
     failed24h: failed.data?.total ?? 0,
-    isLoading: events.isLoading || failed.isLoading || (channel.roles.includes('produces') && unmatched.isLoading),
+    isLoading:
+      events.isLoading || failed.isLoading || (isProducer && unmatched.isLoading),
   }
+}
+
+/** Route for a channel — origin-namespaced so same-labeled channels never
+ *  collapse (the target model addresses channels by id; this is the derived
+ *  stand-in). */
+export function channelPath(id: string): string {
+  const sep = id.indexOf(':')
+  const origin = sep >= 0 ? id.slice(0, sep) : 'connector'
+  const name = sep >= 0 ? id.slice(sep + 1) : id
+  return `/channels/${origin}/${encodeURIComponent(name)}`
+}
+
+/** Channel id an event was born in, given its producing connector string. */
+export function channelIdForProducer(producer: string): string {
+  if (producer === 'cron' || producer === 'chat') return `builtin:${producer}`
+  return `connector:${producer}`
 }

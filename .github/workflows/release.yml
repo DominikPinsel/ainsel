@@ -51,6 +51,11 @@ jobs:
         id: release
         with:
           target-branch: main
+          # The action defaults to GITHUB_TOKEN, which is all that is needed once
+          # the repo allows workflows to open PRs (see the step below this job's
+          # failing step). A PAT here is the fallback for orgs that will not turn
+          # that setting on; unset, `||` keeps the default rather than passing "".
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
 
       - name: Report what release-please did
         run: |
@@ -66,6 +71,37 @@ jobs:
           else
             echo "No release-worthy commits since the last release." >> "${GITHUB_STEP_SUMMARY}"
           fi
+
+      # release-please opens a pull request, and the workflow token is not always
+      # allowed to: "Allow GitHub Actions to create and approve pull requests" is a
+      # repo setting that has to be turned on by someone with admin access. This is
+      # the failure this job actually hit (run 29447765121, the only run the workflow
+      # has ever had), and the raw error does not say which setting to change.
+      # There is no read-only probe for the setting - the token that needs it cannot
+      # inspect it - so the guidance fires on any failure and says so.
+      - name: Explain the failure
+        if: failure() && steps.release.outcome == 'failure'
+        run: |
+          set -euo pipefail
+          cat <<'MD' >> "${GITHUB_STEP_SUMMARY}"
+          ## release-please could not do its job
+
+          If the log says **"GitHub Actions is not permitted to create or approve pull
+          requests"**, this is a repository setting, not a bug in the workflow:
+
+          1. Settings → Actions → General → **Workflow permissions**
+          2. Tick **Allow GitHub Actions to create and approve pull requests**, Save.
+          3. Re-run this job - nothing else needs to change.
+
+          Until that is done the release pipeline produces no git tag, which means no
+          `:vX.Y.Z` images and no published chart, and `main`'s builds publish nothing
+          at all (see the guard in the `chart` and `images` jobs). The `latest` and
+          version tags on Docker Hub from before this pipeline existed are not releases.
+
+          If the log says something else, this step is not the diagnosis - read
+          [the action's output](https://github.com/googleapis/release-please-action) above.
+          MD
+          echo "::error::release-please failed. If it could not open a PR, enable Settings → Actions → General → 'Allow GitHub Actions to create and approve pull requests' and re-run this job."
 
   # --------------------------------------------------------------------------
   # Derive the tag spellings the artifacts need. Kept separate from the matrix

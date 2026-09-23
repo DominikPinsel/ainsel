@@ -121,8 +121,9 @@ repository on Forgejo, not here.
 | `ci-<component>.yml` (10) | PR based on `main` or `develop`, path-filtered | build, test, lint that component |
 | `pr-title.yml` | PR opened, edited or updated | reject a PR title release-please could not parse |
 | `ci-chart.yml` | same, for `chart/**` and `operators/*/config/crd/**` | helm lint, template with default/example/medium/large values, CRD sync check |
+| `ci-workflows.yml` | same, for `dev-image-*.yml` and their test | assert the publish decision for every event/branch combination |
 | `dev-image-<component>.yml` (8) | push to `main` or `develop`, path-filtered | build and push images (see tags below) |
-| `dev-image-<component>.yml` (8) | PR to `main` or `develop`, path-filtered | **build only** - no login, no push, image discarded |
+| `dev-image-<component>.yml` (8) | PR, or a dispatch without `publish`, path-filtered | **build only** - no login, no push, image discarded |
 | `maintenance-untag.yml` | weekly schedule, or dispatch | report (and, on an explicit dispatch, delete) stale Docker Hub tags - see [`docs/maintenance.md`](docs/maintenance.md) |
 | `gitleaks.yml` | push and PR on `main`/`develop` | secret scanning |
 | `deploy-docs-pages.yml` | push to `main` on docs paths | publish the docs site |
@@ -143,10 +144,26 @@ Nothing on `main` writes `:dev`. Main builds used to overwrite it on every
 push, which took the dev cluster down by replacing its images with code that
 lacked migrations develop had already applied - see PR #182.
 
-A PR run is a compile check on the Dockerfile, nothing more: `Login to Docker Hub`
-is skipped and the image is loaded into the runner instead of pushed, so a branch
-never produces a registry tag. There is no image to deploy from a PR - merge to
-`develop` for that.
+Publishing is a single decision computed in each workflow's `Compute image
+metadata` step, never re-derived from `github.event_name` in the build steps. Two
+leaks closed by that:
+
+- a PR run is a compile check on the Dockerfile and nothing more - the image is
+  loaded into the runner and discarded, so a branch never produces a registry
+  tag. There is no image to deploy from a PR: merge to `develop` for that.
+- `workflow_dispatch` is not restricted to a branch, so a dispatch from any
+  feature branch used to publish a `:<short-sha>` tag no review had looked at. It
+  now publishes only when the `publish` input is set.
+
+`scripts/test-dev-image-workflows.py` executes each workflow's real step body over
+every event/branch combination and fails if either stops being true; it is wired
+into `ci-workflows.yml` because a YAML `run:` block is otherwise unchecked until a
+build talks to the live registry.
+
+The pi variants additionally move their floating `:1.24` / `:8.0` tags on
+`develop` only, and always build against the base produced by their own run rather
+than whatever `:dev` happens to point at. They publish no per-build tag at all -
+see [`pi/README.md`](pi/README.md).
 
 Every tag these workflows write accumulates in the registry, and Docker Hub has no
 server-side retention for a personal namespace. [`docs/maintenance.md`](docs/maintenance.md)
@@ -236,6 +253,32 @@ run means the artifacts exist.
 If a run fails partway, re-run it: the chart job gates `chart/Chart.yaml`
 against the release version, image pushes are idempotent per tag, and the
 Release upload uses `--clobber`.
+
+### One-time setup: let the workflow open the release PR
+
+release-please needs to **create and approve pull requests**, and a repo can allow
+`GITHUB_TOKEN` to write PRs while still forbidding *workflows* from opening them.
+That second switch is a repo setting, and the job's own token cannot inspect it,
+so CI cannot catch it early — the run just fails with:
+
+```
+release-please failed: GitHub Actions is not permitted to create or approve pull requests
+```
+
+Fix: **Settings → Actions → General → Workflow permissions → tick "Allow GitHub
+Actions to create and approve pull requests" → Save**, then re-run the failed job.
+Alternatively create a PAT with write permission on pull requests, store it as the
+repository secret `RELEASE_PLEASE_TOKEN`, and `release.yml` will pass it to the
+action; that also covers the approval step under branch protection, at the cost of
+a long-lived credential to rotate. With the secret unset the workflow keeps using
+`GITHUB_TOKEN`.
+
+Until that setting is on the release pipeline produces **nothing at all**: no
+`vX.Y.Z` tag, so the `chart` and `images` jobs skip, and no `:latest` image. As of
+writing no GitHub release exists — `git ls-remote --tags origin` is empty and the
+workflow has had exactly one run, which failed on this setting — so the `latest`,
+`0.1.0` … `0.3.0` tags on Docker Hub predate release-please and are not releases of
+anything.
 
 ### Why promotions are merge commits
 

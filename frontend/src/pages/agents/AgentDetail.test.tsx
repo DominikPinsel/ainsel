@@ -619,7 +619,7 @@ describe('AgentDetail', () => {
     })
   })
 
-  it('shows the Triggers tab and renders the agent triggers panel', async () => {
+  it('shows the Channel tab with the agent inbox summary', async () => {
     renderWithProviders(
       <Routes>
         <Route path="/agents/:id" element={<AgentDetail />} />
@@ -627,11 +627,13 @@ describe('AgentDetail', () => {
       { route: '/agents/a1' },
     )
     await screen.findByText('claude-opus-4-7')
-    expect(screen.getByRole('tab', { name: /triggers/i })).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('tab', { name: /triggers/i }))
-    await waitFor(() =>
-      expect(screen.getByText('on-doc-issue')).toBeInTheDocument(),
-    )
+    expect(screen.getByRole('tab', { name: /channel/i })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('tab', { name: /channel/i }))
+    expect(await screen.findByText('agent inbox')).toBeInTheDocument()
+    expect(screen.getByText('Inbox of agent doc-writer')).toBeInTheDocument()
+    expect(
+      screen.getByRole('link', { name: /open channel/i }),
+    ).toHaveAttribute('href', '/channels/agent/doc-writer')
   })
 
   it('does not show the Access card on the overview tab', async () => {
@@ -660,16 +662,16 @@ describe('AgentDetail', () => {
     ).not.toBeInTheDocument()
   })
 
-  it('opens the Triggers tab directly via the ?tab=triggers deep link', async () => {
+  it('opens the Channel tab directly via the ?tab=channel deep link', async () => {
     renderWithProviders(
       <Routes>
         <Route path="/agents/:id" element={<AgentDetail />} />
       </Routes>,
-      { route: '/agents/a1?tab=triggers' },
+      { route: '/agents/a1?tab=channel' },
     )
-    // Triggers panel content loads without clicking the tab.
+    // Channel panel content loads without clicking the tab.
     await waitFor(() =>
-      expect(screen.getByText('on-doc-issue')).toBeInTheDocument(),
+      expect(screen.getByText('agent inbox')).toBeInTheDocument(),
     )
   })
 
