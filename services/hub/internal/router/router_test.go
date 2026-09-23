@@ -92,7 +92,7 @@ func TestHandleEvent_EnqueuesWhenMatched(t *testing.T) {
 	r := &Router{
 		eq:          q,
 		index:       idx,
-		invocations: invocations.NewStore(10),
+		invocations: invocations.NewMemoryStore(10),
 		broadcaster: &stubBroadcaster{},
 	}
 
@@ -114,7 +114,7 @@ func TestHandleEvent_MarksRoutedWhenNoMatches(t *testing.T) {
 	r := &Router{
 		eq:          q,
 		index:       idx,
-		invocations: invocations.NewStore(10),
+		invocations: invocations.NewMemoryStore(10),
 		broadcaster: &stubBroadcaster{},
 	}
 
@@ -140,7 +140,7 @@ func TestHandleEvent_MarksRoutedOnEnqueueFailure(t *testing.T) {
 	r := &Router{
 		eq:          q,
 		index:       idx,
-		invocations: invocations.NewStore(10),
+		invocations: invocations.NewMemoryStore(10),
 		broadcaster: &stubBroadcaster{},
 	}
 
@@ -161,7 +161,7 @@ func TestHandleEvent_MultipleMatches(t *testing.T) {
 	r := &Router{
 		eq:          q,
 		index:       idx,
-		invocations: invocations.NewStore(10),
+		invocations: invocations.NewMemoryStore(10),
 		broadcaster: &stubBroadcaster{},
 	}
 
@@ -183,7 +183,7 @@ func TestHandleEvent_BroadcastStatsPropagatesCallerContext(t *testing.T) {
 	r := &Router{
 		eq:          &mockQueue{},
 		index:       idx,
-		invocations: invocations.NewStore(10),
+		invocations: invocations.NewMemoryStore(10),
 		broadcaster: br,
 	}
 
@@ -210,7 +210,7 @@ func TestHandleEvent_BroadcastStatsSurvivesCanceledCallerCtx(t *testing.T) {
 	r := &Router{
 		eq:          &mockQueue{},
 		index:       idx,
-		invocations: invocations.NewStore(10),
+		invocations: invocations.NewMemoryStore(10),
 		broadcaster: br,
 	}
 

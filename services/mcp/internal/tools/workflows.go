@@ -90,7 +90,8 @@ func (w *WorkflowTools) SummarizeWorkflows(ctx context.Context, _ mcp.CallToolRe
 		if id == "" {
 			continue
 		}
-		// SimpleAgentResponse is flat: id, name, imageRef, llm, persona, enabledTools, scaling.
+		// The agent response is flat: id, name, imageRef, llm, persona,
+		// enabledTools, skills, mcp, env, scaling.
 		imageRef, _ := a["imageRef"].(map[string]any)
 		llm, _ := a["llm"].(map[string]any)
 		entry := map[string]any{
@@ -100,7 +101,7 @@ func (w *WorkflowTools) SummarizeWorkflows(ctx context.Context, _ mcp.CallToolRe
 			"model":        llm["model"],
 			"personaRef":   personaRef(a),
 			"enabledTools": a["enabledTools"],
-			"enabledMCPs":  a["enabledMCPs"],
+			"mcp":          a["mcp"],
 			"scaling":      a["scaling"],
 			"triggers":     triggersByAgent[id],
 		}

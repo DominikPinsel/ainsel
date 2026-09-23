@@ -111,23 +111,35 @@ Avoid editing the workflows or Dockerfiles without coordinating — see
 
 ## CI runners
 
-All Forgejo Actions jobs in this repo use the standard **`ubuntu-latest`**
-runner label so that any Act runner can pick them up — no custom runner images
-required.
+Everything in `.github/workflows/` runs on **GitHub Actions** with the standard
+`ubuntu-latest` label, so any runner can pick the jobs up. The dev-cluster
+deployment is the one exception: it lives in the `AInsel/ainsel-deployment`
+repository on Forgejo, not here.
 
-Jobs that need a specific toolchain declare a public **`container:`** image:
+| workflow | trigger | does |
+| --- | --- | --- |
+| `ci-<component>.yml` (10) | PR based on `main` or `develop`, path-filtered | build, test, lint that component |
+| `pr-title.yml` | PR opened, edited or updated | reject a PR title release-please could not parse |
+| `ci-chart.yml` | same, for `chart/**` and `operators/*/config/crd/**` | helm lint, template with default/example/medium/large values, CRD sync check |
+| `dev-image-<component>.yml` (8) | push to `main` or `develop`, path-filtered | build and push images (see tags below) |
+| `gitleaks.yml` | push and PR on `main`/`develop` | secret scanning |
+| `deploy-docs-pages.yml` | push to `main` on docs paths | publish the docs site |
+| `release.yml` | push to `main`, or dispatch | release-please maintains the release PR; when one merges, publish images + chart and verify |
 
-- **Go jobs** (lint, test, build) use `container: node:20` (for JS action
-  support) with `actions/setup-go@v5` to install Go, plus an explicit
-  `golangci-lint` install step.
-- **Frontend and pi jobs** (lint, test, build) use `container: node:20`.
-- **Docker build jobs** (dev-image, release) run without a container so the
-  runner's Docker daemon is available for `docker/build-push-action`.
-- **Release-tools jobs** (chart-update, rollout, deploy) run without a
-  container and install `kubectl`, `helm`, or `yq` in explicit setup steps.
+Toolchains come from `actions/setup-go@v7` and `actions/setup-node@v7` after
+`actions/checkout@v7`. Docker build jobs run without a `container:` so the
+runner's own Docker daemon is available to `docker/build-push-action`; the
+chart jobs install Helm with the official `get-helm-3` script.
 
-When writing a new workflow, pick the appropriate public container image or
-add install steps for the tools you need. Keep `runs-on: ubuntu-latest`.
+`dev-image-*` tags are deliberately asymmetric, and the guard lives in each
+workflow:
+
+- push to `develop` → `:dev` (mutable, what the dev cluster runs) and `:<short-sha>`
+- push to `main` → `:<short-sha>` only
+
+Nothing on `main` writes `:dev`. Main builds used to overwrite it on every
+push, which took the dev cluster down by replacing its images with code that
+lacked migrations develop had already applied - see PR #182.
 
 ## Commit conventions
 
@@ -139,58 +151,141 @@ We follow [Conventional Commits](https://www.conventionalcommits.org/):
 [optional body]
 ```
 
-Types: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `perf`.
+Types: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `perf`, `revert`.
 
 - Lowercase type, lowercase description, no trailing period.
 - Imperative mood ("add login page", not "added login page").
 - Body is optional, separated by a blank line; explain *why* the change is
   needed, not just *what* changed.
 
+release-please reads these commits to compute the next version and to write
+`CHANGELOG.md`, so the format is load-bearing rather than stylistic. Two rules
+decide what a reader of the changelog actually sees:
+
+- **A subject release-please cannot parse is dropped** - it appears nowhere in
+  the changelog and cannot bump the version. `.github/workflows/pr-title.yml`
+  rejects such a PR title, because squash-merge makes the title the subject.
+- Of the commits that do parse, only `feat`, `fix`, `perf` and `revert` are
+  listed by default. `chore` (where Dependabot's `chore(deps)` bumps land),
+  `docs`, `style`, `refactor`, `test`, `build` and `ci` are hidden - unless the
+  commit is breaking, in which case it is shown. That keeps dependency noise out
+  of the changelog without hiding anything that changes behaviour.
+
+Breaking changes need a marker: either append `!` to the type
+(`feat(api)!: drop enabledMCPs`) or add a `BREAKING CHANGE: <what>` footer.
+Without one the change still ships - it just won't appear under *BREAKING* in
+the changelog, and the version won't bump for it.
+
 The full convention lives in [`docs/conventions.md`](docs/conventions.md).
 
 ## Releases
 
-Releases are automated per component with a release-please style flow
-(release-please + release-tag CI workflows). Each push to
-`main` makes the workflow compute the next version for every component from
-conventional commits (via `git-cliff`) and open — or refresh — a single
-release PR titled `release: <component>/vX.Y.Z` containing a generated
-`CHANGELOG.md`. Merging that PR cuts the release: `release-tag` creates the
-git tag, which triggers `release-<component>` to build and push
-`<version>` + `latest` to Docker Hub and open a chart-update PR.
+Releases are driven by [release-please](https://github.com/googleapis/release-please)
+from conventional commits — no hand-picked versions, no hand-written
+changelogs. One version covers the whole product, because
+`chart/values.yaml` pins a single image tag per component and the chart cannot
+express per-component versions without a redesign.
 
-Version bumps follow the commit type: `feat` → minor,
-`fix`/`perf`/`refactor`/`docs`/`test` → patch, a `BREAKING CHANGE` footer →
-major; `chore`/`ci` are ignored. Components with no prior tag get an initial
-`v0.1.0` release PR the first time they change on `main`.
+Three files define it:
 
-Merge release PRs with **squash** (the norm) or a merge commit — never
-rebase-merge; the post-merge guard reads the PR title from the resulting
-commit subject.
+| file | role |
+| --- | --- |
+| `release-please-config.json` | `release-type: simple` at the repo root, plain `vX.Y.Z` tags (`include-component-in-tag: false`), `bump-minor-pre-major` so a breaking change on a `0.x` base bumps minor, and `extra-files` entries that keep `chart/Chart.yaml`'s `version` and `appVersion` in step with the release |
+| `.release-please-manifest.json` | the last released version — `0.1.5` until the first release, after which release-please maintains it |
+| `CHANGELOG.md` | generated and maintained by release-please |
+
+### How a release happens
+
+1. Merge PRs into `develop` and promote `develop` into `main` as usual.
+   **Promotions must be merged with a merge commit, not squashed** — see
+   [Why promotions are merge commits](#why-promotions-are-merge-commits).
+2. On every push to `main`, `.github/workflows/release.yml` runs
+   release-please. If there are release-worthy commits it opens — or refreshes —
+   a release PR titled `chore(main): release <version>`, containing the
+   `CHANGELOG.md` diff, the `chart/Chart.yaml` bump and the manifest update.
+3. **That PR is the dry run.** The version, the changelog and the chart bump
+   are all visible before anything is published, and nothing happens until the
+   PR is merged.
+4. Merging it cuts the release: release-please creates the `vX.Y.Z` tag and the
+   GitHub Release, and the same workflow run publishes the artifacts.
+
+| artifact | where | tags |
+| --- | --- | --- |
+| 8 images + 2 pi variants | Docker Hub, `dpinsel/ainsel-*` | `:vX.Y.Z`, `:X.Y.Z`, and `:latest` for stable releases |
+| Helm chart | GHCR, `oci://ghcr.io/dominikpinsel/charts/ainsel` | `X.Y.Z` |
+| chart `.tgz` | attached to the GitHub Release | — |
+
+The two pi variants build with `BASE_TAG=<release>` against the pi base built in
+the same run, which is what makes a release reproducible rather than pinned to
+whatever `:dev` happens to be. A final job pulls every tag back from Docker Hub
+and GHCR and checks the Release is published with the chart attached, so a green
+run means the artifacts exist.
+
+If a run fails partway, re-run it: the chart job gates `chart/Chart.yaml`
+against the release version, image pushes are idempotent per tag, and the
+Release upload uses `--clobber`.
+
+### Why promotions are merge commits
+
+release-please reads the conventional commits **on `main`**. A squash promotion
+collapses all of develop's per-PR commits into a single
+`release: promote develop to main` commit, and `release:` is not a conventional
+type — so `main` would appear to contain no features and no fixes at all. The
+changelog would omit everything the release actually ships, and release-please
+would propose no bump. Merging with a merge commit keeps every PR commit
+reachable from `main`, which is what makes the changelog correct.
+
+The same applies to any PR merged straight into `main`: squash is fine there,
+because one squashed commit still carries that PR's conventional subject.
+
+### Prereleases and `latest`
+
+A version with a suffix (`v0.3.0-rc.1`) is marked as a prerelease on GitHub and
+skips the `:latest` tag, so `latest` always means the newest stable release.
+
+### Known rough edge: chart image tags
+
+`chart/values.yaml` still hardcodes each component's image tag (`0.1.0`, and
+`0.2.1` for the frontend), which predates this pipeline. So a released chart
+installs those older images unless the tags are overridden. Defaulting them to
+`.Chart.AppVersion` is the fix, but it has to land together with a release —
+before one exists, the documented quickstart would point at tags that are not
+published.
+
+### Releasing is not deploying
+
+The dev cluster keeps running mutable `:dev` images built from `develop`; the
+`AInsel/ainsel-deployment` workflow on Forgejo rolls them out on a schedule. A
+release does not touch it. Pointing an environment at a release means setting
+the chart version (or the component `image.tag` values) explicitly.
 
 ## Branching
 
-- `main` is the production branch. Merges here trigger release-please and,
-  via tags, versioned image builds. **Never commit directly to `main`.**
-- `dev` is the development branch. Merges here build `:dev` images and roll
-  them out to the `ainsel-dev` environment. Cut `dev` from `main` and keep
+- `main` is the release branch. Merges here build `:<short-sha>` images only,
+  and releases are cut by tagging - see [Releases](#releases).
+  **Never commit directly to `main`.**
+- `develop` is the development branch. Pushes here build `:dev` images that
+  the `ainsel-dev` environment runs. Cut `develop` from `main` and keep
   it fed with work in progress.
 - Feature work happens on `type/short-description` branches
   (`feat/agent-scaling`, `fix/webhook-timeout`, `docs/architecture-update`)
-  and is merged via PR.
-- Base new branches on the latest `origin/main`:
-  `git fetch origin && git checkout -b feat/my-thing origin/main`.
+  and is merged via PR into `develop`.
+- Base new branches on the latest `origin/develop`:
+  `git fetch origin && git checkout -b feat/my-thing origin/develop`.
 - Always `git pull --rebase` before pushing to catch remote changes.
 - Delete branches after merging.
 
 ## Pull requests
 
 - **One topic per PR.** Don't bundle unrelated changes — open separate PRs.
-- Open against `main`. Squash merge is the norm.
+- Open against `develop`. Squash merge is the norm - it is the only merge type
+  the repository allows, so PR titles become commit subjects on both branches.
 - The PR description should explain *why*, not just *what*.
 - Reference the issue you're addressing if there is one.
-- Rebase your branch on `main` regularly:
-  `git fetch origin && git rebase origin/main`.
+- Rebase your branch on `develop` regularly:
+  `git fetch origin && git rebase origin/develop`.
+- CI runs only for PRs based on `main` or `develop`. A PR stacked on another
+  feature branch gets no CI, so retarget it if you need the checks.
 
 Before opening a PR, run everything in [Testing & quality](#testing--quality)
 locally. CI will catch regressions, but your reviewers shouldn't have to.

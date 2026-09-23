@@ -53,14 +53,14 @@ type Emitter struct {
 	mu       sync.RWMutex
 	entries  map[string]*entry
 	eq       *eventqueue.Store
-	invStore *invocations.Store
+	invStore invocations.Store
 	now      func() time.Time
 	fire     fireFn
 }
 
 // New creates an Emitter backed by the given event queue store and invocation
 // store.
-func New(eq *eventqueue.Store, invStore *invocations.Store) *Emitter {
+func New(eq *eventqueue.Store, invStore invocations.Store) *Emitter {
 	e := &Emitter{
 		entries:  make(map[string]*entry),
 		eq:       eq,

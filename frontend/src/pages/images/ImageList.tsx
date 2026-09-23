@@ -71,7 +71,7 @@ export function ImageList() {
       <Titleblock
         crumbs={
           <>
-            Fleet / <b>Agent Images</b>
+            Library / <b>Agent Images</b>
           </>
         }
         title={

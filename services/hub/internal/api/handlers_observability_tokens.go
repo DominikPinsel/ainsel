@@ -316,7 +316,7 @@ func (s *Server) getTokensByEvent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// invocationGetter is the subset of *invocations.Store used by
+// invocationGetter is the subset of invocations.Store used by
 // aggregateTokensByEvent, allowing tests to supply a fake.
 type invocationGetter interface {
 	Get(id string) (invocations.Invocation, bool)
