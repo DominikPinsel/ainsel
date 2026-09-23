@@ -5,6 +5,19 @@ import { Route, Routes } from 'react-router-dom'
 import { AgentDetail } from './AgentDetail'
 import { renderWithProviders } from '../../test/renderWithProviders'
 
+// AgentDetail records the visit for the nav's recent-agents list, which needs
+// the signed-in user's `sub` as the storage bucket.
+vi.mock('../../auth/AuthProvider', () => ({
+  useAuth: () => ({
+    token: 'test-token',
+    user: { sub: 'sub-kim', username: 'kim', email: 'kim@example.com' },
+    mode: 'password',
+    ready: true,
+    signinRedirect: vi.fn(),
+    signoutRedirect: vi.fn(),
+  }),
+}))
+
 function defaultFetch(url: string, init?: RequestInit): Response {
   if (init?.method === 'DELETE') {
     return new Response(null, { status: 204 })
@@ -209,6 +222,7 @@ function defaultFetch(url: string, init?: RequestInit): Response {
 
 describe('AgentDetail', () => {
   beforeEach(() => {
+    localStorage.clear()
     vi.stubGlobal(
       'fetch',
       vi.fn((url: string, init?: RequestInit) =>
@@ -232,6 +246,20 @@ describe('AgentDetail', () => {
     )
     expect(screen.getByText('claude-opus-4-7')).toBeInTheDocument()
     expect(screen.getByText('claude-tooling-base:1.4')).toBeInTheDocument()
+  })
+
+  it('records the viewed agent under the signed-in user', async () => {
+    renderWithProviders(
+      <Routes>
+        <Route path="/agents/:id" element={<AgentDetail />} />
+      </Routes>,
+      { route: '/agents/a1' },
+    )
+    await waitFor(() =>
+      expect(
+        JSON.parse(localStorage.getItem('ainsel-agent-recents:sub-kim') ?? '[]'),
+      ).toEqual(['a1']),
+    )
   })
 
   it('renders enabled tools as chips', async () => {

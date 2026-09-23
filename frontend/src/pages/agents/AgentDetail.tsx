@@ -1,8 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useAgent, useDeleteAgent } from '../../api/agents'
 import { ApiError } from '../../api/client'
 import { useAgentPersona } from '../../api/personas'
+import { recordAgentView, recentsScope } from '../../agentRecents'
+import { useAuth } from '../../auth/AuthProvider'
 import { Button } from '../../primitives/Button'
 import { ConfirmModal } from '../../primitives/ConfirmModal'
 import { Dot } from '../../primitives/Dot'
@@ -45,6 +47,15 @@ export function AgentDetail() {
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const { data, isLoading, error } = useAgent(id)
   const remove = useDeleteAgent()
+  const { user } = useAuth()
+
+  // Feed the nav's recent-agents list. Keyed on the loaded agent's id, not the
+  // raw route param, so an unresolvable URL cannot be remembered as "viewed".
+  // (The nav also filters these against what the hub returns you, so the
+  // worst case for a stale id is an unused entry that the cap ages out.)
+  useEffect(() => {
+    if (data?.id) recordAgentView(recentsScope(user), data.id)
+  }, [data?.id, user])
 
   const onConfirmDelete = async () => {
     if (!id) return
