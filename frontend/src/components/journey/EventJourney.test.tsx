@@ -25,20 +25,20 @@ describe('EventJourney', () => {
     expect(screen.getByText('forgejo')).toBeInTheDocument()
     expect(screen.getByText('doc-writer')).toBeInTheDocument()
     expect(screen.getByText('review-bot')).toBeInTheDocument()
-    expect(screen.getByText('via trigger t1')).toBeInTheDocument()
-    expect(screen.getByText('via trigger t2')).toBeInTheDocument()
+    expect(screen.getByText('via subscription t1')).toBeInTheDocument()
+    expect(screen.getByText('via subscription t2')).toBeInTheDocument()
     // outcome tags per fan-out step
     expect(screen.getByText('delivered')).toBeInTheDocument()
     expect(screen.getByText('failed')).toBeInTheDocument()
     // error message rendered
     expect(screen.getByText('LLM timeout')).toBeInTheDocument()
     // no unmatched terminal
-    expect(screen.queryByText(/no rule picked this event up/i)).toBeNull()
+    expect(screen.queryByText(/no subscription picked this event up/i)).toBeNull()
   })
 
   it('renders the unmatched terminal state', () => {
     renderJourney(<EventJourney connector="forgejo" timestamp="2026-06-10T08:31:25Z" matches={[]} />)
-    expect(screen.getByText(/no rule picked this event up/i)).toBeInTheDocument()
+    expect(screen.getByText(/no subscription picked this event up/i)).toBeInTheDocument()
     expect(screen.getByText(/stays in the/i)).toBeInTheDocument()
   })
 
@@ -62,11 +62,11 @@ describe('EventJourney', () => {
 })
 
 describe('ChannelFlowDiagram', () => {
-  it('shows producers, router and consumers', () => {
+  it('shows producers, subscription transfer and consumers', () => {
     render(<MemoryRouter><ChannelFlowDiagram /></MemoryRouter>)
     expect(screen.getByText('forgejo')).toBeInTheDocument()
     expect(screen.getByText('cron')).toBeInTheDocument()
-    expect(screen.getByText(/router/)).toBeInTheDocument()
+    expect(screen.getByText(/subscriptions/)).toBeInTheDocument()
     expect(screen.getByText('code-reviewer')).toBeInTheDocument()
   })
 })

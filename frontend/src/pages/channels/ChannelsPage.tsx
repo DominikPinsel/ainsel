@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { useChannels, useChannelCounts, type ChannelSummary } from '../../api/channels'
+import { channelPath, useChannelCounts, useChannels, type ChannelSummary } from '../../api/channels'
 import { ChannelFlowDiagram } from '../../components/journey/EventJourney'
 import { Titleblock } from '../../layout/Titleblock'
 import { Panel } from '../../primitives/Panel'
@@ -16,10 +16,15 @@ function RoleTags({ roles }: { roles: ChannelSummary['roles'] }) {
   )
 }
 
+function OriginTag({ origin }: { origin: ChannelSummary['origin'] }) {
+  const label = origin === 'connector' ? 'connector' : origin === 'agent' ? 'agent inbox' : 'built-in'
+  return <Tag variant={origin === 'agent' ? 'ok' : 'default'}>{label}</Tag>
+}
+
 function ChannelCard({ channel }: { channel: ChannelSummary }) {
   const counts = useChannelCounts(channel)
   return (
-    <Link to={`/channels/${encodeURIComponent(channel.name)}`} className="channel-card">
+    <Link to={channelPath(channel.id)} className="channel-card">
       <div className="ch-name">
         <span
           className={`ch-mark ${channel.origin === 'builtin' ? 'builtin' : channel.origin === 'agent' ? 'agent' : ''}`}
@@ -27,7 +32,11 @@ function ChannelCard({ channel }: { channel: ChannelSummary }) {
         />
         {channel.displayName}
       </div>
-      <RoleTags roles={channel.roles} />
+      <div className="ch-desc">{channel.description}</div>
+      <div className="ch-roles">
+        <OriginTag origin={channel.origin} />
+        <RoleTags roles={channel.roles} />
+      </div>
       <div className="ch-stats">
         <div>
           <div className="ch-figure">{counts.events24h}</div>
@@ -67,9 +76,12 @@ export function ChannelsPage() {
         <Panel title="Flow" className="cropped">
           <ChannelFlowDiagram />
           <div className="label" style={{ marginTop: 8, color: 'var(--ink-3)' }}>
-            Every event is produced into a channel and fanned out into further channels by
-            rules. Open a channel to trace what flowed through it, or open an event to see its
-            full journey.
+            Events are born in a channel and <b>transferred</b> into further channels by the
+            subscriptions those channels own — a consumer takes everything from its own
+            channel. Channels are addressed by id; two channels may share a label (a
+            connector and an agent both named <b>forgejo</b> are two channels). Open a
+            channel to see its subscriptions and what flowed through it, or open an event
+            to see its full journey.
           </div>
         </Panel>
 
@@ -84,7 +96,7 @@ export function ChannelsPage() {
         ) : (
           <div className="channel-grid">
             {channels.map((c) => (
-              <ChannelCard key={c.name} channel={c} />
+              <ChannelCard key={c.id} channel={c} />
             ))}
           </div>
         )}
