@@ -8,6 +8,7 @@ import (
 
 	"github.com/DominikPinsel/ainsel/services/hub/internal/api"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/authz"
+	"github.com/DominikPinsel/ainsel/services/hub/internal/channels"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/chat"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/cron"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/eventqueue"
@@ -39,6 +40,10 @@ type container struct {
 	authzChecker   *authz.Checker
 	idx            *trigger.Index
 	triggerStore   *triggers.Store
+	channelStore   *channels.Store
+	channels       *channels.Service
+	channelRecon   *channels.Reconciler
+	transfer       *channels.Transfer
 	cronEmitter    *cron.Emitter
 	eventQueue     *eventqueue.Store
 	invStore       invocations.Store
@@ -131,6 +136,17 @@ func newContainer(ctx context.Context, cfg containerConfig, deps containerDeps) 
 	slog.Info("invocation history store ready", "backend", "postgres", "retention", invocations.Retention)
 	c.cronEmitter = cron.New(c.eventQueue, c.invStore)
 
+	// --- Channels ---
+	// The channel registry sits on top of the trigger registry and the event
+	// queue: every connector and every agent owns a stream, and the transfers
+	// recorded on those streams move events into inboxes no trigger matched.
+	c.channelStore = channels.NewStore(pool)
+	c.channels = channels.NewService(c.channelStore, c.eventQueue, c.triggerStore)
+	c.channelRecon = channels.NewReconciler(c.channelStore, c.eventQueue,
+		channels.NewKubeRegistry(c.apiClient, cfg.namespace))
+	c.transfer = channels.NewTransfer(c.channels, c.eventQueue, c.invStore)
+	c.cronEmitter.SetChannels(c.channels, c.transfer)
+
 	// --- Service layer ---
 	c.mcpSvc = wireMCP(pool)
 	c.personaSvc = wirePersonas(pool, c.apiClient, cfg.namespace)
@@ -147,7 +163,7 @@ func newContainer(ctx context.Context, cfg containerConfig, deps containerDeps) 
 	}
 
 	// --- Router ---
-	c.rtr = router.New(c.eventQueue, c.idx, c.apiServer, c.invStore)
+	c.rtr = router.New(c.eventQueue, c.idx, c.apiServer, c.invStore, c.transfer)
 	if err != nil {
 		c.Close()
 		return nil, fmt.Errorf("create router: %w", err)

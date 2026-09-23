@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/DominikPinsel/ainsel/services/hub/internal/channels"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/eventqueue"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/invocations"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/metrics"
@@ -20,8 +21,10 @@ import (
 
 // ConnectorName is the canonical connector value stamped on cron-emitted
 // events. The agent runtime recognises it and renders the event's prompt
-// verbatim instead of the forgejo event template.
-const ConnectorName = "cron"
+// verbatim instead of the forgejo event template. It is not a connector: no
+// WebhookConnector CR carries this name, and no connector channel is
+// provisioned for it — see the shared source labels.
+const ConnectorName = ainselapishared.SourceCron
 
 // Header names propagated to agents (mirrors the router so the agent runtime
 // and invocation tracking treat cron fires identically to webhook events).
@@ -46,6 +49,18 @@ type entry struct {
 	nextRun   time.Time
 }
 
+// InboxResolver answers which channel an agent's events are born in, creating
+// the stream on first sight. Implemented by *channels.Service.
+type InboxResolver interface {
+	InboxChannelFor(ctx context.Context, agentName string) (string, error)
+}
+
+// Transferer performs the bridge subscriptions that copy an event out of the
+// channel it was born in. Implemented by *channels.Transfer.
+type Transferer interface {
+	Apply(ctx context.Context, in channels.TransferInput) ([]channels.TransferResult, error)
+}
+
 // Emitter watches CronTrigger resources (via informer callbacks) and fires
 // them on schedule, inserting a synthetic event and enqueuing a task for the
 // target agent. It is the cron equivalent of the webhook-driven router.
@@ -56,6 +71,20 @@ type Emitter struct {
 	invStore invocations.Store
 	now      func() time.Time
 	fire     fireFn
+
+	// channels and transfer are optional. Without them a cron event is stored
+	// with no birth channel and moves no further than the agent its CronTrigger
+	// names.
+	channels InboxResolver
+	transfer Transferer
+}
+
+// SetChannels wires the channel registry and the transfer step, so a scheduled
+// prompt is recorded as born in its agent's inbox and is carried along any
+// bridge attached to that inbox.
+func (e *Emitter) SetChannels(res InboxResolver, tr Transferer) {
+	e.channels = res
+	e.transfer = tr
 }
 
 // New creates an Emitter backed by the given event queue store and invocation
@@ -218,11 +247,24 @@ func (e *Emitter) fireEntry(en *entry) {
 func (e *Emitter) publish(agentRef, triggerName, invocationID string, evt ainselapishared.Event) error {
 	ctx := context.Background()
 
+	// A scheduled prompt is born directly in its agent's inbox: no connector
+	// published it, the hub did.
+	var birthChannel string
+	if e.channels != nil {
+		id, err := e.channels.InboxChannelFor(ctx, agentRef)
+		if err != nil {
+			slog.Warn("cron publish: could not resolve inbox channel", "agent", agentRef, "error", err)
+		} else {
+			birthChannel = id
+		}
+	}
+
 	// Insert the synthetic event.
 	headersJSON, _ := json.Marshal(evt.Headers)
 	if err := e.eq.InsertEvent(ctx, eventqueue.Event{
 		ID:        evt.ID,
 		Connector: evt.Connector,
+		ChannelID: birthChannel,
 		Headers:   headersJSON,
 		Data:      evt.Data,
 		Raw:       string(evt.Data),
@@ -230,7 +272,7 @@ func (e *Emitter) publish(agentRef, triggerName, invocationID string, evt ainsel
 		return fmt.Errorf("insert cron event: %w", err)
 	}
 
-	// Mark it as routed immediately (cron events bypass the router).
+	// Mark it as routed immediately (cron events bypass trigger matching).
 	if err := e.eq.MarkRouted(ctx, evt.ID); err != nil {
 		return fmt.Errorf("mark cron event routed: %w", err)
 	}
@@ -255,7 +297,30 @@ func (e *Emitter) publish(agentRef, triggerName, invocationID string, evt ainsel
 	}); err != nil {
 		return fmt.Errorf("enqueue cron task for agent %s: %w", agentRef, err)
 	}
+
+	// Whatever else is attached to that inbox now sees the same scheduled run.
+	e.transferFromInbox(ctx, evt, birthChannel, agentRef)
 	return nil
+}
+
+// transferFromInbox performs the bridge subscriptions out of a cron event's
+// birth channel. A failure is logged rather than returned: the run is already
+// queued for the agent the CronTrigger names, and a broken grouping must not
+// make the schedule look like it failed.
+func (e *Emitter) transferFromInbox(ctx context.Context, evt ainselapishared.Event, birthChannel, agentRef string) {
+	if e.transfer == nil || birthChannel == "" {
+		return
+	}
+	if _, err := e.transfer.Apply(ctx, channels.TransferInput{
+		EventID:      evt.ID,
+		BirthChannel: birthChannel,
+		SourceLabel:  evt.Connector,
+		Headers:      evt.Headers,
+		Payload:      evt.Data,
+		Delivered:    []string{agentRef},
+	}); err != nil {
+		slog.Error("cron transfer failed", "event_id", evt.ID, "channel", birthChannel, "error", err)
+	}
 }
 
 // SetNow replaces the clock used to compute initial next-run times. For tests.
