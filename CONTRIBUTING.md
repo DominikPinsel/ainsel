@@ -248,6 +248,32 @@ If a run fails partway, re-run it: the chart job gates `chart/Chart.yaml`
 against the release version, image pushes are idempotent per tag, and the
 Release upload uses `--clobber`.
 
+### One-time setup: let the workflow open the release PR
+
+release-please needs to **create and approve pull requests**, and a repo can allow
+`GITHUB_TOKEN` to write PRs while still forbidding *workflows* from opening them.
+That second switch is a repo setting, and the job's own token cannot inspect it,
+so CI cannot catch it early — the run just fails with:
+
+```
+release-please failed: GitHub Actions is not permitted to create or approve pull requests
+```
+
+Fix: **Settings → Actions → General → Workflow permissions → tick "Allow GitHub
+Actions to create and approve pull requests" → Save**, then re-run the failed job.
+Alternatively create a PAT with write permission on pull requests, store it as the
+repository secret `RELEASE_PLEASE_TOKEN`, and `release.yml` will pass it to the
+action; that also covers the approval step under branch protection, at the cost of
+a long-lived credential to rotate. With the secret unset the workflow keeps using
+`GITHUB_TOKEN`.
+
+Until that setting is on the release pipeline produces **nothing at all**: no
+`vX.Y.Z` tag, so the `chart` and `images` jobs skip, and no `:latest` image. As of
+writing no GitHub release exists — `git ls-remote --tags origin` is empty and the
+workflow has had exactly one run, which failed on this setting — so the `latest`,
+`0.1.0` … `0.3.0` tags on Docker Hub predate release-please and are not releases of
+anything.
+
 ### Why promotions are merge commits
 
 release-please reads the conventional commits **on `main`**. A squash promotion
