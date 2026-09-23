@@ -1,15 +1,19 @@
 import { Link } from 'react-router-dom'
-import { channelPath, channelIdForProducer } from '../../api/channels'
+import {
+  channelPath,
+  channelIdForProducer,
+  isDirectSource,
+} from '../../api/channels'
 import { Tag } from '../../primitives/Tag'
 import { formatISO } from '../../utils/time'
 import './EventJourney.css'
 
 /**
- * Visual trace of one event through the channel system: born in its home
- * channel, transferred into further channels by their subscriptions,
- * delivered (or not). Mirrors the "event journey" from the Channels design
- * spec. Channels are addressed by id — connector `forgejo` and agent
- * `forgejo` are two channels; the fan-out steps land in the agent's inbox.
+ * Visual trace of one event through the channel system: born in a channel
+ * (or born directly in an agent's inbox, for schedules and chat), then
+ * transferred into further channels by their subscriptions. Channels are
+ * addressed by id — connector `forgejo` and agent `forgejo` are two
+ * channels; the transfer steps land in the agent's inbox channel.
  */
 
 type JourneyStep = {
@@ -49,10 +53,10 @@ function ChannelChip({
   to,
 }: {
   name: string
-  mark: 'produced' | 'fanout' | 'builtin' | 'none'
+  mark: 'produced' | 'fanout' | 'direct' | 'none'
   to?: string
 }) {
-  const cls = `ch-mark ${mark === 'produced' ? 'produced' : mark === 'builtin' ? 'builtin' : ''}`
+  const cls = `ch-mark ${mark === 'produced' ? 'produced' : mark === 'direct' ? 'direct' : ''}`
   const inner = (
     <>
       <span className={cls} aria-hidden="true" />
@@ -83,7 +87,11 @@ export function EventJourney({
     steps.push({
       key: 'home',
       channel: connector,
-      origin: 'produced here',
+      origin: isDirectSource(connector)
+        ? connector === 'chat'
+          ? 'born directly in the agent inboxes — chat message'
+          : 'born directly in the agent inboxes — scheduled tick'
+        : 'born here',
       at: timestamp,
       dotTone: 'default',
     })
@@ -114,8 +122,14 @@ export function EventJourney({
             <div className="journey-headline">
               <ChannelChip
                 name={s.channel}
-                mark={i === 0 ? 'produced' : s.channel === 'cron' || s.channel === 'chat' ? 'builtin' : 'fanout'}
-                to={i === 0 ? channelPath(channelIdForProducer(s.channel)) : channelPath(`agent:${s.channel}`)}
+                mark={i === 0 ? (isDirectSource(s.channel) ? 'direct' : 'produced') : 'fanout'}
+                to={
+                  i === 0
+                    ? isDirectSource(s.channel)
+                      ? undefined
+                      : channelPath(channelIdForProducer(s.channel))
+                    : channelPath(`agent:${s.channel}`)
+                }
               />
               {i > 0 ? <Tag variant={TONE_VARIANT[s.dotTone]}>{s.dotTone === 'ok' ? 'delivered' : s.dotTone === 'err' ? 'failed' : s.dotTone === 'warn' ? 'running' : 'queued'}</Tag> : <Tag>home</Tag>}
             </div>
@@ -142,30 +156,5 @@ export function EventJourney({
         </li>
       ) : null}
     </ol>
-  )
-}
-
-/** Small static birth → transfer → consumption illustration for overviews. */
-export function ChannelFlowDiagram() {
-  return (
-    <div className="channel-flow" aria-hidden="true">
-      <span className="flow-node">
-        <span className="ch-mark" /> forgejo
-      </span>
-      <span className="flow-node">
-        <span className="ch-mark" /> cron
-      </span>
-      <span className="flow-arrow">⟶</span>
-      <span className="flow-node">
-        <b>subscriptions</b> · transfer
-      </span>
-      <span className="flow-arrow">⟶</span>
-      <span className="flow-node">
-        <span className="ch-mark agent" /> code-reviewer
-      </span>
-      <span className="flow-node">
-        <span className="ch-mark agent" /> issue-triager
-      </span>
-    </div>
   )
 }

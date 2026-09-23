@@ -2,7 +2,12 @@ import { describe, expect, it, vi } from 'vitest'
 import { renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
-import { BUILTIN_CHANNELS, useChannels } from './channels'
+import {
+  buildConnections,
+  channelPath,
+  isDirectSource,
+  useChannels,
+} from './channels'
 import { useInvocations } from './invocations'
 
 function wrapper({ children }: { children: ReactNode }) {
@@ -26,54 +31,49 @@ const connectorsPayload = {
   totalPages: 1,
 }
 
+function stubLists(agents: unknown, connectors: unknown) {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((url: string) => {
+      if (url.includes('/agents')) {
+        return Promise.resolve(new Response(JSON.stringify(agents), { status: 200 }))
+      }
+      if (url.includes('/connectors')) {
+        return Promise.resolve(new Response(JSON.stringify(connectors), { status: 200 }))
+      }
+      return Promise.resolve(new Response('{}', { status: 200 }))
+    }),
+  )
+}
+
 describe('useChannels', () => {
-  it('lists agents, connectors and built-ins as id-addressed channels', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn((url: string) => {
-        if (url.includes('/agents')) {
-          return Promise.resolve(new Response(JSON.stringify(agentsPayload), { status: 200 }))
-        }
-        if (url.includes('/connectors')) {
-          return Promise.resolve(new Response(JSON.stringify(connectorsPayload), { status: 200 }))
-        }
-        return Promise.resolve(new Response('{}', { status: 200 }))
-      }),
-    )
+  it('lists connectors and agents as id-addressed channels without roles', async () => {
+    stubLists(agentsPayload, connectorsPayload)
     try {
       const { result } = renderHook(() => useChannels(), { wrapper })
       await waitFor(() => expect(result.current.isLoading).toBe(false))
       const ids = result.current.channels.map((c) => c.id)
-      expect(ids).toEqual(['builtin:chat', 'builtin:cron', 'connector:forgejo', 'agent:review-bot'])
+      // no built-in cron/chat channels; one channel per connector and agent
+      expect(ids).toEqual(['connector:forgejo', 'agent:review-bot'])
       const forgejo = result.current.channels.find((c) => c.id === 'connector:forgejo')
-      expect(forgejo?.roles).toEqual(['produces'])
-      expect(forgejo?.description).toContain('forgejo connector')
+      expect(forgejo?.description).toContain('forgejo')
       expect(forgejo?.entityId).toBe('c1')
+      expect(forgejo?.origin).toBe('connector')
       const bot = result.current.channels.find((c) => c.id === 'agent:review-bot')
-      expect(bot?.roles).toEqual(['consumes'])
-      expect(bot?.description).toContain('Inbox of agent')
+      expect(bot?.description).toContain('review-bot')
       expect(bot?.entityId).toBe('a1')
+      expect(bot?.origin).toBe('agent')
+      // the summary type carries no produces/consumes role at all
+      expect('roles' in (forgejo ?? {})).toBe(false)
     } finally {
       vi.unstubAllGlobals()
     }
   })
 
   it('keeps same-named channels distinct (connector and agent are two channels)', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn((url: string) => {
-        if (url.includes('/agents')) {
-          return Promise.resolve(
-            new Response(JSON.stringify({ items: [{ id: 'a9', name: 'forgejo' }], total: 1 }), { status: 200 }),
-          )
-        }
-        if (url.includes('/connectors')) {
-          return Promise.resolve(
-            new Response(JSON.stringify({ items: [{ id: 'c9', name: 'forgejo' }], total: 1 }), { status: 200 }),
-          )
-        }
-        return Promise.resolve(new Response('{}', { status: 200 }))
-      }),
+    stubLists(
+      { items: [{ id: 'a9', name: 'forgejo' }], total: 1 },
+      { items: [{ id: 'c9', name: 'forgejo' }], total: 1 },
     )
     try {
       const { result } = renderHook(() => useChannels(), { wrapper })
@@ -84,10 +84,45 @@ describe('useChannels', () => {
       vi.unstubAllGlobals()
     }
   })
+})
 
-  it('exposes the built-in channels', () => {
-    expect(BUILTIN_CHANNELS.map((c) => c.name)).toEqual(['cron', 'chat'])
-    for (const b of BUILTIN_CHANNELS) expect(b.roles).toContain('produces')
+describe('buildConnections', () => {
+  it('maps subscriptions to channel-to-channel edges', async () => {
+    stubLists(agentsPayload, connectorsPayload)
+    try {
+      const { result } = renderHook(() => useChannels(), { wrapper })
+      await waitFor(() => expect(result.current.isLoading).toBe(false))
+      const conns = buildConnections(result.current.channels, [
+        { id: 't1', name: 'on-issues', agentRef: 'a1', connectorRef: 'c1', filters: [] },
+        { id: 't2', name: 'ghost', agentRef: 'gone', connectorRef: 'cX', filters: [] },
+      ])
+      expect(conns[0].from?.id).toBe('connector:forgejo')
+      expect(conns[0].to?.id).toBe('agent:review-bot')
+      expect(conns[0].subscription).toBe('on-issues')
+      // unresolvable endpoints keep their registry refs
+      expect(conns[1].from).toBeUndefined()
+      expect(conns[1].fromRef).toBe('cX')
+      expect(conns[1].to).toBeUndefined()
+      expect(conns[1].toRef).toBe('gone')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})
+
+describe('isDirectSource', () => {
+  it('treats the hub synthetic labels as direct births, not channels', () => {
+    expect(isDirectSource('cron')).toBe(true)
+    expect(isDirectSource('chat')).toBe(true)
+    expect(isDirectSource('forgejo')).toBe(false)
+    expect(isDirectSource(undefined)).toBe(false)
+  })
+})
+
+describe('channelPath', () => {
+  it('namespaces routes by origin', () => {
+    expect(channelPath('connector:forgejo')).toBe('/channels/connector/forgejo')
+    expect(channelPath('agent:my agent')).toBe('/channels/agent/my%20agent')
   })
 })
 

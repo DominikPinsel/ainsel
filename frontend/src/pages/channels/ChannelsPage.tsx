@@ -1,61 +1,137 @@
 import { Link } from 'react-router-dom'
-import { channelPath, useChannelCounts, useChannels, type ChannelSummary } from '../../api/channels'
-import { ChannelFlowDiagram } from '../../components/journey/EventJourney'
+import {
+  buildConnections,
+  channelPath,
+  useChannelCounts,
+  useChannels,
+  type ChannelSummary,
+} from '../../api/channels'
+import { useTriggers } from '../../api/triggers'
 import { Titleblock } from '../../layout/Titleblock'
 import { Panel } from '../../primitives/Panel'
+import { RegisterTable, type Column } from '../../primitives/RegisterTable'
 import { SectionStatus } from '../../primitives/SectionStatus'
 import { Tag } from '../../primitives/Tag'
 import './ChannelsPage.css'
 
-function RoleTags({ roles }: { roles: ChannelSummary['roles'] }) {
+function OriginTag({ origin }: { origin: ChannelSummary['origin'] }) {
   return (
-    <div className="ch-roles">
-      {roles.includes('produces') ? <Tag solid>produces</Tag> : null}
-      {roles.includes('consumes') ? <Tag variant="ok">consumes</Tag> : null}
-    </div>
+    <Tag variant={origin === 'agent' ? 'ok' : 'default'}>
+      {origin === 'agent' ? 'agent inbox' : 'connector'}
+    </Tag>
   )
 }
 
-function OriginTag({ origin }: { origin: ChannelSummary['origin'] }) {
-  const label = origin === 'connector' ? 'connector' : origin === 'agent' ? 'agent inbox' : 'built-in'
-  return <Tag variant={origin === 'agent' ? 'ok' : 'default'}>{label}</Tag>
-}
-
-function ChannelCard({ channel }: { channel: ChannelSummary }) {
+function ChannelCountsCell({ channel }: { channel: ChannelSummary }) {
   const counts = useChannelCounts(channel)
   return (
-    <Link to={channelPath(channel.id)} className="channel-card">
-      <div className="ch-name">
+    <span style={{ display: 'flex', gap: 18, justifyContent: 'flex-end' }}>
+      <span>
+        <b>{counts.events24h}</b>
+        <span className="label" style={{ color: 'var(--ink-4)' }}> 24h</span>
+      </span>
+      <span style={{ color: counts.failed24h > 0 ? 'var(--err)' : undefined }}>
+        <b>{counts.failed24h}</b>
+        <span className="label" style={{ color: 'var(--ink-4)' }}> failed</span>
+      </span>
+    </span>
+  )
+}
+
+const columns: readonly Column<ChannelSummary>[] = [
+  {
+    key: 'name',
+    header: 'Channel',
+    cell: (c) => (
+      <span style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+        <Link
+          to={channelPath(c.id)}
+          style={{ fontWeight: 600, color: 'var(--ink)' }}
+        >
+          {c.displayName}
+        </Link>
         <span
-          className={`ch-mark ${channel.origin === 'builtin' ? 'builtin' : channel.origin === 'agent' ? 'agent' : ''}`}
-          aria-hidden="true"
+          className="label"
+          style={{ color: 'var(--ink-4)', fontFamily: 'var(--mono, monospace)', fontSize: 11 }}
+        >
+          {c.id}
+        </span>
+      </span>
+    ),
+    sortable: true,
+  },
+  {
+    key: 'origin',
+    header: 'Provisioned for',
+    cell: (c) => <OriginTag origin={c.origin} />,
+  },
+  {
+    key: 'description',
+    header: 'Description',
+    cell: (c) => (
+      <span style={{ color: 'var(--ink-2)', fontSize: 13 }}>{c.description}</span>
+    ),
+  },
+  {
+    key: 'counts',
+    header: 'Last 24h',
+    align: 'right',
+    cell: (c) => <ChannelCountsCell channel={c} />,
+  },
+]
+
+/** Every subscription in the system as a real channel → channel edge. */
+function ConnectionsPanel() {
+  const { channels } = useChannels()
+  const { data, isLoading, error } = useTriggers({ pageSize: 200 })
+  const connections = buildConnections(channels, data?.items)
+
+  return (
+    <Panel title={`Connections · ${connections.length}`} className="cropped">
+      {isLoading ? (
+        <SectionStatus state="loading" />
+      ) : error ? (
+        <SectionStatus state="error" />
+      ) : (
+        <RegisterTable
+          rows={connections}
+          rowKey={(r) => `${r.subscription}#${r.fromRef ?? ''}#${r.toRef ?? ''}`}
+          withRowNumbers={false}
+          emptyLabel="No subscriptions yet — events stay in the channel they were born in until an inbox subscribes to it."
+          columns={[
+            {
+              key: 'from',
+              header: 'Born in',
+              cell: (r) =>
+                r.from ? (
+                  <Link to={channelPath(r.from.id)}>{r.from.displayName}</Link>
+                ) : (
+                  <span style={{ color: 'var(--ink-4)' }}>
+                    {r.fromRef ? `connector ${r.fromRef}` : '—'}
+                  </span>
+                ),
+            },
+            {
+              key: 'subscription',
+              header: 'Subscription',
+              cell: (r) => <b>{r.subscription}</b>,
+            },
+            {
+              key: 'to',
+              header: 'Transferred into',
+              cell: (r) =>
+                r.to ? (
+                  <Link to={channelPath(r.to.id)}>{r.to.displayName}</Link>
+                ) : (
+                  <span style={{ color: 'var(--ink-4)' }}>
+                    {r.toRef ? `agent ${r.toRef}` : '—'}
+                  </span>
+                ),
+            },
+          ]}
         />
-        {channel.displayName}
-      </div>
-      <div className="ch-desc">{channel.description}</div>
-      <div className="ch-roles">
-        <OriginTag origin={channel.origin} />
-        <RoleTags roles={channel.roles} />
-      </div>
-      <div className="ch-stats">
-        <div>
-          <div className="ch-figure">{counts.events24h}</div>
-          <div className="ch-figure-label">events 24h</div>
-        </div>
-        <div>
-          <div className={`ch-figure ${counts.unmatched24h > 0 ? 'err' : ''}`}>
-            {counts.unmatched24h}
-          </div>
-          <div className="ch-figure-label">unmatched</div>
-        </div>
-        <div>
-          <div className={`ch-figure ${counts.failed24h > 0 ? 'err' : ''}`}>
-            {counts.failed24h}
-          </div>
-          <div className="ch-figure-label">failed</div>
-        </div>
-      </div>
-    </Link>
+      )}
+    </Panel>
   )
 }
 
@@ -72,18 +148,15 @@ export function ChannelsPage() {
         }
         title={<>Channels</>}
       />
-      <div className="channels-page" style={{ padding: '28px 32px' }}>
-        <Panel title="Flow" className="cropped">
-          <ChannelFlowDiagram />
-          <div className="label" style={{ marginTop: 8, color: 'var(--ink-3)' }}>
-            Events are born in a channel and <b>transferred</b> into further channels by the
-            subscriptions those channels own — a consumer takes everything from its own
-            channel. Channels are addressed by id; two channels may share a label (a
-            connector and an agent both named <b>forgejo</b> are two channels). Open a
-            channel to see its subscriptions and what flowed through it, or open an event
-            to see its full journey.
-          </div>
-        </Panel>
+      <div className="channels-page" style={{ padding: '28px 32px', display: 'grid', gap: 24 }}>
+        <div className="label" style={{ color: 'var(--ink-3)', marginTop: -8 }}>
+          Channels are plain streams — events are <b>born</b> in a channel, a{' '}
+          <b>subscription</b> on a destination channel <b>transfers</b> matching events
+          into it, and an agent simply takes <b>everything</b> from its own channel.
+          A channel has no producer or consumer nature; it just holds what arrived.
+          Identity is the id — two channels may share a label (a connector and an
+          agent both named <b>forgejo</b> are two channels).
+        </div>
 
         {isLoading ? (
           <Panel className="cropped">
@@ -94,12 +167,18 @@ export function ChannelsPage() {
             <SectionStatus state="error" />
           </Panel>
         ) : (
-          <div className="channel-grid">
-            {channels.map((c) => (
-              <ChannelCard key={c.id} channel={c} />
-            ))}
-          </div>
+          <Panel title={`Channels · ${channels.length}`} className="cropped">
+            <RegisterTable
+              rows={channels}
+              columns={columns}
+              rowKey={(c) => c.id}
+              withRowNumbers={false}
+              emptyLabel="No channels yet — each connector and each agent provisions one automatically."
+            />
+          </Panel>
         )}
+
+        <ConnectionsPanel />
       </div>
     </>
   )
