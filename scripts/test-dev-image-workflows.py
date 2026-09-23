@@ -121,7 +121,28 @@ def check_workflow(path: Path) -> list[str]:
             problems.append(f"{event} on {ref}: :dev in tags = {has_dev}")
         if path.name == "dev-image-pi.yml":
             problems += check_pi_variants(got, ref, problems)
+            problems += check_pi_base(got, event, ref)
     return problems
+
+
+def check_pi_base(got: dict[str, str], event: str, ref: str) -> list[str]:
+    """A variant must not FROM a tag that does not exist when it builds.
+
+    buildx resolves FROM from the registry, not the runner's image store, so a
+    build-only run has no :<sha> of its own to build on. Getting this wrong fails
+    the build (learned from run 35830189618); the alternative - falling back to a
+    floating tag - builds something whose base is not the one just compiled, which
+    is only acceptable when nothing is being published from it.
+    """
+    published = got.get("publish") == "true"
+    want = SHA[:7] if published else "dev"
+    got_base = got.get("base_tag")
+    if got_base != want:
+        return [
+            f"{event} on {ref}: variants build on base_tag={got_base!r}, want {want!r} "
+            f"({'this run pushed :<sha>' if published else 'nothing was pushed, so :<sha> does not exist'})"
+        ]
+    return []
 
 
 def check_pi_variants(got: dict[str, str], ref: str, seen: list[str]) -> list[str]:
@@ -160,10 +181,10 @@ def check_pi_workflow() -> list[str]:
         if step.get("if") != "github.ref != 'refs/heads/main'":
             problems.append(f"{name}: if={step.get('if')!r} - main must not build variants")
         args = str((step.get("with") or {}).get("build-args"))
-        if "BASE_TAG=${{ steps.meta.outputs.short_sha }}" not in args:
+        if "BASE_TAG=${{ steps.meta.outputs.base_tag }}" not in args:
             problems.append(
-                f"{name}: build-args={args!r} - the variant must build on this run's "
-                "base, not on whatever :dev happens to be"
+                f"{name}: build-args={args!r} - the base must come from the same step "
+                "that decides whether it was published, not a hardcoded tag"
             )
     return problems
 

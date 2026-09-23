@@ -64,6 +64,17 @@ jobs:
             echo "go_tags=dpinsel/ainsel-pi-go:local-check" >> "$GITHUB_OUTPUT"
             echo "maui_tags=dpinsel/ainsel-pi-maui:local-check" >> "$GITHUB_OUTPUT"
           fi
+          # The variants FROM this run's base, never a floating tag: a build tagged
+          # with its own SHA must not silently contain whatever :dev happens to be.
+          # Only possible once the base has reached the registry - buildx resolves
+          # FROM there, not from the runner's image store, so a build-only run (a PR,
+          # or a dispatch without publish) has no :<sha> of its own to build on and
+          # falls back to :dev.
+          if [ "$publish" = "true" ]; then
+            echo "base_tag=${short_sha}" >> "$GITHUB_OUTPUT"
+          else
+            echo "base_tag=dev" >> "$GITHUB_OUTPUT"
+          fi
           {
             echo "short_sha=${short_sha}"
             echo "tags<<EOF"
@@ -108,7 +119,7 @@ jobs:
           provenance: false
           sbom: false
           build-args: |
-            BASE_TAG=${{ steps.meta.outputs.short_sha }}
+            BASE_TAG=${{ steps.meta.outputs.base_tag }}
           tags: ${{ steps.meta.outputs.go_tags }}
 
       # ---------- .NET MAUI variant (ainsel-pi-maui:8.0) -------------------
@@ -123,5 +134,5 @@ jobs:
           provenance: false
           sbom: false
           build-args: |
-            BASE_TAG=${{ steps.meta.outputs.short_sha }}
+            BASE_TAG=${{ steps.meta.outputs.base_tag }}
           tags: ${{ steps.meta.outputs.maui_tags }}
