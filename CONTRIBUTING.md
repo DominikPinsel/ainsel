@@ -124,6 +124,7 @@ repository on Forgejo, not here.
 | `ci-workflows.yml` | same, for `dev-image-*.yml` and their test | assert the publish decision for every event/branch combination |
 | `dev-image-<component>.yml` (8) | push to `main` or `develop`, path-filtered | build and push images (see tags below) |
 | `dev-image-<component>.yml` (8) | PR, or a dispatch without `publish`, path-filtered | **build only** - no login, no push, image discarded |
+| `maintenance-untag.yml` | weekly schedule, or dispatch | report (and, on an explicit dispatch, delete) stale Docker Hub tags - see [`docs/maintenance.md`](docs/maintenance.md) |
 | `gitleaks.yml` | push and PR on `main`/`develop` | secret scanning |
 | `deploy-docs-pages.yml` | push to `main` on docs paths | publish the docs site |
 | `release.yml` | push to `main`, or dispatch | release-please maintains the release PR; when one merges, publish images + chart and verify |
@@ -163,6 +164,11 @@ The pi variants additionally move their floating `:1.24` / `:8.0` tags on
 `develop` only, and always build against the base produced by their own run rather
 than whatever `:dev` happens to point at. They publish no per-build tag at all -
 see [`pi/README.md`](pi/README.md).
+
+Every tag these workflows write accumulates in the registry, and Docker Hub has no
+server-side retention for a personal namespace. [`docs/maintenance.md`](docs/maintenance.md)
+is the policy and the collection pass that keeps the account from growing without
+bound.
 
 ## Commit conventions
 
