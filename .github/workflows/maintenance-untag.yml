@@ -1,0 +1,138 @@
+name: Maintenance - Docker Hub tag retention
+
+# Every push to main/develop publishes a :<short-sha> image, and the pi variants
+# publish a <float>-<sha> tag per build. Nothing consumes those tags; they exist
+# for provenance. Docker Hub offers no server-side retention for a personal
+# namespace, so this workflow is the collection pass described in
+# docs/maintenance.md - the alternative is an ever-growing registry (456 tags /
+# 125 GB when this was written, 91% of the bytes in the pi* repos).
+#
+# Deleting is opt-in per run. The scheduled run only reports; a tag is removed
+# solely by a manual dispatch with `apply` set. That keeps an unattended cron
+# from ever taking an image out from under a running deployment.
+#
+# Required credentials for apply (the weekly report needs none):
+#   vars.DOCKERHUB_USERNAME   - existing, same as the dev-image workflows
+#   secrets.DOCKERHUB_TOKEN   - needs delete:delete-image scope. The token the
+#                               build workflows log in with may not have it; see
+#                               "Rotation notes" in docs/maintenance.md.
+
+on:
+  schedule:
+    # Mondays 05:17 UTC, off the hour so it does not queue behind the
+    # deployment repo's digest-aware dev rollout.
+    - cron: '17 5 * * 1'
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Delete the collected tags (default: report only)"
+        type: boolean
+        default: false
+      max_age_days:
+        description: Age after which a build tag becomes collectable
+        type: number
+        default: 30
+      keep_newest:
+        description: Newest :<short-sha> tags always kept, per repo
+        type: number
+        default: 20
+      keep_newest_variant:
+        description: Newest pi <float>-<sha> tags always kept (these are ~3 GB each)
+        type: number
+        default: 5
+      repos:
+        description: Restrict to these repos, space separated (empty = all)
+        type: string
+        default: ''
+      include_release_tags:
+        description: Also purge release tags superseded by a newer release
+        type: boolean
+        default: false
+      latest_release:
+        description: Newest published release version, required to purge release tags
+        type: string
+        default: ''
+  # The decision logic is the risky part of this workflow, so its tests run on
+  # every change to it - not just when a retention pass happens to be scheduled.
+  pull_request:
+    branches: [main, develop]
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'scripts/hub-retention.py'
+      - 'scripts/test_hub_retention.py'
+      - '.github/workflows/maintenance-untag.yml'
+      - 'docs/maintenance.md'
+
+# Nothing here talks to the GitHub API: the job reads the repo and calls Docker
+# Hub. An empty block gives GITHUB_TOKEN no permissions at all.
+permissions: {}
+
+concurrency:
+  group: hub-tag-retention
+  cancel-in-progress: false
+
+jobs:
+  tests:
+    name: Retention policy tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Unit tests
+        run: python3 -m unittest scripts.test_hub_retention -v
+
+  retention:
+    name: Report (or enforce) the policy
+    # A PR only needs the tests above; the registry is not touched.
+    if: ${{ github.event_name != 'pull_request' }}
+    needs: tests
+    runs-on: ubuntu-latest
+    env:
+      DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      # Dispatch inputs are passed to the shell as environment variables rather
+      # than interpolated into the script, so no input can inject shell syntax.
+      WANT_APPLY: ${{ github.event_name == 'workflow_dispatch' && inputs.apply && 'true' || 'false' }}
+      MAX_AGE_DAYS: ${{ inputs.max_age_days || '30' }}
+      KEEP_NEWEST: ${{ inputs.keep_newest || '20' }}
+      KEEP_NEWEST_VARIANT: ${{ inputs.keep_newest_variant || '5' }}
+      REPOS: ${{ inputs.repos }}
+      INCLUDE_RELEASE_TAGS: ${{ inputs.include_release_tags && 'true' || 'false' }}
+      LATEST_RELEASE: ${{ inputs.latest_release }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Retention pass
+        id: pass
+        run: |
+          set -euo pipefail
+          # Built as a quoted bash array in this same step: inputs arrive through
+          # the environment, so no value can inject shell syntax into the runner.
+          args=(--markdown "$RUNNER_TEMP/report.md")
+          if [ "${WANT_APPLY:-false}" = "true" ]; then args+=(--apply); fi
+          if [ -n "${MAX_AGE_DAYS:-}" ]; then args+=(--max-age-days "$MAX_AGE_DAYS"); fi
+          if [ -n "${KEEP_NEWEST:-}" ]; then args+=(--keep-newest "$KEEP_NEWEST"); fi
+          if [ -n "${KEEP_NEWEST_VARIANT:-}" ]; then
+            args+=(--keep-newest-variant "$KEEP_NEWEST_VARIANT")
+          fi
+          # Scheduled runs carry no inputs, so the empty values above leave the
+          # script's own defaults in charge.
+          for repo in ${REPOS:-}; do
+            args+=(--repo "$repo")
+          done
+          if [ "${INCLUDE_RELEASE_TAGS:-false}" = "true" ]; then
+            args+=(--include-release-tags --yes --latest-release "${LATEST_RELEASE:-}")
+          fi
+          python3 scripts/hub-retention.py "${args[@]}" | tee "$RUNNER_TEMP/pass.log"
+          collected=$(sed -n 's/^[A-Z ]*: \([0-9]\{1,\}\) of .*/\1/p' "$RUNNER_TEMP/pass.log" | tail -1)
+          echo "collected=${collected:-0}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish summary
+        if: always()
+        run: cat "$RUNNER_TEMP/report.md" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+
+      - name: Flag work left for a human
+        if: env.WANT_APPLY == 'false' && steps.pass.outputs.collected != '0'
+        run: |
+          echo "Dry run found ${{ steps.pass.outputs.collected }} collectable tags."
+          echo "Review the list, then re-run this workflow with apply=true."
+          echo "::warning::${{ steps.pass.outputs.collected }} tags are collectable and nothing was deleted"
