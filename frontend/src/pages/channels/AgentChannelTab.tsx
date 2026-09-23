@@ -2,11 +2,9 @@ import { Link } from 'react-router-dom'
 import {
   buildConnections,
   channelPath,
-  useChannelCounts,
+  useChannelSubscriptions,
   useChannels,
 } from '../../api/channels'
-import { useCustomChannels } from '../../api/customChannels'
-import { useTriggers } from '../../api/triggers'
 import { Button } from '../../primitives/Button'
 import { Panel } from '../../primitives/Panel'
 import { SectionStatus } from '../../primitives/SectionStatus'
@@ -15,34 +13,24 @@ import { Tag } from '../../primitives/Tag'
 type Props = { agentId: string; agentName: string }
 
 /**
- * The agent's inbox channel, as shown on the Agent detail page. Shows how
- * the outside world reaches this agent: which connector channels feed it
- * through which subscriptions, plus the direct sources that are born
- * straight in the inbox. Configuration (subscriptions, schedules) lives in
- * the channel view, which this links to.
+ * The agent's inbox channel, as shown on the Agent detail page: how the
+ * outside world reaches this agent — which channels feed the inbox through
+ * which subscriptions — plus the counts for what actually arrived.
+ * Configuration (subscriptions, schedules) lives in the channel view, which
+ * this links to.
  */
 export function AgentChannelTab({ agentId, agentName }: Props) {
-  const { channels, isLoading } = useChannels()
-  const { data, isLoading: subsLoading, error } = useTriggers({ pageSize: 200 })
-  const { data: local } = useCustomChannels()
-  const channelId = `agent:${agentName}`
-  const channel = channels.find((c) => c.id === channelId)
-  const counts = useChannelCounts(
-    channel ?? {
-      id: channelId,
-      name: agentName,
-      displayName: agentName,
-      description: '',
-      kind: 'agent',
-    },
-  )
+  const { data, isLoading } = useChannels({ pageSize: 500 })
+  const { data: subs, isLoading: subsLoading, error } = useChannelSubscriptions()
+  const channels = data?.items ?? []
+  // The inbox is provisioned from this agent, so its entity ref is the stable
+  // handle — the name is rename-able and may collide with a connector label.
+  const channel = channels.find((c) => c.kind === 'agent' && c.entityRef === agentId)
+  const channelId = channel?.id
 
-  // Connections into THIS agent's inbox: subscription edges whose source is a
-  // connector or custom channel. Match by resolved channel id, falling back
-  // to the agent registry id (hub edges) or the channel id (local bridges).
-  const feeds = buildConnections(channels, data?.items, local?.bridges).filter(
-    (c) => c.to?.id === channelId || c.toRef === `agent#${agentId}` || c.toRef === channelId,
-  )
+  const feeds = channelId
+    ? buildConnections(subs?.items, channels).filter((c) => c.to?.id === channelId)
+    : []
 
   if (isLoading && !channel) {
     return (
@@ -52,12 +40,25 @@ export function AgentChannelTab({ agentId, agentName }: Props) {
     )
   }
 
+  if (!channel) {
+    return (
+      <Panel title="Channel" className="cropped">
+        <div className="label" style={{ color: 'var(--ink-3)' }}>
+          This agent has no channel yet — the hub provisions one per agent on its next registry
+          sync.
+        </div>
+      </Panel>
+    )
+  }
+
+  const counts = channel.counts ?? { events: 0, unmatched: 0, failed: 0 }
+
   return (
     <div style={{ display: 'grid', gap: 20 }}>
       <Panel
         title="Channel"
         right={
-          <Link to={channelPath(channelId)}>
+          <Link to={channelPath(channel.id)}>
             <Button size="sm" variant="primary">
               Open channel
             </Button>
@@ -67,33 +68,33 @@ export function AgentChannelTab({ agentId, agentName }: Props) {
       >
         <div style={{ display: 'grid', gap: 12 }}>
           <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
-            <b style={{ fontSize: 16 }}>{agentName}</b>
+            <b style={{ fontSize: 16 }}>{channel.name || agentName}</b>
             <Tag variant="ok">agent inbox</Tag>
             <span
               className="label"
               style={{ color: 'var(--ink-4)', fontFamily: 'var(--mono, monospace)' }}
             >
-              {channelId}
+              {channel.id}
             </span>
           </div>
           <div style={{ color: 'var(--ink-2)', fontSize: 13 }}>
-            {channel?.description ?? `The inbox agent ${agentName} drains`}
+            {channel.description || `The inbox agent ${agentName} drains`}
           </div>
           <div style={{ display: 'flex', gap: 24, fontSize: 13, color: 'var(--ink-2)' }}>
             <span>
-              <b>{counts.events24h}</b> events reached this inbox in 24h
+              <b>{counts.events}</b> events reached this inbox in 24h
             </span>
             <span>
-              <b style={counts.failed24h > 0 ? { color: 'var(--signal)' } : undefined}>
-                {counts.failed24h}
+              <b style={counts.failed > 0 ? { color: 'var(--signal)' } : undefined}>
+                {counts.failed}
               </b>{' '}
               failed in 24h
             </span>
           </div>
           <div className="label" style={{ color: 'var(--ink-3)' }}>
-            The agent takes <b>everything</b> from this channel — matching happens
-            once, when a subscription transfers an event in. Subscriptions and
-            schedules are owned by the channel; configure them in the channel view.
+            The agent takes <b>everything</b> from this channel — matching happens once, when a
+            subscription transfers an event in. Subscriptions and schedules are owned by the
+            channel; configure them in the channel view.
           </div>
         </div>
       </Panel>
@@ -107,14 +108,13 @@ export function AgentChannelTab({ agentId, agentName }: Props) {
           <div style={{ display: 'grid', gap: 2 }}>
             {feeds.length === 0 ? (
               <div className="label" style={{ padding: '4px 0' }}>
-                No connector channel feeds this inbox yet. Nothing will arrive
-                until a subscription transfers events in — or an event is born
-                directly here.
+                No channel feeds this inbox yet. Nothing will arrive until a subscription transfers
+                events in — or an event is born directly here.
               </div>
             ) : (
               feeds.map((f, i) => (
                 <div
-                  key={`${f.subscription}#${f.fromRef ?? i}`}
+                  key={`${f.source}#${f.subscription}#${f.fromRef ?? i}`}
                   style={{
                     display: 'grid',
                     gridTemplateColumns: 'auto 1fr auto',
@@ -127,27 +127,27 @@ export function AgentChannelTab({ agentId, agentName }: Props) {
                 >
                   {f.from ? (
                     <Link to={channelPath(f.from.id)} style={{ fontWeight: 600 }}>
-                      {f.from.displayName}
+                      {f.from.name}
                     </Link>
                   ) : (
-                    <span style={{ color: 'var(--ink-4)' }}>
-                      {f.fromRef ?? 'unknown channel'}
-                    </span>
+                    <span style={{ color: 'var(--ink-4)' }}>{f.fromRef ?? 'unknown channel'}</span>
                   )}
                   <span style={{ color: 'var(--ink-3)' }}>
-                    <span style={{ color: 'var(--ink-4)' }}>{f.source === 'local' ? 'bridged locally · ' : ''}</span>
+                    <span style={{ color: 'var(--ink-4)' }}>
+                      {f.source === 'bridge' ? 'bridged · ' : ''}
+                    </span>
                     <span style={{ color: 'var(--ink-4)' }}>— subscription </span>
                     <b style={{ color: 'var(--ink-2)' }}>{f.subscription}</b>
                     <span style={{ color: 'var(--ink-4)' }}> transfers into →</span>
                   </span>
-                  <Tag>{channel?.displayName ?? agentName}</Tag>
+                  <Tag>{channel.name}</Tag>
                 </div>
               ))
             )}
             <div className="label" style={{ color: 'var(--ink-3)', padding: '8px 0 2px' }}>
-              Direct sources: <b>scheduled runs</b> and <b>chat messages</b> are born
-              straight in this channel — they need no subscription. Manage them under{' '}
-              <Link to={channelPath(channelId)}>Schedules</Link> in the channel view.
+              Direct sources: <b>scheduled runs</b> and <b>chat messages</b> are born straight in
+              this channel — they need no subscription. Manage them under{' '}
+              <Link to={channelPath(channel.id)}>Schedules</Link> in the channel view.
             </div>
           </div>
         )}

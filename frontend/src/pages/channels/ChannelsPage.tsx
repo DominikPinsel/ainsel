@@ -4,14 +4,14 @@ import {
   buildConnections,
   channelPath,
   isChannelDeletable,
-  useChannelCounts,
+  useChannelSubscriptions,
   useChannels,
+  useCreateChannel,
+  useDeleteChannel,
   type ChannelConnection,
   type ChannelKind,
-  type ChannelSummary,
+  type ChannelView,
 } from '../../api/channels'
-import { useCreateCustomChannel, useCustomChannels, useDeleteCustomChannel } from '../../api/customChannels'
-import { useTriggers } from '../../api/triggers'
 import { Titleblock } from '../../layout/Titleblock'
 import { Panel } from '../../primitives/Panel'
 import { RegisterTable, type Column } from '../../primitives/RegisterTable'
@@ -33,45 +33,25 @@ function KindTag({ kind }: { kind: ChannelKind }) {
   )
 }
 
-function ChannelCountsCell({ channel }: { channel: ChannelSummary }) {
-  const counts = useChannelCounts(channel)
-  if (counts.isCustom) {
-    return (
-      <span className="label" style={{ color: 'var(--ink-4)' }}>
-        grouping only
-      </span>
-    )
-  }
-  return (
-    <span style={{ display: 'flex', gap: 18, justifyContent: 'flex-end' }}>
-      <span>
-        <b>{counts.events24h}</b>
-        <span className="label" style={{ color: 'var(--ink-4)' }}> 24h</span>
-      </span>
-      <span style={{ color: counts.failed24h > 0 ? 'var(--err)' : undefined }}>
-        <b>{counts.failed24h}</b>
-        <span className="label" style={{ color: 'var(--ink-4)' }}> failed</span>
-      </span>
-    </span>
-  )
-}
-
-/** Create-form for browser-local custom channels. */
-function NewCustomChannelForm({ onDone }: { onDone: () => void }) {
+/** Create-form for a hub-side custom (grouping) channel. */
+function NewChannelForm({ onDone }: { onDone: () => void }) {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
-  const create = useCreateCustomChannel()
+  const create = useCreateChannel()
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault()
-        create.mutate({ name, description }, { onSuccess: onDone })
+        create.mutate(
+          { name: name.trim(), description: description.trim() || undefined },
+          { onSuccess: onDone },
+        )
       }}
       style={{ display: 'grid', gap: 10 }}
     >
       <div className="label" style={{ color: 'var(--ink-3)', fontSize: 12 }}>
-        Custom channels group subscriptions under one name. They live in this
-        browser until the hub gains a channels API.
+        A custom channel groups subscriptions under one name and hands them to other agents.
+        Connector and agent channels are provisioned by the platform.
       </div>
       <input
         aria-label="Channel name"
@@ -87,12 +67,10 @@ function NewCustomChannelForm({ onDone }: { onDone: () => void }) {
         onChange={(e) => setDescription(e.target.value)}
       />
       {create.isError && (
-        <span style={{ color: 'var(--err)', fontSize: 12 }}>
-          {(create.error as Error).message}
-        </span>
+        <span style={{ color: 'var(--err)', fontSize: 12 }}>{(create.error as Error).message}</span>
       )}
       <span style={{ display: 'flex', gap: 8 }}>
-        <button type="submit" disabled={!name.trim()}>
+        <button type="submit" disabled={!name.trim() || create.isPending}>
           Create channel
         </button>
         <button type="button" onClick={onDone}>
@@ -103,19 +81,27 @@ function NewCustomChannelForm({ onDone }: { onDone: () => void }) {
   )
 }
 
-/** Edge cell: resolve the endpoint or show it muted when unresolvable. */
-function EndpointCell({ channel, endpointRef }: { channel?: ChannelSummary; endpointRef?: string }) {
-  if (channel) return <Link to={channelPath(channel.id)}>{channel.displayName}</Link>
+/** Edge cell: link the endpoint, or show its id muted when unresolvable. */
+function EndpointCell({
+  channel,
+  endpointRef,
+}: {
+  channel?: { id: string; name: string }
+  endpointRef?: string
+}) {
+  if (channel) return <Link to={channelPath(channel.id)}>{channel.name}</Link>
   return <span style={{ color: 'var(--ink-4)' }}>{endpointRef ?? '—'}</span>
 }
 
-/** Every subscription in the system as a real channel → channel edge. */
+/** Every subscription in the system as a channel → channel edge. */
 function ConnectionsPanel({ connections }: { connections: ChannelConnection[] }) {
   return (
     <Panel title={`Connections · ${connections.length}`} className="cropped">
       <RegisterTable
         rows={connections}
-        rowKey={(r) => `${r.source}#${r.subscription}#${r.fromRef ?? ''}#${r.toRef ?? ''}#${r.edgeId ?? ''}`}
+        rowKey={(r) =>
+          `${r.source}#${r.subscription}#${r.fromRef ?? ''}#${r.toRef ?? ''}#${r.edgeId ?? ''}`
+        }
         withRowNumbers={false}
         emptyLabel="No subscriptions yet — events stay in the channel they were born in until an inbox subscribes to it."
         columns={[
@@ -130,11 +116,9 @@ function ConnectionsPanel({ connections }: { connections: ChannelConnection[] })
             cell: (r) => (
               <span style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
                 <b>{r.subscription}</b>
-                {r.source === 'local' && (
-                  <span className="label" style={{ color: 'var(--ink-4)', fontSize: 11 }}>
-                    local preview
-                  </span>
-                )}
+                <span className="label" style={{ color: 'var(--ink-4)', fontSize: 11 }}>
+                  {r.source === 'bridge' ? 'bridge' : 'trigger'}
+                </span>
               </span>
             ),
           },
@@ -150,23 +134,24 @@ function ConnectionsPanel({ connections }: { connections: ChannelConnection[] })
 }
 
 export function ChannelsPage() {
-  const { channels, isLoading, error } = useChannels()
-  const { data: triggerData } = useTriggers({ pageSize: 200 })
-  const { data: local } = useCustomChannels()
-  const connections = buildConnections(channels, triggerData?.items, local?.bridges)
+  const { data, isLoading, error } = useChannels({ pageSize: 500 })
+  const { data: subs } = useChannelSubscriptions()
+  const channels = data?.items ?? []
+  const connections = buildConnections(subs?.items, channels)
   const [creating, setCreating] = useState(false)
   const [confirmId, setConfirmId] = useState<string | null>(null)
-  const del = useDeleteCustomChannel()
+  const del = useDeleteChannel()
 
-  const columns: readonly Column<ChannelSummary>[] = [
+  const columns: readonly Column<ChannelView>[] = [
     {
       key: 'name',
       header: 'Channel',
       cell: (c) => (
         <span style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
           <Link to={channelPath(c.id)} style={{ fontWeight: 600, color: 'var(--ink)' }}>
-            {c.displayName}
+            {c.name}
           </Link>
+          {c.orphaned && <Tag variant="stale">orphaned</Tag>}
           <span
             className="label"
             style={{ color: 'var(--ink-4)', fontFamily: 'var(--mono, monospace)', fontSize: 11 }}
@@ -187,7 +172,49 @@ export function ChannelsPage() {
       key: 'counts',
       header: 'Last 24h',
       align: 'right',
-      cell: (c) => <ChannelCountsCell channel={c} />,
+      cell: (c) => (
+        <span style={{ display: 'flex', gap: 18, justifyContent: 'flex-end' }}>
+          <span>
+            <b>{c.counts?.events ?? 0}</b>
+            <span className="label" style={{ color: 'var(--ink-4)' }}>
+              {' '}
+              events
+            </span>
+          </span>
+          {c.kind === 'connector' && (
+            <span>
+              <b>{c.counts?.unmatched ?? 0}</b>
+              <span className="label" style={{ color: 'var(--ink-4)' }}>
+                {' '}
+                unmatched
+              </span>
+            </span>
+          )}
+          <span style={{ color: (c.counts?.failed ?? 0) > 0 ? 'var(--err)' : undefined }}>
+            <b>{c.counts?.failed ?? 0}</b>
+            <span className="label" style={{ color: 'var(--ink-4)' }}>
+              {' '}
+              failed
+            </span>
+          </span>
+        </span>
+      ),
+    },
+    {
+      key: 'subscriptions',
+      header: 'Subscriptions',
+      align: 'right',
+      cell: (c) => (
+        <span style={{ fontSize: 13, color: 'var(--ink-3)' }}>
+          {c.subscriptions ?? 0}
+          {c.kind === 'custom' && c.bridges ? (
+            <span className="label" style={{ color: 'var(--ink-4)' }}>
+              {' '}
+              ({c.bridges} bridge)
+            </span>
+          ) : null}
+        </span>
+      ),
     },
     {
       key: 'actions',
@@ -199,7 +226,7 @@ export function ChannelsPage() {
           return (
             <span
               className="label"
-              title="Channels with bridges attached cannot be deleted"
+              title="Channels with subscriptions attached cannot be deleted"
               style={{ color: 'var(--ink-4)', fontSize: 12 }}
             >
               subscribed
@@ -220,7 +247,11 @@ export function ChannelsPage() {
           )
         }
         return (
-          <button className="channel-delete" onClick={() => setConfirmId(c.id)} aria-label={`Delete channel ${c.name}`}>
+          <button
+            className="channel-delete"
+            onClick={() => setConfirmId(c.id)}
+            aria-label={`Delete channel ${c.name}`}
+          >
             Delete
           </button>
         )
@@ -245,19 +276,17 @@ export function ChannelsPage() {
       />
       <div className="channels-page" style={{ padding: '28px 32px', display: 'grid', gap: 24 }}>
         <div className="label" style={{ color: 'var(--ink-3)', marginTop: -8 }}>
-          Three kinds of channels: a <b>connector</b> always publishes into its own
-          channel (auto-provisioned, permanent); every event in an <b>agent</b>{' '}
-          channel is prompted to that agent (auto-provisioned, permanent);{' '}
-          <b>custom</b> channels are yours — group subscriptions under one name,
-          delete them while nothing is attached. Events move between channels when a{' '}
-          <b>subscription</b> on the destination transfers them. Identity is the id —
-          two channels may share a label (a connector and an agent both named{' '}
-          <b>forgejo</b> are two channels).
+          Three kinds of channels: a <b>connector</b> always publishes into its own channel
+          (provisioned, permanent); every event in an <b>agent</b> channel is prompted to that agent
+          (provisioned, permanent); <b>custom</b> channels are yours — group subscriptions under one
+          name, delete them while nothing is attached. Events move between channels when a{' '}
+          <b>subscription</b> on the destination transfers them. Identity is the id — two channels
+          may share a label (a connector and an agent both named <b>forgejo</b> are two channels).
         </div>
 
         {creating && (
           <Panel title="New custom channel">
-            <NewCustomChannelForm onDone={() => setCreating(false)} />
+            <NewChannelForm onDone={() => setCreating(false)} />
           </Panel>
         )}
 

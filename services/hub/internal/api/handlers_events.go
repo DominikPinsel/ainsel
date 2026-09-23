@@ -45,9 +45,13 @@ type activityMatch struct {
 
 // activityEntry is the per-event shape consumed by the frontend Activity page.
 type activityEntry struct {
-	ID        string          `json:"id"`
-	Timestamp string          `json:"timestamp"`
-	Connector string          `json:"connector,omitempty"`
+	ID        string `json:"id"`
+	Timestamp string `json:"timestamp"`
+	Connector string `json:"connector,omitempty"`
+	// ChannelID is the stream the event was born in. It is the stable
+	// handle the UI links a producer label onto; empty for events recorded
+	// before the channel registry existed and for direct births.
+	ChannelID string          `json:"channelId,omitempty"`
 	Status    string          `json:"status"`
 	Matches   []activityMatch `json:"matches,omitempty"`
 	Payload   json.RawMessage `json:"payload,omitempty"`
@@ -207,6 +211,7 @@ func buildActivityEntry(evt eventqueue.Event, tasks []eventqueue.Task, invStore 
 		ID:        evt.ID,
 		Timestamp: evt.ReceivedAt.UTC().Format(time.RFC3339),
 		Connector: evt.Connector,
+		ChannelID: evt.ChannelID,
 		Status:    activityStatusUnmatched,
 	}
 

@@ -1,256 +1,352 @@
-import { useQuery } from '@tanstack/react-query'
-import { useAgents } from './agents'
-import { useConnectors } from './connectors'
-import { listEventsPage } from './events'
-import { useCustomChannels, type ChannelBridge } from './customChannels'
-import type { TriggerSummary } from './triggers'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMemo } from 'react'
+import { request } from './client'
+import type { ActivityEntry, EventsPage } from './events'
 
 /**
- * Channels are the named streams events live in (see the Channels design
- * spec). Three kinds exist:
+ * Channels are the named streams events live in. The hub owns them, so
+ * everything here reads one API instead of reconstructing the picture from
+ * the agent, connector and trigger registries.
+ *
+ * Three kinds exist:
  *
  * - **connector** — where a connector's events arrive. One per connector,
- *   auto-provisioned, never deletable: the connector has to put its events
- *   somewhere.
- * - **agent** — the agent's inbox. Everything born in it is prompted to
- *   the agent. One per agent, auto-provisioned, never deletable: it is the
- *   agent.
- * - **custom** — user-created grouping channels (e.g. to collect
- *   subscriptions under one name). Deletable while nothing is attached.
- *
- * Custom channels are currently browser-local (`api/customChannels`): the
- * hub has no channels table yet, so they can only carry local bridges —
- * preview edges that visualise the grouping but move no real events.
+ *   provisioned from the connector registry, never deletable: the connector
+ *   has to put its events somewhere.
+ * - **agent** — the agent's inbox. Everything born in it is prompted to the
+ *   agent. One per agent, provisioned from the agent registry, never
+ *   deletable: it is the agent.
+ * - **custom** — user-created grouping channels. Deletable while nothing is
+ *   attached.
  *
  * Identity is the channel id, never the name: a connector `forgejo` and an
  * agent `forgejo` are two distinct channels that merely share a display
- * label. Every FK, route, and UI link uses the id.
+ * label. Every link, subscription and route uses the id.
+ *
+ * Subscriptions come in two flavours and are read together but stored
+ * separately: `trigger` edges are the hub's existing connector → agent
+ * routing rules (still the source of truth for that routing, never copied
+ * into a bridge), while `bridge` edges are the transfers a user attached
+ * between channels.
  */
 
 export type ChannelKind = 'connector' | 'agent' | 'custom'
 
-export type ChannelSummary = {
-  /** Stable channel identifier — the future channels.id. Encodes kind so
-   *  two channels named `forgejo` never collapse into one. */
+export type ChannelStatus = 'matched' | 'unmatched' | 'error'
+
+export type ChannelCounts = {
+  events: number
+  unmatched: number
+  failed: number
+}
+
+export type Channel = {
   id: string
-  /** Rename-able display label (the future channels.name) — NOT unique. */
-  name: string
-  displayName: string
-  /** One line of intent (the future channels.description). */
-  description: string
-  /** What the channel is — decides provisioning, deletion, and which
-   *  config panels mount. */
   kind: ChannelKind
-  /** Registry id of the owning entity (agent/connector) when resolvable —
-   *  used to mount that entity's configuration panels. */
-  entityId?: string
+  name: string
+  description: string
+  /** Registry id of the owning entity (connector/agent CR) for provisioned
+   *  channels; empty on custom channels. */
+  entityRef?: string
+  /** True when the owning entity is gone but the channel is kept so its
+   *  event history stays reachable. */
+  orphaned?: boolean
+  createdAt?: string
+  updatedAt?: string
 }
 
-function idFor(kind: ChannelKind, name: string): string {
-  return `${kind}:${name}`
+/** A channel plus the numbers the list table renders. */
+export type ChannelView = Channel & {
+  counts: ChannelCounts
+  bridges: number
+  subscriptions: number
 }
 
-export function buildChannelSummaries(
-  agents: { id: string; name: string }[] | undefined,
-  connectors: { id: string; name: string }[] | undefined,
-  customs: { id: string; name: string; description: string }[] | undefined,
-): ChannelSummary[] {
-  const channels: ChannelSummary[] = []
-  for (const c of connectors ?? []) {
-    channels.push({
-      id: idFor('connector', c.name),
-      name: c.name,
-      displayName: c.name,
-      description: `Where ${c.name} events arrive`,
-      kind: 'connector',
-      entityId: c.id,
-    })
-  }
-  for (const a of agents ?? []) {
-    channels.push({
-      id: idFor('agent', a.name),
-      name: a.name,
-      displayName: a.name,
-      description: `The inbox agent ${a.name} drains`,
-      kind: 'agent',
-      entityId: a.id,
-    })
-  }
-  for (const u of customs ?? []) {
-    channels.push({
-      id: u.id,
-      name: u.name,
-      displayName: u.name,
-      description: u.description,
-      kind: 'custom',
-    })
-  }
-  return channels.sort(
-    (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
-  )
+export type ChannelSubscriptionSource = 'trigger' | 'bridge'
+
+export type ChannelSubscription = {
+  source: ChannelSubscriptionSource
+  /** Trigger name or bridge id — what identifies the edge itself. */
+  refId: string
+  name: string
+  fromChannel: string
+  toChannel: string
+  /** Registry ref when the endpoint is an entity rather than a channel. */
+  fromRef?: string
+  toRef?: string
+  /** Endpoint labels resolved at read time, so a dangling edge still renders. */
+  fromName?: string
+  toName?: string
+  fromKind?: ChannelKind
+  toKind?: ChannelKind
 }
 
-/** Aggregated channel list: one per connector, one per agent, plus the
- *  user's custom channels. */
-export function useChannels() {
-  const agents = useAgents({ pageSize: 500 })
-  const connectors = useConnectors({ pageSize: 500 })
-  const customs = useCustomChannels()
-  const channels = buildChannelSummaries(
-    agents.data?.items,
-    connectors.data?.items,
-    customs.data?.channels,
-  )
-  return {
-    channels,
-    isLoading: agents.isLoading || connectors.isLoading,
-    error: agents.error ?? connectors.error,
-  }
+export type ChannelDetail = ChannelView & {
+  incoming: ChannelSubscription[]
+  outgoing: ChannelSubscription[]
 }
+
+export type ChannelPage = {
+  items: ChannelView[]
+  total: number
+  page: number
+  pageSize: number
+  totalPages: number
+  /** Duration string the rate counts cover, e.g. "24h0m0s". */
+  window: string
+}
+
+export type SubscriptionPage = {
+  items: ChannelSubscription[]
+  total: number
+}
+
+export type NewChannelInput = {
+  name: string
+  description?: string
+  groupId?: string
+}
+
+export type ChannelListParams = {
+  kind?: ChannelKind
+  page?: number
+  pageSize?: number
+  /** RFC 3339 lower bound for the rate counts. Defaults to 24 hours ago. */
+  since?: string
+}
+
+export type ChannelEventParams = {
+  limit?: number
+  offset?: number
+  status?: ChannelStatus
+  agent?: string
+  subject?: string
+  since?: string
+}
+
+const KEY = ['channels'] as const
+
+// ---------------------------------------------------------------------------
+// Queries
+// ---------------------------------------------------------------------------
+
+export function useChannels(params: ChannelListParams = {}) {
+  return useQuery({
+    queryKey: [...KEY, 'list', params],
+    queryFn: () =>
+      request<ChannelPage>('/channels', {
+        query: {
+          kind: params.kind,
+          page: params.page,
+          pageSize: params.pageSize ?? 500,
+          since: params.since,
+        },
+      }),
+  })
+}
+
+export function useChannel(id: string | undefined) {
+  return useQuery({
+    queryKey: [...KEY, 'get', id],
+    queryFn: () => request<ChannelDetail>(`/channels/${encodeURIComponent(id ?? '')}`),
+    enabled: !!id,
+  })
+}
+
+/** Every subscription in the system, both registries merged. */
+export function useChannelSubscriptions() {
+  return useQuery({
+    queryKey: [...KEY, 'subscriptions'],
+    queryFn: () => request<SubscriptionPage>('/channel-subscriptions'),
+  })
+}
+
+/** One channel's timeline: events born in it plus events transferred into it. */
+export function useChannelEvents(
+  id: string | undefined,
+  params: ChannelEventParams = {},
+  opts: { enabled?: boolean } = {},
+) {
+  const enabled = (opts.enabled ?? true) && !!id
+  return useQuery({
+    queryKey: [...KEY, 'events', id, params],
+    queryFn: () =>
+      request<EventsPage>(`/channels/${encodeURIComponent(id ?? '')}/events`, {
+        query: { ...params },
+      }),
+    enabled,
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Mutations
+// ---------------------------------------------------------------------------
+
+export function useCreateChannel() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: NewChannelInput) =>
+      request<Channel>('/channels', { method: 'POST', body: input }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  })
+}
+
+export function useDeleteChannel() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      request<void>(`/channels/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  })
+}
+
+/** Attach a transfer: events arriving in `fromChannel` are also delivered to
+ *  `toChannel`. At least one end must be a custom channel — a plain
+ *  connector → agent pairing is a trigger, not a bridge. */
+export function useAttachBridge() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ from, to, name }: { from: string; to: string; name?: string }) =>
+      request<{ id: string }>(`/channels/${encodeURIComponent(from)}/bridges`, {
+        method: 'POST',
+        body: { to, name },
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  })
+}
+
+export function useDetachBridge() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ from, bridgeId }: { from: string; bridgeId: string }) =>
+      request<void>(
+        `/channels/${encodeURIComponent(from)}/bridges/${encodeURIComponent(bridgeId)}`,
+        { method: 'DELETE' },
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Derived view models
+// ---------------------------------------------------------------------------
 
 /**
- * A real connection between two channels: a subscription on the destination
- * transfers events from the source. Derived from triggers' registry ids —
- * in the target model these are channel FKs — plus the user's local bridges
- * (preview edges on custom channels, `source: 'local'`).
+ * A rendered connection between two channels. `bridge` edges are removable
+ * here (`edgeId` is the bridge id); `trigger` edges are managed on the
+ * trigger screens, so the row links there instead.
  */
 export type ChannelConnection = {
-  /** The subscription (or bridge) that performs the transfer. */
   subscription: string
-  source: 'hub' | 'local'
-  /** Stable id for local edges (removable); hub edges key off the trigger. */
+  source: ChannelSubscriptionSource
+  /** Bridge id — only present on bridge edges, which are the removable ones. */
   edgeId?: string
-  from?: ChannelSummary
-  to?: ChannelSummary
-  /** Channel ids even when the channel cannot be resolved (deleted
-   *  connector/agent/custom) — consumers filter on these. */
+  from?: Channel
+  to?: Channel
+  /** Channel ids even when the channel is not in the current page. */
   fromRef?: string
   toRef?: string
 }
 
 export function buildConnections(
-  channels: ChannelSummary[],
-  triggers: TriggerSummary[] | undefined,
-  bridges: ChannelBridge[] | undefined,
+  subscriptions: ChannelSubscription[] | undefined,
+  channels: Channel[] | undefined,
 ): ChannelConnection[] {
-  const byId = new Map(channels.map((c) => [c.id, c]))
-  const byEntity = new Map(
-    channels
-      .filter((c) => c.entityId !== undefined)
-      .map((c) => [`${c.kind}#${c.entityId}`, c]),
-  )
-  const hub: ChannelConnection[] = (triggers ?? []).map((t) => ({
-    subscription: t.name,
-    source: 'hub' as const,
-    from: t.connectorRef ? byEntity.get(`connector#${t.connectorRef}`) : undefined,
-    to: t.agentRef ? byEntity.get(`agent#${t.agentRef}`) : undefined,
-    fromRef: t.connectorRef ? `connector#${t.connectorRef}` : undefined,
-    toRef: t.agentRef ? `agent#${t.agentRef}` : undefined,
-  }))
-  const local: ChannelConnection[] = (bridges ?? []).map((b) => ({
-    subscription: b.name,
-    source: 'local' as const,
-    edgeId: b.id,
-    from: byId.get(b.from),
-    to: byId.get(b.to),
-    fromRef: b.from,
-    toRef: b.to,
-  }))
-  return [...hub, ...local]
+  const byId = new Map<string, Channel>((channels ?? []).map((c) => [c.id, c]))
+  return (subscriptions ?? []).map((s) => {
+    const from = byId.get(s.fromChannel)
+    const to = byId.get(s.toChannel)
+    return {
+      subscription: s.name,
+      source: s.source,
+      edgeId: s.source === 'bridge' ? s.refId : undefined,
+      from,
+      to,
+      // A trigger edge whose connector publishes to no channel at all has no
+      // fromChannel: the label it matches on is still worth showing.
+      fromRef: s.fromChannel || (s.fromRef ? `${s.source}:${s.fromRef}` : undefined),
+      toRef: s.toChannel || (s.toRef ? `agent:${s.toRef}` : undefined),
+    }
+  })
 }
 
-/** A custom channel may be deleted only while no bridge attaches to it;
- *  connector and agent channels are provisioned with their entity and can
- *  never be deleted here. */
-export function isChannelDeletable(
-  channel: ChannelSummary,
-  connections: ChannelConnection[],
-): boolean {
+/** Only custom channels are deletable, and only while nothing is attached:
+ *  a stream cannot disappear underneath the subscriptions that use it. */
+export function isChannelDeletable(channel: Channel, connections: ChannelConnection[]): boolean {
   if (channel.kind !== 'custom') return false
   return !connections.some((e) => e.fromRef === channel.id || e.toRef === channel.id)
 }
 
-/** The hub's synthetic connector labels for directly-emitted events. These
- *  are NOT channels (there is no shared cron/chat channel): scheduled ticks
- *  and chat messages are born directly on the target agent's channel. Until
- *  the backend makes that literal, the events still carry these labels, so
- *  the journey renders them as direct births instead of a channel link. */
+/**
+ * Producer labels for events that skip a channel: a scheduled tick and a chat
+ * message are born directly in the target agent's inbox. The hub stamps the
+ * real channel id on new events, so this only covers history and the label a
+ * journey row falls back to when nothing matched.
+ */
 export const DIRECT_SOURCES = ['cron', 'chat'] as const
 
 export function isDirectSource(producer: string | undefined): boolean {
   return (DIRECT_SOURCES as readonly string[]).includes(producer ?? '')
 }
 
-export type ChannelCounts = {
-  /** Events that entered this channel in the last 24h. */
-  events24h: number
-  /** Of those, events no subscription transferred onward (connector channels). */
-  unmatched24h: number
-  /** Runs that ended in failure or timeout. */
-  failed24h: number
+/** Route for a channel — addressed by id, since labels collide. */
+export function channelPath(id: string): string {
+  return `/channels/${encodeURIComponent(id)}`
 }
 
-function since24h(): string {
-  return new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+/** Best available link for an event's birth channel: the stamped id when the
+ *  hub recorded one, otherwise — only when the caller passes the channel list
+ *  it already has — the connector channel that owns the producer label.
+ *  History predating the registry has no id on the event. Direct sources
+ *  (cron/chat) are born in an inbox, not a connector channel, so they never
+ *  link to one. */
+export function birthChannelPath(
+  entry: Pick<ActivityEntry, 'channelId' | 'connector'>,
+  channels?: Channel[],
+): string | undefined {
+  if (entry.channelId) return channelPath(entry.channelId)
+  if (!entry.connector || isDirectSource(entry.connector) || !channels) return undefined
+  const owned = channels.find((c) => c.kind === 'connector' && c.entityRef === entry.connector)
+  return owned ? channelPath(owned.id) : undefined
+}
+
+/** Sort helper for the channel table: provisioned streams first. */
+export function sortChannels(channels: Channel[]): Channel[] {
+  return [...channels].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
 }
 
 /**
- * Live counts for one channel via the events API filters (`connector` for
- * where events arrive, `agent` for what reached the inbox). Custom channels
- * hold no events yet — the hub does not know about them.
+ * Label → channel id lookup for views that only carry a name. The activity
+ * feed reports which *agent* received an event, not which inbox channel the
+ * task landed in, and history predating the registry has no id on the event
+ * at all. Resolution is per kind, because a connector and an agent may share
+ * a label — that is the whole reason identity is the id.
  */
-export function useChannelCounts(channel: ChannelSummary) {
-  const isAgentInbox = channel.kind === 'agent'
-  const isCustom = channel.kind === 'custom'
-  const scope = isAgentInbox ? { agent: channel.name } : { connector: channel.name }
-  const since = since24h()
-
-  const events = useQuery({
-    queryKey: ['channels', 'counts', channel.id, 'events', scope, since],
-    queryFn: () => listEventsPage({ ...scope, since, limit: 1 }),
-    enabled: !isCustom,
-  })
-  const unmatched = useQuery({
-    queryKey: ['channels', 'counts', channel.id, 'unmatched', scope, since],
-    queryFn: () => listEventsPage({ ...scope, since, status: 'unmatched', limit: 1 }),
-    enabled: !isCustom && !isAgentInbox,
-  })
-  const failed = useQuery({
-    queryKey: ['channels', 'counts', channel.id, 'failed', scope, since],
-    queryFn: () => listEventsPage({ ...scope, since, status: 'error', limit: 1 }),
-    enabled: !isCustom,
-  })
-
-  if (isCustom) {
-    return {
-      events24h: 0,
-      unmatched24h: 0,
-      failed24h: 0,
-      isLoading: false,
-      isCustom: true as const,
+export function useChannelIds() {
+  const { data, isLoading } = useChannels({ pageSize: 500 })
+  const ids = useMemo(() => {
+    const byLabel = new Map<string, string>()
+    for (const c of data?.items ?? []) {
+      // The feed names an agent by its registry ref, the UI by its display
+      // name; a provisioned channel answers to both.
+      byLabel.set(`${c.kind}\u0000${c.name}`, c.id)
+      if (c.entityRef) byLabel.set(`${c.kind}\u0000${c.entityRef}`, c.id)
     }
-  }
-  return {
-    events24h: events.data?.total ?? 0,
-    unmatched24h: unmatched.data?.total ?? 0,
-    failed24h: failed.data?.total ?? 0,
-    isLoading: events.isLoading || failed.isLoading || (!isAgentInbox && unmatched.isLoading),
-    isCustom: false as const,
-  }
+    return {
+      inbox: (agentName?: string) =>
+        agentName ? byLabel.get(`agent\u0000${agentName}`) : undefined,
+      home: (connectorLabel?: string) =>
+        connectorLabel ? byLabel.get(`connector\u0000${connectorLabel}`) : undefined,
+    }
+  }, [data])
+  return { ...ids, isLoading }
 }
 
-/** Route for a channel — kind-namespaced so same-labeled channels never
- *  collapse (the target model addresses channels by id; this is the derived
- *  stand-in). */
-export function channelPath(id: string): string {
-  const sep = id.indexOf(':')
-  const kind = sep >= 0 ? id.slice(0, sep) : 'connector'
-  const name = sep >= 0 ? id.slice(sep + 1) : id
-  return `/channels/${kind}/${encodeURIComponent(name)}`
-}
-
-/** Channel id an event was born in, given its connector string. Direct
- *  sources (cron/chat) have no channel — guard with isDirectSource(). */
-export function channelIdForProducer(producer: string): string {
-  return `connector:${producer}`
+/** Look up a channel by id within an already-fetched list. */
+export function findChannel(
+  channels: Channel[] | undefined,
+  id: string | undefined,
+): Channel | undefined {
+  if (!id) return undefined
+  return channels?.find((c) => c.id === id)
 }

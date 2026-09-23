@@ -4,47 +4,79 @@ import { Route, Routes } from 'react-router-dom'
 import { ChannelsPage } from './ChannelsPage'
 import { renderWithProviders } from '../../test/renderWithProviders'
 
-function mockFetch(items: {
-  agents?: unknown[]
-  connectors?: unknown[]
-  triggers?: unknown[]
-}) {
+const channels = [
+  {
+    id: 'ch-forgejo',
+    kind: 'connector',
+    name: 'forgejo',
+    description: 'Where forgejo events arrive',
+    entityRef: 'forgejo',
+    counts: { events: 12, unmatched: 3, failed: 1 },
+    bridges: 0,
+    subscriptions: 1,
+  },
+  {
+    id: 'ch-inbox',
+    kind: 'agent',
+    name: 'review-bot',
+    description: 'The inbox agent review-bot drains',
+    entityRef: 'review-bot',
+    counts: { events: 9, unmatched: 0, failed: 2 },
+    bridges: 0,
+    subscriptions: 1,
+  },
+]
+
+const subscriptions = [
+  {
+    source: 'trigger',
+    refId: 'on-issues',
+    name: 'on-issues',
+    fromChannel: 'ch-forgejo',
+    toChannel: 'ch-inbox',
+  },
+]
+
+/** Routes every hub call the page makes; records mutations for assertions. */
+function mockFetch(overrides: { channels?: unknown[]; subscriptions?: unknown[] } = {}) {
+  const items = overrides.channels ?? channels
+  const subs = overrides.subscriptions ?? subscriptions
+  const calls: { method: string; url: string; body?: unknown }[] = []
   vi.stubGlobal(
     'fetch',
-    vi.fn((url: string) => {
-      if (url.includes('/agents')) {
-        const a = items.agents ?? []
+    vi.fn((url: string, init?: RequestInit) => {
+      const method = (init?.method ?? 'GET').toUpperCase()
+      calls.push({ method, url, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+      const path = url.split('?')[0]
+      if (path.endsWith('/channels')) {
         return Promise.resolve(
           new Response(
-            JSON.stringify({ items: a, total: a.length, page: 1, pageSize: 500, totalPages: 1 }),
+            JSON.stringify({
+              items,
+              total: items.length,
+              page: 1,
+              pageSize: 500,
+              totalPages: 1,
+              window: '24h0m0s',
+            }),
             { status: 200 },
           ),
         )
       }
-      if (url.includes('/connectors')) {
-        const c = items.connectors ?? []
+      if (path.endsWith('/channel-subscriptions')) {
         return Promise.resolve(
-          new Response(
-            JSON.stringify({ items: c, total: c.length, page: 1, pageSize: 500, totalPages: 1 }),
-            { status: 200 },
-          ),
+          new Response(JSON.stringify({ items: subs, total: subs.length }), { status: 200 }),
         )
       }
-      if (url.includes('/triggers')) {
-        const t = items.triggers ?? []
+      if (path.endsWith('/bridges')) {
         return Promise.resolve(
-          new Response(
-            JSON.stringify({ items: t, total: t.length, page: 1, pageSize: 200, totalPages: 1 }),
-            { status: 200 },
-          ),
+          new Response(JSON.stringify({ id: 'br-1', name: 'bridge' }), { status: 201 }),
         )
-      }
-      if (url.includes('/events')) {
-        return Promise.resolve(new Response(JSON.stringify({ events: [], total: 0 }), { status: 200 }))
       }
       return Promise.resolve(new Response('{}', { status: 200 }))
     }),
   )
+  return calls
 }
 
 function renderPage() {
@@ -60,7 +92,7 @@ describe('ChannelsPage', () => {
   afterEach(() => vi.unstubAllGlobals())
 
   it('renders the heading and explains the model without role language', () => {
-    mockFetch({})
+    mockFetch()
     renderPage()
     expect(screen.getByRole('heading', { name: /channels/i })).toBeInTheDocument()
     expect(screen.getByText(/transfers/i)).toBeInTheDocument()
@@ -69,15 +101,13 @@ describe('ChannelsPage', () => {
     expect(screen.queryByText('consumes')).not.toBeInTheDocument()
   })
 
-  it('shows channels in a table with descriptions', async () => {
-    mockFetch({
-      agents: [{ id: 'a1', name: 'review-bot' }],
-      connectors: [{ id: 'c1', name: 'forgejo' }],
-    })
+  it('renders the hub registry in a table with counts already on the row', async () => {
+    const calls = mockFetch()
     renderPage()
+    // Both channels appear; the connection map links them again by design.
     await waitFor(() => {
-      expect(screen.getByRole('link', { name: 'forgejo' })).toBeInTheDocument()
-      expect(screen.getByRole('link', { name: 'review-bot' })).toBeInTheDocument()
+      expect(screen.getAllByRole('link', { name: 'forgejo' }).length).toBeGreaterThan(0)
+      expect(screen.getAllByRole('link', { name: 'review-bot' }).length).toBeGreaterThan(0)
     })
     expect(screen.getByRole('columnheader', { name: /channel/i })).toBeInTheDocument()
     expect(screen.getByRole('columnheader', { name: /description/i })).toBeInTheDocument()
@@ -86,32 +116,32 @@ describe('ChannelsPage', () => {
     // no built-in cron/chat channels
     expect(screen.queryByText('cron')).not.toBeInTheDocument()
     expect(screen.queryByText('chat')).not.toBeInTheDocument()
+    // Counts come from the list response: no per-row event queries.
+    expect(calls.filter((c) => c.url.includes('/events'))).toHaveLength(0)
+    expect(calls.some((c) => c.url.includes('/agents'))).toBe(false)
+    expect(calls.some((c) => c.url.includes('/connectors'))).toBe(false)
   })
 
-  it('does not collapse same-named channels: connector and agent are two rows', async () => {
-    mockFetch({
-      agents: [{ id: 'a1', name: 'forgejo' }],
-      connectors: [{ id: 'c1', name: 'forgejo' }],
+  it('does not collapse same-labeled channels: identity is the id', async () => {
+    const calls = mockFetch({
+      channels: [
+        { ...channels[0], name: 'forgejo' },
+        { ...channels[1], id: 'ch-inbox2', name: 'forgejo', entityRef: 'forgejo' },
+      ],
     })
     renderPage()
+    // Two rows, two distinct hrefs — the label is not the identity.
     await waitFor(() => {
-      expect(screen.getAllByRole('link', { name: 'forgejo' })).toHaveLength(2)
+      expect(screen.getByText(/Channels · 2/)).toBeInTheDocument()
     })
     const links = screen.getAllByRole('link').map((a) => a.getAttribute('href'))
-    expect(links).toContain('/channels/connector/forgejo')
-    expect(links).toContain('/channels/agent/forgejo')
-    expect(screen.getByText('Where forgejo events arrive')).toBeInTheDocument()
-    expect(screen.getByText('The inbox agent forgejo drains')).toBeInTheDocument()
+    expect(links).toContain('/channels/ch-forgejo')
+    expect(links).toContain('/channels/ch-inbox2')
+    expect(calls.length).toBeGreaterThan(0)
   })
 
   it('lists real channel-to-channel connections from subscriptions', async () => {
-    mockFetch({
-      agents: [{ id: 'a1', name: 'review-bot' }],
-      connectors: [{ id: 'c1', name: 'forgejo' }],
-      triggers: [
-        { id: 't1', name: 'on-issues', agentRef: 'a1', connectorRef: 'c1', filters: [] },
-      ],
-    })
+    mockFetch()
     renderPage()
     await waitFor(() => {
       expect(screen.getByText(/Connections/i)).toBeInTheDocument()
@@ -119,40 +149,50 @@ describe('ChannelsPage', () => {
       expect(screen.getByText(/Born in/i)).toBeInTheDocument()
       expect(screen.getByText(/Transferred into/i)).toBeInTheDocument()
     })
+    // The edge is labelled with the registry that owns it.
+    expect(screen.getByText('trigger')).toBeInTheDocument()
   })
 
-  it('shows custom channels from local storage, marked as grouping-only', async () => {
-    localStorage.setItem(
-      'ainsel.customChannels.v1',
-      JSON.stringify({
-        channels: [
-          { id: 'custom:team-inbox', name: 'team-inbox', description: 'squad grouping', createdAt: 'x' },
-        ],
-        bridges: [{ id: 'b1', from: 'connector:forgejo', to: 'custom:team-inbox', name: 'all-issues' }],
-      }),
-    )
+  it('marks a custom channel attached to a subscription as not deletable', async () => {
     mockFetch({
-      agents: [{ id: 'a1', name: 'review-bot' }],
-      connectors: [{ id: 'c1', name: 'forgejo' }],
+      channels: [
+        ...channels,
+        {
+          id: 'ch-group',
+          kind: 'custom',
+          name: 'team-inbox',
+          description: 'squad grouping',
+          counts: { events: 0, unmatched: 0, failed: 0 },
+          bridges: 1,
+          subscriptions: 1,
+        },
+      ],
+      subscriptions: [
+        ...subscriptions,
+        {
+          source: 'bridge',
+          refId: 'br-1',
+          name: 'all-issues',
+          fromChannel: 'ch-forgejo',
+          toChannel: 'ch-group',
+        },
+      ],
     })
     renderPage()
     await waitFor(() => {
       expect(screen.getAllByRole('link', { name: 'team-inbox' })[0]).toHaveAttribute(
         'href',
-        '/channels/custom/team-inbox',
+        '/channels/ch-group',
       )
     })
     expect(screen.getByText('squad grouping')).toBeInTheDocument()
-    expect(screen.getByText('grouping only')).toBeInTheDocument()
-    // attached to a bridge → not deletable
     expect(screen.getByText('subscribed')).toBeInTheDocument()
-    // the local bridge appears in the connections map, marked as preview
     expect(screen.getByText('all-issues')).toBeInTheDocument()
-    expect(screen.getByText('local preview')).toBeInTheDocument()
+    expect(screen.getByText('bridge')).toBeInTheDocument()
   })
 
-  it('creates a custom channel through the New channel form', async () => {
-    mockFetch({})
+  it('creates a custom channel through the hub API', async () => {
+    const calls = mockFetch({ channels: [] })
     renderPage()
     fireEvent.click(screen.getByRole('button', { name: 'New channel' }))
     fireEvent.change(screen.getByLabelText('Channel name'), { target: { value: 'team-inbox' } })
@@ -161,26 +201,44 @@ describe('ChannelsPage', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: 'Create channel' }))
     await waitFor(() => {
-      expect(screen.getAllByRole('link', { name: 'team-inbox' })[0]).toBeInTheDocument()
+      const post = calls.find((c) => c.method === 'POST')
+      expect(post?.url).toMatch(/\/api\/v1\/channels$/)
+      expect(post?.body).toMatchObject({ name: 'team-inbox', description: 'squad grouping' })
     })
-    const store = JSON.parse(localStorage.getItem('ainsel.customChannels.v1') ?? '{"channels":[]}')
-    expect(store.channels[0]).toMatchObject({
-      id: 'custom:team-inbox',
-      name: 'team-inbox',
-      description: 'squad grouping',
+  })
+
+  it('deletes a custom channel through the hub API', async () => {
+    const calls = mockFetch({
+      channels: [
+        {
+          id: 'ch-group',
+          kind: 'custom',
+          name: 'team-inbox',
+          description: '',
+          counts: { events: 0, unmatched: 0, failed: 0 },
+          bridges: 0,
+          subscriptions: 0,
+        },
+      ],
+      subscriptions: [],
+    })
+    renderPage()
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /delete channel team-inbox/i })).toBeInTheDocument(),
+    )
+    fireEvent.click(screen.getByRole('button', { name: /delete channel team-inbox/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm delete' }))
+    await waitFor(() => {
+      const del = calls.find((c) => c.method === 'DELETE')
+      expect(del?.url).toMatch(/\/api\/v1\/channels\/ch-group$/)
     })
   })
 
   it('explains the empty connection map', async () => {
-    mockFetch({
-      agents: [{ id: 'a1', name: 'review-bot' }],
-      connectors: [{ id: 'c1', name: 'forgejo' }],
-    })
+    mockFetch({ subscriptions: [] })
     renderPage()
     await waitFor(() => {
-      expect(
-        screen.getByText(/No subscriptions yet/i),
-      ).toBeInTheDocument()
+      expect(screen.getByText(/No subscriptions yet/i)).toBeInTheDocument()
     })
   })
 })
