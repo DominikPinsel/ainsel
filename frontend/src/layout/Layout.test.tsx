@@ -15,10 +15,6 @@ vi.mock('../auth/AuthProvider', () => ({
   })),
 }))
 
-vi.mock('../components/ReportButton', () => ({
-  ReportButton: () => null,
-}))
-
 function renderLayout(route = '/dashboard') {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0, staleTime: 0 } },
