@@ -1,18 +1,21 @@
 import { Link } from 'react-router-dom'
+import { channelPath, channelIdForProducer } from '../../api/channels'
 import { Tag } from '../../primitives/Tag'
 import { formatISO } from '../../utils/time'
 import './EventJourney.css'
 
 /**
- * Visual trace of one event through the channel system: produced into its
- * home channel, fanned out into consumer channels by rules, delivered (or
- * not). Mirrors the "event journey" from the Channels design spec.
+ * Visual trace of one event through the channel system: born in its home
+ * channel, transferred into further channels by their subscriptions,
+ * delivered (or not). Mirrors the "event journey" from the Channels design
+ * spec. Channels are addressed by id — connector `forgejo` and agent
+ * `forgejo` are two channels; the fan-out steps land in the agent's inbox.
  */
 
 type JourneyStep = {
   key: string
   channel: string
-  /** Where the event came from, e.g. 'produced here', 'via trigger X'. */
+  /** Where the event came from, e.g. 'produced here', 'via subscription X'. */
   origin: string
   at?: string
   durationMs?: number
@@ -90,7 +93,7 @@ export function EventJourney({
     steps.push({
       key: `fanout:${m.agent}`,
       channel: m.agent,
-      origin: m.trigger ? `via trigger ${m.trigger}` : 'via rule',
+      origin: m.trigger ? `via subscription ${m.trigger}` : 'via transfer',
       durationMs: m.durationMs,
       error: m.error,
       dotTone: runTone(m.runStatus),
@@ -112,7 +115,7 @@ export function EventJourney({
               <ChannelChip
                 name={s.channel}
                 mark={i === 0 ? 'produced' : s.channel === 'cron' || s.channel === 'chat' ? 'builtin' : 'fanout'}
-                to={i === 0 ? `/channels/${encodeURIComponent(s.channel)}` : undefined}
+                to={i === 0 ? channelPath(channelIdForProducer(s.channel)) : channelPath(`agent:${s.channel}`)}
               />
               {i > 0 ? <Tag variant={TONE_VARIANT[s.dotTone]}>{s.dotTone === 'ok' ? 'delivered' : s.dotTone === 'err' ? 'failed' : s.dotTone === 'warn' ? 'running' : 'queued'}</Tag> : <Tag>home</Tag>}
             </div>
@@ -132,7 +135,7 @@ export function EventJourney({
           </div>
           <div className="journey-body">
             <div className="journey-terminal">
-              Unmatched — no rule picked this event up. It stays in the <b>{connector}</b> channel
+              Unmatched — no subscription picked this event up. It stays in the <b>{connector}</b> channel
               and will not be delivered to any agent.
             </div>
           </div>
@@ -142,7 +145,7 @@ export function EventJourney({
   )
 }
 
-/** Small static producer → router → consumers illustration for overview pages. */
+/** Small static birth → transfer → consumption illustration for overviews. */
 export function ChannelFlowDiagram() {
   return (
     <div className="channel-flow" aria-hidden="true">
@@ -154,14 +157,14 @@ export function ChannelFlowDiagram() {
       </span>
       <span className="flow-arrow">⟶</span>
       <span className="flow-node">
-        <b>router</b> · rules
+        <b>subscriptions</b> · transfer
       </span>
       <span className="flow-arrow">⟶</span>
       <span className="flow-node">
-        <span className="ch-mark" /> code-reviewer
+        <span className="ch-mark agent" /> code-reviewer
       </span>
       <span className="flow-node">
-        <span className="ch-mark" /> issue-triager
+        <span className="ch-mark agent" /> issue-triager
       </span>
     </div>
   )

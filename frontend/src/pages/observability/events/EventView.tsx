@@ -1,5 +1,6 @@
 import { useMemo, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom'
+import { channelPath, channelIdForProducer } from '../../../api/channels'
 import { useConversations } from '../../../api/conversations'
 import { useEvent } from '../../../api/events'
 import { useInvocations, invocationStatusVariant, type InvocationEntry } from '../../../api/invocations'
@@ -199,7 +200,7 @@ export function EventView() {
               className="cropped"
               right={
                 data.connector ? (
-                  <Link to={`/channels/${encodeURIComponent(data.connector)}`} className="label">
+                  <Link to={channelPath(channelIdForProducer(data.connector))} className="label">
                     Trace channel →
                   </Link>
                 ) : undefined

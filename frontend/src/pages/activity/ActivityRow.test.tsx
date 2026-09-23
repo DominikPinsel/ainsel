@@ -165,8 +165,8 @@ describe('ActivityRow', () => {
       triggerNameById: new Map([['t1', 'On doc issue']]),
       agentNameById: new Map([['doc-writer', 'Doc Writer']]),
     })
-    const triggerLink = screen.getByRole('link', { name: 'Open trigger On doc issue' })
-    expect(triggerLink).toHaveAttribute('href', '/agents/doc-writer?tab=triggers')
+    const triggerLink = screen.getByRole('link', { name: 'Open subscription On doc issue' })
+    expect(triggerLink).toHaveAttribute('href', '/agents/doc-writer?tab=channel')
     expect(triggerLink).toHaveTextContent('On doc issue')
     const agentLink = screen.getByRole('link', { name: 'Open agent Doc Writer' })
     expect(agentLink).toHaveAttribute('href', '/agents/doc-writer')
@@ -176,8 +176,8 @@ describe('ActivityRow', () => {
   it('falls back to the raw id as label when a name is unresolved, keeping the link', () => {
     // No name maps provided → both fall back to raw ids.
     renderRow()
-    const triggerLink = screen.getByRole('link', { name: 'Open trigger t1' })
-    expect(triggerLink).toHaveAttribute('href', '/agents/doc-writer?tab=triggers')
+    const triggerLink = screen.getByRole('link', { name: 'Open subscription t1' })
+    expect(triggerLink).toHaveAttribute('href', '/agents/doc-writer?tab=channel')
     expect(triggerLink).toHaveTextContent('t1')
     const agentLink = screen.getByRole('link', { name: 'Open agent doc-writer' })
     expect(agentLink).toHaveAttribute('href', '/agents/doc-writer')

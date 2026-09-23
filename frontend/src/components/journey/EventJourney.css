@@ -155,6 +155,11 @@ a.journey-channel:hover {
   background: var(--signal);
 }
 
+.channel-flow .flow-node .ch-mark.agent {
+  border-radius: var(--radius-pill);
+  background: var(--ink-2);
+}
+
 .channel-flow .flow-arrow {
   color: var(--ink-4);
   font-size: 14px;

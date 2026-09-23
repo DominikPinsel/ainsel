@@ -278,8 +278,8 @@ describe('Activity', () => {
     await waitFor(() => expect(container.querySelector('tbody tr')).not.toBeNull())
 
     // e1 (newest): single match resolves to names
-    const triggerLink = await screen.findByRole('link', { name: 'Open trigger On doc issue' })
-    expect(triggerLink).toHaveAttribute('href', '/agents/doc-writer?tab=triggers')
+    const triggerLink = await screen.findByRole('link', { name: 'Open subscription On doc issue' })
+    expect(triggerLink).toHaveAttribute('href', '/agents/doc-writer?tab=channel')
     const agentLink = screen.getByRole('link', { name: 'Open agent Doc Writer' })
     expect(agentLink).toHaveAttribute('href', '/agents/doc-writer')
 

@@ -77,22 +77,22 @@ describe('AgentTriggers', () => {
     expect(screen.queryByText('on-issue')).not.toBeInTheDocument()
   })
 
-  it('shows the New trigger action', async () => {
+  it('shows the New subscription action', async () => {
     renderWithProviders(
       <AgentTriggers agentId="a1" agentName="code-reviewer-agent" />,
     )
     expect(
-      await screen.findByRole('button', { name: /new trigger/i }),
+      await screen.findByRole('button', { name: /new subscription/i }),
     ).toBeInTheDocument()
   })
 
-  it('toggles the inline TriggerForm when "New trigger" is clicked', async () => {
+  it('toggles the inline TriggerForm when "New subscription" is clicked', async () => {
     renderWithProviders(
       <AgentTriggers agentId="a1" agentName="code-reviewer-agent" />,
     )
-    const newBtn = await screen.findByRole('button', { name: /new trigger/i })
+    const newBtn = await screen.findByRole('button', { name: /new subscription/i })
     await userEvent.click(newBtn)
-    expect(await screen.findByText(/^new trigger$/i)).toBeInTheDocument()
+    expect(await screen.findByText(/^new subscription$/i)).toBeInTheDocument()
     // The Agent field is pre-filled from props
     const agentInput = screen.getByLabelText('Agent') as HTMLInputElement
     expect(agentInput.value).toBe('a1')
@@ -132,7 +132,7 @@ describe('AgentTriggers', () => {
     )
     renderWithProviders(<AgentTriggers agentId="a1" agentName="lonely-agent" />)
     await waitFor(() =>
-      expect(screen.getByText(/no triggers/i)).toBeInTheDocument(),
+      expect(screen.getByText(/nothing flows into this inbox/i)).toBeInTheDocument(),
     )
   })
 
@@ -207,7 +207,7 @@ describe('AgentTriggers', () => {
     // The confirm modal should appear
     const dialog = await screen.findByRole('dialog')
     expect(dialog).toBeInTheDocument()
-    expect(screen.getByText('Delete trigger?')).toBeInTheDocument()
+    expect(screen.getByText('Delete subscription?')).toBeInTheDocument()
 
     // Click the confirm Delete button inside the modal
     const confirmBtn = screen

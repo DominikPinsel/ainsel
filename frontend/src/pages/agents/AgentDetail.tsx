@@ -11,8 +11,7 @@ import { Panel } from '../../primitives/Panel'
 import { Tabs } from '../../primitives/Tabs'
 import { Tag } from '../../primitives/Tag'
 import { Titleblock } from '../../layout/Titleblock'
-import { AgentTriggers } from './AgentTriggers'
-import { AgentSchedules } from './AgentSchedules'
+import { AgentChannelTab } from '../channels/AgentChannelTab'
 import { AgentPersonaSection } from './AgentPersonaSection'
 import {
   AgentImageSection,
@@ -24,12 +23,11 @@ import { AgentEnvSection } from './AgentEnvSection'
 
 const TABS = [
   { value: 'overview', label: 'Overview' },
+  { value: 'channel', label: 'Channel' },
   { value: 'persona', label: 'Persona' },
   { value: 'runtime', label: 'Runtime' },
   { value: 'tools', label: 'Tools' },
   { value: 'skills', label: 'Skills' },
-  { value: 'triggers', label: 'Triggers' },
-  { value: 'schedule', label: 'Schedule' },
 ] as const
 
 const TAB_VALUES: string[] = TABS.map((t) => t.value)
@@ -182,12 +180,8 @@ export function AgentDetail() {
 
           {data && tab === 'skills' ? <AgentSkillsSection agent={data} /> : null}
 
-          {data && tab === 'triggers' ? (
-            <AgentTriggers agentId={data.id} agentName={data.name} />
-          ) : null}
-
-          {data && tab === 'schedule' ? (
-            <AgentSchedules agentId={data.id} />
+          {data && tab === 'channel' ? (
+            <AgentChannelTab agentId={data.id} agentName={data.name} />
           ) : null}
         </div>
       </div>
@@ -197,8 +191,8 @@ export function AgentDetail() {
         title="Delete agent?"
         body={
           <>
-            <b>{data?.name ?? id}</b> will be permanently removed. Triggers
-            referencing this agent will become invalid.
+            <b>{data?.name ?? id}</b> will be permanently removed. Its inbox
+            channel — subscriptions and schedules — goes with it.
           </>
         }
         confirmLabel={remove.isPending ? 'Deleting…' : 'Delete'}
