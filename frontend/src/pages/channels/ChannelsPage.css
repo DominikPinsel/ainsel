@@ -2,3 +2,80 @@
   display: grid;
   gap: 24px;
 }
+
+/* Relation tree on the channel view */
+.tree-root {
+  padding: 4px 0 8px;
+  font-size: 14px;
+}
+ul.channel-tree {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 16px;
+  display: grid;
+  gap: 4px;
+}
+ul.channel-tree ul.channel-tree {
+  margin-top: 4px;
+  border-left: 1px solid var(--rule-ghost);
+}
+.channel-tree li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+.tree-arrow {
+  color: var(--ink-4);
+  width: 1em;
+  text-align: center;
+}
+.tree-arrow.in {
+  color: var(--ok, var(--ink-2));
+}
+.tree-arrow.out {
+  color: var(--accent, var(--ink-2));
+}
+.tree-node {
+  font-weight: 600;
+  color: var(--ink);
+}
+.tree-node.muted {
+  color: var(--ink-4);
+  font-weight: 400;
+}
+.tree-edge {
+  color: var(--ink-4);
+  font-size: 12px;
+}
+
+/* Bridges (custom channels) */
+.bridge-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  border-top: 1px solid var(--rule-ghost);
+  padding: 8px 2px;
+  font-size: 13px;
+}
+.bridge-remove {
+  margin-left: auto;
+  color: var(--ink-4);
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 15px;
+}
+.bridge-remove:hover {
+  color: var(--err);
+}
+.bridge-form {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--rule-ghost);
+  padding-top: 10px;
+  margin-top: 6px;
+}

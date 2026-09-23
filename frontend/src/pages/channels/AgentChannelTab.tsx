@@ -5,6 +5,7 @@ import {
   useChannelCounts,
   useChannels,
 } from '../../api/channels'
+import { useCustomChannels } from '../../api/customChannels'
 import { useTriggers } from '../../api/triggers'
 import { Button } from '../../primitives/Button'
 import { Panel } from '../../primitives/Panel'
@@ -23,6 +24,7 @@ type Props = { agentId: string; agentName: string }
 export function AgentChannelTab({ agentId, agentName }: Props) {
   const { channels, isLoading } = useChannels()
   const { data, isLoading: subsLoading, error } = useTriggers({ pageSize: 200 })
+  const { data: local } = useCustomChannels()
   const channelId = `agent:${agentName}`
   const channel = channels.find((c) => c.id === channelId)
   const counts = useChannelCounts(
@@ -31,15 +33,15 @@ export function AgentChannelTab({ agentId, agentName }: Props) {
       name: agentName,
       displayName: agentName,
       description: '',
-      origin: 'agent',
+      kind: 'agent',
     },
   )
 
   // Connections into THIS agent's inbox: subscription edges whose source is a
-  // connector channel. Match by resolved channel id, falling back to the
-  // agent registry id in case the channel cannot be resolved by name.
-  const feeds = buildConnections(channels, data?.items).filter(
-    (c) => c.to?.id === channelId || c.toRef === agentId,
+  // connector or custom channel. Match by resolved channel id, falling back
+  // to the agent registry id (hub edges) or the channel id (local bridges).
+  const feeds = buildConnections(channels, data?.items, local?.bridges).filter(
+    (c) => c.to?.id === channelId || c.toRef === `agent#${agentId}` || c.toRef === channelId,
   )
 
   if (isLoading && !channel) {
@@ -129,10 +131,11 @@ export function AgentChannelTab({ agentId, agentName }: Props) {
                     </Link>
                   ) : (
                     <span style={{ color: 'var(--ink-4)' }}>
-                      {f.fromRef ? `connector ${f.fromRef}` : 'unknown channel'}
+                      {f.fromRef ?? 'unknown channel'}
                     </span>
                   )}
                   <span style={{ color: 'var(--ink-3)' }}>
+                    <span style={{ color: 'var(--ink-4)' }}>{f.source === 'local' ? 'bridged locally · ' : ''}</span>
                     <span style={{ color: 'var(--ink-4)' }}>— subscription </span>
                     <b style={{ color: 'var(--ink-2)' }}>{f.subscription}</b>
                     <span style={{ color: 'var(--ink-4)' }}> transfers into →</span>
