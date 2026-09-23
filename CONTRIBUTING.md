@@ -122,6 +122,8 @@ repository on Forgejo, not here.
 | `pr-title.yml` | PR opened, edited or updated | reject a PR title release-please could not parse |
 | `ci-chart.yml` | same, for `chart/**` and `operators/*/config/crd/**` | helm lint, template with default/example/medium/large values, CRD sync check |
 | `dev-image-<component>.yml` (8) | push to `main` or `develop`, path-filtered | build and push images (see tags below) |
+| `dev-image-<component>.yml` (8) | PR to `main` or `develop`, path-filtered | **build only** - no login, no push, image discarded |
+| `maintenance-untag.yml` | weekly schedule, or dispatch | report (and, on an explicit dispatch, delete) stale Docker Hub tags - see [`docs/maintenance.md`](docs/maintenance.md) |
 | `gitleaks.yml` | push and PR on `main`/`develop` | secret scanning |
 | `deploy-docs-pages.yml` | push to `main` on docs paths | publish the docs site |
 | `release.yml` | push to `main`, or dispatch | release-please maintains the release PR; when one merges, publish images + chart and verify |
@@ -140,6 +142,16 @@ workflow:
 Nothing on `main` writes `:dev`. Main builds used to overwrite it on every
 push, which took the dev cluster down by replacing its images with code that
 lacked migrations develop had already applied - see PR #182.
+
+A PR run is a compile check on the Dockerfile, nothing more: `Login to Docker Hub`
+is skipped and the image is loaded into the runner instead of pushed, so a branch
+never produces a registry tag. There is no image to deploy from a PR - merge to
+`develop` for that.
+
+Every tag these workflows write accumulates in the registry, and Docker Hub has no
+server-side retention for a personal namespace. [`docs/maintenance.md`](docs/maintenance.md)
+is the policy and the collection pass that keeps the account from growing without
+bound.
 
 ## Commit conventions
 
