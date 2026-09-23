@@ -50,6 +50,23 @@ function Kpi({
   )
 }
 
+// Explains why a transcript is empty, using the queue state of the backing
+// agent_tasks row (#195). A pending task means the agent has not even
+// started — very different from "the agent ran and produced nothing".
+function transcriptEmptyState(invocation: InvocationEntry): string {
+  const t = invocation.task
+  if (!t) return 'No conversation recorded for this invocation.'
+  if (t.status === 'pending') {
+    return t.attempts > 0
+      ? `Waiting in queue — attempt ${t.attempts} failed, retrying before the agent starts.`
+      : 'Waiting in queue — the agent has not started this task yet.'
+  }
+  if (t.status === 'claimed') {
+    return `Processing — the agent is working on this task (attempt ${t.attempts + 1}).`
+  }
+  return 'No conversation recorded for this invocation.'
+}
+
 function InvocationDetail({ invocation }: { invocation: InvocationEntry }) {
   const conversations = useConversations(
     { invocation: invocation.id },
@@ -79,6 +96,11 @@ function InvocationDetail({ invocation }: { invocation: InvocationEntry }) {
         <Kpi label="Trigger">{invocation.triggerName ?? invocation.trigger ?? '—'}</Kpi>
         <Kpi label="Status">
           <Tag variant={invocationStatusVariant(invocation.status)}>{invocation.status}</Tag>
+          {invocation.task?.status === 'pending' ? (
+            <Tag variant="stale">
+              queued{invocation.task.attempts > 0 ? ` · attempt ${invocation.task.attempts}` : ''}
+            </Tag>
+          ) : null}
         </Kpi>
         <Kpi label="Duration" size={28}>
           {formatDuration(invocation.durationMs)}
@@ -93,7 +115,11 @@ function InvocationDetail({ invocation }: { invocation: InvocationEntry }) {
         ) : conversations.error ? (
           <SectionStatus state="error" />
         ) : (
-          <ConversationTranscript messages={messages} total={total} />
+          <ConversationTranscript
+            messages={messages}
+            total={total}
+            emptyState={transcriptEmptyState(invocation)}
+          />
         )}
       </div>
     </Panel>
