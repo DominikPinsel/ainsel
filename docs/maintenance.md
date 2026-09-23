@@ -148,15 +148,42 @@ or under-scoped token fails with a message instead of half-applying a policy.
 
 ## Pull rate limits
 
-Docker Hub allows a Personal-plan account 200 authenticated pulls per six hours
-and 100 per six hours per IPv4 address for unauthenticated pulls
-([source](https://docs.docker.com/docker-hub/usage/)). Two consumers matter here:
+Docker Hub's [usage and limits](https://docs.docker.com/docker-hub/download-rate-limit/)
+table gives a Personal account **200 pulls per six hours when authenticated** and
+**100 per six hours per IPv4 address (or IPv6 /64) when not**, "subject to fair
+use".
 
-- the `ainsel-dev` cluster queries the registry for the current `:dev` digest of
-  each deployment every 30 minutes, unauthenticated, from the same egress IP its
-  kubelet uses to pull — about 96 API hits per six hours against a 100 budget
-- GitHub Actions runners pull base images anonymously from shared IPs
+An earlier draft of this page estimated that `deploy-dev.yml`'s digest check alone
+spent "about 96 of the 100" anonymous budget every six hours. **That estimate is
+wrong, and wrong in the useful direction** - measured against the live registry on
+2026-09-23 from a single egress IP:
 
-If pulls start failing with 429s, the fix is registry credentials in the cluster
-rather than deleting more tags. That is tracked separately from this page because
-it lives in the deployment repository.
+| what was sent | requests | `ratelimit-remaining` |
+| --- | --- | --- |
+| `HEAD .../manifests/dev` — exactly what the digest check does | 12 | `100` → `100`, unmoved |
+| `GET` a config blob + a layer blob | 2 | `100` → `99` |
+| `GET` manifest + one layer, three different repos | 6 | `99` → `97` |
+
+A `HEAD` manifest probe is **not billed at all**, and a billed pull costs roughly
+one unit per image rather than one per request: an image with 13 layers did not
+turn into 13 units. The `docker-ratelimit-source: <ip>` header confirms attribution
+is per address while anonymous.
+
+That leaves the budget real headroom, so **the cluster deliberately keeps pulling
+anonymously**: no `imagePullSecrets`, no credential to rotate, nothing in the chart
+to keep honest.
+
+Revisit it if either of these shows up, since they are the only ways this becomes a
+problem:
+
+- `kubectl describe pod` events on `ainsel-dev` show `429` / `toomanyrequests` -
+  the shared-address case, where several agents' pods pull fresh layers at once
+  through one node's egress IP
+- `deploy-dev.yml` logs `::warning::digest lookup failed`. It fails open, so a
+  throttled registry silently stops pinning new digests instead of breaking loudly
+
+The fix in both cases has the same shape: a `kubernetes.io/dockerconfigjson`
+secret in the namespace, referenced by `imagePullSecrets`, which the chart already
+accepts per component (`chart/values.yaml`, default `[]`). Authenticated pulls
+bill the account's 200 rather than the address's 100. Do it on that evidence, not
+on arithmetic like the estimate above.
