@@ -53,14 +53,100 @@ type Task struct {
 	CompletedAt *time.Time `json:"completedAt,omitempty"`
 }
 
+// QueueDepth is the per-agent work accounting the hub publishes for the
+// operator to scale on.
+type QueueDepth struct {
+	// Pending is tasks waiting to be claimed, including those still inside a
+	// retry backoff: work is waiting either way, so it also means "not quiet".
+	Pending int32
+	// Active is tasks currently claimed. A claimed task is only recovered by
+	// the reaper once its claim times out, so this is the drain signal.
+	Active int32
+}
+
 // Store provides event queue operations backed by PostgreSQL.
 type Store struct {
 	pool *pgxpool.Pool
+
+	// onQueueChange, when set, is called with the agent name whenever that
+	// agent's queue state may have changed. See SetQueueObserver.
+	onQueueChange func(agentName string)
 }
 
 // NewStore creates a Store using the given connection pool.
 func NewStore(pool *pgxpool.Pool) *Store {
 	return &Store{pool: pool}
+}
+
+// SetQueueObserver registers a callback fired whenever an agent's queue state
+// may have changed: enqueue, claim, ack, nack and reaper transitions.
+//
+// The callback must not block, because it runs inline on the request path that
+// mutated the queue; the hub's queue-signal publisher only parks the agent name
+// in a debounced queue and returns. It is also allowed to be racily redundant —
+// two enqueues for one agent may produce one or two calls.
+//
+// This exists so the hub has a single choke point for "someone should probably
+// wake an agent up", rather than every EnqueueTask call site (router, chat,
+// cron, channel transfers) having to remember to publish a scaling signal.
+func (s *Store) SetQueueObserver(fn func(agentName string)) {
+	s.onQueueChange = fn
+}
+
+// observe reports a possible queue change. Nil-safe and non-blocking.
+func (s *Store) observe(agentName string) {
+	if s.onQueueChange != nil && agentName != "" {
+		s.onQueueChange(agentName)
+	}
+}
+
+// QueueCounts measures one agent's queue depth.
+func (s *Store) QueueCounts(ctx context.Context, agentName string) (QueueDepth, error) {
+	var d QueueDepth
+	err := s.pool.QueryRow(ctx,
+		`SELECT
+		   count(*) FILTER (WHERE status = 'pending')::int,
+		   count(*) FILTER (WHERE status = 'claimed')::int
+		 FROM agent_tasks
+		 WHERE agent_name = $1 AND status IN ('pending', 'claimed')`,
+		agentName,
+	).Scan(&d.Pending, &d.Active)
+	if err != nil {
+		return QueueDepth{}, fmt.Errorf("eventqueue: queue counts for %q: %w", agentName, err)
+	}
+	return d, nil
+}
+
+// AllQueueCounts measures every agent that has work waiting or in flight.
+// Agents absent from the map have an empty queue; the hub uses this to refresh
+// published state after a restart, when it no longer knows what it last said.
+func (s *Store) AllQueueCounts(ctx context.Context) (map[string]QueueDepth, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT
+		   agent_name,
+		   count(*) FILTER (WHERE status = 'pending')::int,
+		   count(*) FILTER (WHERE status = 'claimed')::int
+		 FROM agent_tasks
+		 WHERE status IN ('pending', 'claimed')
+		 GROUP BY agent_name`)
+	if err != nil {
+		return nil, fmt.Errorf("eventqueue: all queue counts: %w", err)
+	}
+	defer rows.Close()
+
+	out := map[string]QueueDepth{}
+	for rows.Next() {
+		var name string
+		var d QueueDepth
+		if err := rows.Scan(&name, &d.Pending, &d.Active); err != nil {
+			return nil, fmt.Errorf("eventqueue: scan all queue counts: %w", err)
+		}
+		out[name] = d
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("eventqueue: all queue counts iteration: %w", err)
+	}
+	return out, nil
 }
 
 // Pool returns the underlying connection pool. Exposed for tests that need to
@@ -148,6 +234,7 @@ func (s *Store) EnqueueTask(ctx context.Context, task Task) error {
 	if err != nil {
 		return fmt.Errorf("eventqueue: enqueue task for %q: %w", task.AgentName, err)
 	}
+	s.observe(task.AgentName)
 	return s.NotifyAgent(ctx, task.AgentName)
 }
 
@@ -176,18 +263,26 @@ func (s *Store) ClaimTask(ctx context.Context, agentName string) (*Task, error) 
 	if err != nil {
 		return nil, fmt.Errorf("eventqueue: claim task for %q: %w", agentName, err)
 	}
+	// pending -> claimed: the agent's drain signal just moved, and if this was
+	// the last pending task another pod may now be scalable down.
+	s.observe(agentName)
 	return &t, nil
 }
 
 // AckTask marks a task as completed.
 func (s *Store) AckTask(ctx context.Context, taskID int64) error {
-	_, err := s.pool.Exec(ctx,
-		`UPDATE agent_tasks SET status = 'completed', completed_at = now() WHERE id = $1`,
+	var agentName string
+	err := s.pool.QueryRow(ctx,
+		`UPDATE agent_tasks SET status = 'completed', completed_at = now() WHERE id = $1
+		 RETURNING agent_name`,
 		taskID,
-	)
-	if err != nil {
+	).Scan(&agentName)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("eventqueue: ack task %d: %w", taskID, err)
 	}
+	// A re-acked or already-terminal task returns no rows; the queue state did
+	// not change, so there is nothing to republish.
+	s.observe(agentName)
 	return nil
 }
 
@@ -205,7 +300,19 @@ func (s *Store) NakTask(ctx context.Context, taskID int64, delay time.Duration, 
 	if err != nil {
 		return fmt.Errorf("eventqueue: nak task %d: %w", taskID, err)
 	}
+	s.observeAgentOfTask(ctx, taskID)
 	return nil
+}
+
+// observeAgentOfTask resolves a task's agent and reports a queue change for it,
+// for transitions whose caller only knows the task ID.
+func (s *Store) observeAgentOfTask(ctx context.Context, taskID int64) {
+	var agentName string
+	err := s.pool.QueryRow(ctx, `SELECT agent_name FROM agent_tasks WHERE id = $1`, taskID).Scan(&agentName)
+	if err != nil {
+		return // best-effort: the next transition or the periodic sweep corrects it
+	}
+	s.observe(agentName)
 }
 
 // GetTask returns a task by ID, verifying it belongs to the given agent.
@@ -319,12 +426,17 @@ func (s *Store) ReapStaleClaims(ctx context.Context, timeout time.Duration) ([]R
 	defer rows.Close()
 
 	var reaped []ReapedTask
+	seen := map[string]bool{}
 	for rows.Next() {
 		var rt ReapedTask
 		if err := rows.Scan(&rt.ID, &rt.AgentName); err != nil {
 			return nil, fmt.Errorf("eventqueue: scan reaped task: %w", err)
 		}
 		reaped = append(reaped, rt)
+		if !seen[rt.AgentName] {
+			seen[rt.AgentName] = true
+			s.observe(rt.AgentName)
+		}
 	}
 	return reaped, rows.Err()
 }

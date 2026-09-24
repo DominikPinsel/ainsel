@@ -143,6 +143,12 @@ func main() {
 		}
 	}))
 
+	// Agent queue signals: publishes queue depth on Agent status for the operator
+	// to scale on (see internal/queuesignal).
+	g.Go(runUntilCanceled(ctx, func(ctx context.Context) error {
+		return c.queueSignals.Run(ctx)
+	}))
+
 	// Stale claim reaper (every 5m, non-fatal).
 	g.Go(runUntilCanceled(ctx, func(ctx context.Context) error {
 		claimTimeout := time.Duration(cfg.claimTimeoutSecs) * time.Second
