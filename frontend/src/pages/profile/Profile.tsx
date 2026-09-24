@@ -4,16 +4,9 @@ import { useCurrentUser } from '../../hooks/useCurrentUser'
 import { userDisplayName, useSyncMe } from '../../api/users'
 import { Titleblock } from '../../layout/Titleblock'
 import { Button } from '../../primitives/Button'
-import { Check } from '../../primitives/Check'
 import { Panel } from '../../primitives/Panel'
 import { Select } from '../../primitives/Select'
 import { getStoredTheme, setStoredTheme, type Theme } from '../../theme'
-import {
-  getReportBtnEnabled,
-  setReportBtnEnabled,
-  getReportScreenshotEnabled,
-  setReportScreenshotEnabled,
-} from '../../prefs'
 import { TokenManager } from './TokenManager'
 
 const THEME_OPTIONS: { value: Theme; label: string }[] = [
@@ -27,24 +20,12 @@ export function Profile() {
   const { signoutRedirect, mode } = useAuth()
   const { data: user, isLoading } = useCurrentUser()
   const [theme, setTheme] = useState<Theme>(() => getStoredTheme() ?? 'light')
-  const [reportBtn, setReportBtn] = useState(() => getReportBtnEnabled())
-  const [reportScreenshot, setReportScreenshot] = useState(() => getReportScreenshotEnabled())
   const syncMe = useSyncMe()
 
   const handleThemeChange = useCallback((next: string) => {
     const t = next as Theme
     setTheme(t)
     setStoredTheme(t)
-  }, [])
-
-  const handleReportBtnChange = useCallback((next: boolean) => {
-    setReportBtn(next)
-    setReportBtnEnabled(next)
-  }, [])
-
-  const handleReportScreenshotChange = useCallback((next: boolean) => {
-    setReportScreenshot(next)
-    setReportScreenshotEnabled(next)
   }, [])
 
   return (
@@ -110,29 +91,6 @@ export function Profile() {
         </Panel>
 
         <TokenManager />
-
-        <Panel title="Developer">
-          <div style={{ padding: '14px 16px', display: 'grid', gap: 14 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <Check
-                checked={reportBtn}
-                onChange={handleReportBtnChange}
-                aria-label="Enable report error button"
-              />
-              <span className="label">Show report error button</span>
-            </div>
-            {reportBtn && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <Check
-                  checked={reportScreenshot}
-                  onChange={handleReportScreenshotChange}
-                  aria-label="Include screenshot in error reports"
-                />
-                <span className="label">Include screenshot in reports</span>
-              </div>
-            )}
-          </div>
-        </Panel>
 
         <Panel title="Session">
           <div style={{ padding: '14px 16px' }}>

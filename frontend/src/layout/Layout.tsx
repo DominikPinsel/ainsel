@@ -3,7 +3,6 @@ import { Outlet, useLocation } from 'react-router-dom'
 import { Spine } from './Spine'
 import { recentsScope } from '../agentRecents'
 import { useAuth } from '../auth/AuthProvider'
-import { ReportButton } from '../components/ReportButton'
 import './Layout.css'
 
 export function Layout() {
@@ -62,7 +61,6 @@ export function Layout() {
       <main id="content" className="canvas">
         <Outlet />
       </main>
-      <ReportButton />
     </div>
   )
 }
