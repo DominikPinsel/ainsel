@@ -173,29 +173,15 @@ export function ChannelsPage() {
       header: 'Last 24h',
       align: 'right',
       cell: (c) => (
-        <span style={{ display: 'flex', gap: 18, justifyContent: 'flex-end' }}>
-          <span>
-            <b>{c.counts?.events ?? 0}</b>
-            <span className="label" style={{ color: 'var(--ink-4)' }}>
-              {' '}
-              events
-            </span>
+        <span className="channel-counts">
+          <span className="ccount">
+            <b>{c.counts?.events ?? 0}</b> <span className="label">events</span>
           </span>
-          {c.kind === 'connector' && (
-            <span>
-              <b>{c.counts?.unmatched ?? 0}</b>
-              <span className="label" style={{ color: 'var(--ink-4)' }}>
-                {' '}
-                unmatched
-              </span>
-            </span>
-          )}
-          <span style={{ color: (c.counts?.failed ?? 0) > 0 ? 'var(--err)' : undefined }}>
-            <b>{c.counts?.failed ?? 0}</b>
-            <span className="label" style={{ color: 'var(--ink-4)' }}>
-              {' '}
-              failed
-            </span>
+          <span className={`ccount${c.kind === 'connector' ? '' : ' ccount-off'}`}>
+            <b>{c.counts?.unmatched ?? 0}</b> <span className="label">unmatched</span>
+          </span>
+          <span className={`ccount${(c.counts?.failed ?? 0) > 0 ? ' ccount-fail' : ''}`}>
+            <b>{c.counts?.failed ?? 0}</b> <span className="label">failed</span>
           </span>
         </span>
       ),
