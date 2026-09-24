@@ -4,6 +4,21 @@ import { Route, Routes } from 'react-router-dom'
 import { ChannelDetailPage } from './ChannelDetailPage'
 import { renderWithProviders } from '../../test/renderWithProviders'
 
+// The page lazy-loads mermaid; stub it with a render that records the graph
+// definition and returns a node we can click through.
+const mermaidRenders: string[] = []
+vi.mock('mermaid', () => ({
+  default: {
+    initialize: () => {},
+    render: (_id: string, definition: string) => {
+      mermaidRenders.push(definition)
+      return Promise.resolve({
+        svg: '<svg data-testid="relation-diagram"><g class="node" id="flowchart-A1-9"></g></svg>',
+      })
+    },
+  },
+}))
+
 const HOME = {
   id: 'ch-forgejo',
   kind: 'connector',
@@ -190,9 +205,11 @@ describe('ChannelDetailPage', () => {
     })
     // connector channels do not own bridge editing
     expect(screen.queryByText(/Bridges/)).not.toBeInTheDocument()
-    // the relation tree shows the edge out of this channel
+    // the relation graph shows the edges out of this channel
     expect(screen.getByText(/Relations/i)).toBeInTheDocument()
     expect(screen.getByText('via on-issues')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('relation-diagram')).toBeInTheDocument())
+    expect(mermaidRenders.at(-1)).toContain('graph TD')
   })
 
   it('shows the counts the hub already computed, without extra event queries', async () => {
@@ -228,9 +245,17 @@ describe('ChannelDetailPage', () => {
     // runs are looked up by the agent's registry ref, not its display name
     const invocations = calls.find((c) => c.url.includes('/invocations'))
     expect(invocations?.url).toContain('agent=review-bot')
+    // the relation graph: one level up only — the forgejo channel feeds this
+    // inbox, and the custom channel *also* fed by forgejo stays out of view
+    await waitFor(() => expect(screen.getByTestId('relation-diagram')).toBeInTheDocument())
+    const def = mermaidRenders.at(-1) ?? ''
+    expect(def).toContain('"forgejo"')
+    expect(def).toContain('via on-issues')
+    expect(def).not.toContain('"team-inbox"')
+    expect(screen.getByText('fed by')).toBeInTheDocument()
   })
 
-  it('renders a custom channel with real bridges, tree, and gated delete', async () => {
+  it('renders a custom channel with real bridges, graph, and gated delete', async () => {
     mockFetch()
     renderAt('ch-group')
     await waitFor(() => {

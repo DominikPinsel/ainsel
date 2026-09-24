@@ -350,3 +350,139 @@ export function findChannel(
   if (!id) return undefined
   return channels?.find((c) => c.id === id)
 }
+
+/**
+ * The relation graph of one channel, as a Mermaid flowchart definition.
+ *
+ * The shape is deliberate: at most one level UP (whatever feeds this channel),
+ * and from the channel itself only DOWNSTREAM edges, explored breadth-first to
+ * a bounded depth. The old view walked every edge in both directions at every
+ * level, which read as noise — "who feeds me, and where does my traffic go"
+ * was the same flat list of arrows.
+ *
+ * Node keys (A0, A1, …) map back to channel ids in `nodeChannels`; endpoints
+ * the channel list couldn't resolve render as dashed ghost nodes labelled with
+ * their raw ref, so a dangling edge is visible but unclickable.
+ */
+export type RelationEndpoint = { id?: string; name: string; edge: string }
+
+export type RelationGraphModel = {
+  definition: string
+  /** Mermaid node key → channel id, for click-through navigation. */
+  nodeChannels: Record<string, string>
+  /** First tier, for the text summary (and the diagram's absence). */
+  fedBy: RelationEndpoint[]
+  feeds: RelationEndpoint[]
+  empty: boolean
+}
+
+/** How many downstream levels the graph expands below the root channel. */
+export const RELATION_DOWN_DEPTH = 2
+
+export function buildRelationGraph(
+  root: { id: string; name: string },
+  edges: ChannelConnection[],
+  downDepth = RELATION_DOWN_DEPTH,
+): RelationGraphModel {
+  const clean = (s: string) => s.replace(/["\n\r]/g, ' ').trim() || '—'
+  const fromIdent = (e: ChannelConnection) => e.from?.id ?? e.fromRef
+  const toIdent = (e: ChannelConnection) => e.to?.id ?? e.toRef
+
+  const keys = new Map<string, string>()
+  const nodeDefs = new Map<string, { text: string; ghost: boolean }>()
+  const nodeChannels: Record<string, string> = {}
+  const ghostKeys: string[] = []
+  let seq = 0
+  const addNode = (
+    ident: string | undefined,
+    text: string,
+    ghost: boolean,
+    chanId?: string,
+  ): string => {
+    const slot = ident ?? '~unknown'
+    const known = keys.get(slot)
+    if (known) return known
+    const key = `A${seq++}`
+    keys.set(slot, key)
+    nodeDefs.set(key, { text: clean(text), ghost })
+    if (!ghost && chanId) nodeChannels[key] = chanId
+    if (ghost) ghostKeys.push(key)
+    return key
+  }
+
+  const edgeLines: string[] = []
+  const seenEdges = new Set<string>()
+  const addEdge = (fromKey: string, toKey: string, e: ChannelConnection) => {
+    const text = e.source === 'bridge' ? `bridged · ${e.subscription}` : `via ${e.subscription}`
+    const slot = `${fromKey}>${toKey}>${text}`
+    if (seenEdges.has(slot)) return
+    seenEdges.add(slot)
+    edgeLines.push(`  ${fromKey} -->|"${clean(text)}"| ${toKey}`)
+    return text
+  }
+
+  const rootKey = addNode(root.id, root.name, false, root.id)
+  const fedBy: RelationEndpoint[] = []
+  const feeds: RelationEndpoint[] = []
+
+  // One level up: whoever feeds this channel, without exploring their context.
+  for (const e of edges) {
+    if (toIdent(e) !== root.id) continue
+    const key = addNode(fromIdent(e), e.from?.name ?? e.fromRef ?? 'unknown', !e.from, e.from?.id)
+    const text = addEdge(key, rootKey, e)
+    fedBy.push({
+      id: e.from?.id,
+      name: e.from?.name ?? e.fromRef ?? 'unknown',
+      edge: text ?? '',
+    })
+  }
+
+  // Downstream only: children, grandchildren, … to the depth budget. A child
+  // already on the graph (a cycle, or shared parent) gets its edge but is not
+  // expanded again — the visited set is what keeps a cyclic graph finite.
+  const visited = new Set<string>([root.id])
+  let frontier = [{ id: root.id, key: rootKey }]
+  for (let depth = 0; depth < downDepth && frontier.length > 0; depth++) {
+    const next: { id: string; key: string }[] = []
+    for (const node of frontier) {
+      for (const e of edges) {
+        if (fromIdent(e) !== node.id) continue
+        const ghost = !e.to
+        const key = addNode(toIdent(e), e.to?.name ?? e.toRef ?? 'unknown', ghost, e.to?.id)
+        const text = addEdge(node.key, key, e)
+        if (depth === 0) {
+          feeds.push({
+            id: e.to?.id,
+            name: e.to?.name ?? e.toRef ?? 'unknown',
+            edge: text ?? '',
+          })
+        }
+        if (e.to && !visited.has(e.to.id)) {
+          visited.add(e.to.id)
+          next.push({ id: e.to.id, key })
+        }
+      }
+    }
+    frontier = next
+  }
+
+  const lines = [
+    'graph TD',
+    ...[...nodeDefs.entries()].map(
+      ([key, def]) => `  ${key}["${def.text}"]${def.ghost ? ':::relGhost' : ''}`,
+    ),
+    ...edgeLines,
+    '  classDef relRoot stroke:#e0af68,stroke-width:2.5px',
+    '  classDef relGhost stroke-dasharray:4 4,opacity:0.55',
+    `  class ${rootKey} relRoot`,
+  ]
+  if (ghostKeys.length > 0) lines.push(`  class ${ghostKeys.join(',')} relGhost`)
+
+  return {
+    definition: lines.join('\n'),
+    nodeChannels,
+    fedBy,
+    feeds,
+    empty: nodeDefs.size === 1 && edgeLines.length === 0,
+  }
+}

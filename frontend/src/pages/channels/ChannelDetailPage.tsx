@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   buildConnections,
+  buildRelationGraph,
   channelPath,
   isChannelDeletable,
   useAttachBridge,
@@ -15,7 +16,9 @@ import {
   type ChannelDetail,
   type ChannelKind,
   type ChannelSubscription,
+  type RelationEndpoint,
 } from '../../api/channels'
+import { loadMermaid } from '../../primitives/mermaid'
 import type { ActivityEntry } from '../../api/events'
 import { useInvocations } from '../../api/invocations'
 import { AgentSchedules } from '../agents/AgentSchedules'
@@ -86,123 +89,95 @@ function EventLine({ entry }: { entry: ActivityEntry }) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Relation tree                                                       */
+/* Relation graph                                                      */
 /* ------------------------------------------------------------------ */
 
-type Neighbor = {
-  key: string
-  dir: 'in' | 'out'
-  subscription: string
-  viaBridge: boolean
-  channelId?: string
-  channelName?: string
-  endpointRef?: string
-}
+// Mermaid needs a unique render id per diagram instance.
+let diagramSeq = 0
 
-function neighborsOf(id: string, edges: ChannelConnection[]): Neighbor[] {
-  const out: Neighbor[] = []
-  for (const e of edges) {
-    const fromId = e.from?.id ?? e.fromRef
-    const toId = e.to?.id ?? e.toRef
-    if (toId === id) {
-      out.push({
-        key: `in#${e.source}#${e.subscription}#${fromId ?? ''}`,
-        dir: 'in',
-        subscription: e.subscription,
-        viaBridge: e.source === 'bridge',
-        channelId: e.from?.id,
-        channelName: e.from?.name,
-        endpointRef: e.from ? undefined : fromId,
-      })
-    }
-    if (fromId === id) {
-      out.push({
-        key: `out#${e.source}#${e.subscription}#${toId ?? ''}`,
-        dir: 'out',
-        subscription: e.subscription,
-        viaBridge: e.source === 'bridge',
-        channelId: e.to?.id,
-        channelName: e.to?.name,
-        endpointRef: e.to ? undefined : toId,
-      })
-    }
-  }
-  return out
-}
-
-const MAX_DEPTH = 3
-
-function TreeLevel({
-  id,
-  edges,
-  depth,
-  visited,
-}: {
-  id: string
-  edges: ChannelConnection[]
-  depth: number
-  visited: Set<string>
-}) {
-  if (depth > MAX_DEPTH) return null
-  const ns = neighborsOf(id, edges).filter(
-    (n) => !n.channelId || !visited.has(n.channelId) || depth === 1,
-  )
-  if (ns.length === 0) return null
+function RelationLinks({ label, items }: { label: string; items: RelationEndpoint[] }) {
+  if (items.length === 0) return null
   return (
-    <ul className="channel-tree">
-      {ns.map((n) => {
-        const cycle = n.channelId !== undefined && visited.has(n.channelId)
-        return (
-          <li key={n.key}>
-            <span className={`tree-arrow ${n.dir}`}>{n.dir === 'in' ? '↑' : '↓'}</span>
-            {n.channelId ? (
-              <Link to={channelPath(n.channelId)} className="tree-node">
-                {n.channelName}
-              </Link>
-            ) : (
-              <span className="tree-node muted">{n.endpointRef ?? 'unknown'}</span>
-            )}
-            <span className="tree-edge">
-              {n.viaBridge ? `bridged · ${n.subscription}` : `via ${n.subscription}`}
-            </span>
-            {n.channelId && !cycle && (
-              <TreeLevel
-                id={n.channelId}
-                edges={edges}
-                depth={depth + 1}
-                visited={new Set([...visited, n.channelId])}
-              />
-            )}
-            {cycle && <span className="tree-edge">↺</span>}
-          </li>
-        )
-      })}
-    </ul>
+    <div className="relation-line">
+      <span className="relation-line-label">{label}</span>
+      {items.map((ep, i) => (
+        <span key={`${ep.id ?? 'x'}-${i}`} className="relation-line-item">
+          {ep.id ? (
+            <Link to={channelPath(ep.id)}>{ep.name}</Link>
+          ) : (
+            <span className="muted">{ep.name}</span>
+          )}
+          <em>{ep.edge}</em>
+        </span>
+      ))}
+    </div>
   )
 }
 
-/** This channel and everything reachable from it — ↑ feeds it, ↓ it
- *  feeds — clickable to walk between channels. */
-function RelationTree({
+/**
+ * This channel in its graph context: whatever feeds it (one level up, if
+ * anything), and below it only the downstream tree — rendered by Mermaid so
+ * the layout is a real node-link diagram instead of an indented list. The
+ * summary rows carry the same first-tier facts as links, which keeps the
+ * panel readable, keyboard-navigable, and testable when the SVG is not.
+ */
+function RelationGraph({
   channel,
   edges,
 }: {
   channel: { id: string; name: string; kind: ChannelKind }
   edges: ChannelConnection[]
 }) {
-  const ns = neighborsOf(channel.id, edges)
+  const navigate = useNavigate()
+  const mount = useRef<HTMLDivElement>(null)
+  const model = useMemo(
+    () => buildRelationGraph({ id: channel.id, name: channel.name }, edges),
+    [channel.id, channel.name, edges],
+  )
+
+  useEffect(() => {
+    if (model.empty) return
+    const host = mount.current
+    let cancelled = false
+    loadMermaid()
+      .then((mermaid) => mermaid.render(`channel-relations-${++diagramSeq}`, model.definition))
+      .then(({ svg }) => {
+        if (cancelled || !host) return
+        host.innerHTML = svg
+        // Click-through on diagram nodes: the graph is the navigation surface.
+        host.querySelectorAll<SVGGElement>('g.node').forEach((node) => {
+          const match = /^flowchart-(.+)-\d+$/.exec(node.id ?? '')
+          const channelId = match ? model.nodeChannels[match[1]] : undefined
+          if (!channelId || channelId === channel.id) return
+          node.style.cursor = 'pointer'
+          node.addEventListener('click', () => navigate(channelPath(channelId)))
+        })
+      })
+      .catch(() => {
+        // No diagram is fine — the summary rows below it stand on their own.
+        if (!cancelled && host) host.innerHTML = ''
+      })
+    return () => {
+      cancelled = true
+      if (host) host.innerHTML = ''
+    }
+  }, [model, channel.id, navigate])
+
   return (
     <Panel title="Relations" className="cropped">
-      <div className="tree-root">
-        <b>{channel.name}</b> <span className="tree-edge">this channel</span>
-      </div>
-      {ns.length === 0 ? (
+      {model.empty ? (
         <div className="label" style={{ color: 'var(--ink-3)', padding: '6px 0' }}>
           Nothing connects to this channel yet.
           {channel.kind === 'custom' ? ' Add a bridge below to attach other channels to it.' : ''}
         </div>
       ) : (
-        <TreeLevel id={channel.id} edges={edges} depth={1} visited={new Set([channel.id])} />
+        <>
+          <div className="relation-diagram" ref={mount} aria-hidden="true" />
+          <div className="relation-summary">
+            <RelationLinks label="fed by" items={model.fedBy} />
+            <RelationLinks label="feeds" items={model.feeds} />
+          </div>
+        </>
       )}
     </Panel>
   )
@@ -571,7 +546,7 @@ export function ChannelDetailPage() {
           </div>
         </div>
 
-        <RelationTree channel={channel} edges={edges} />
+        <RelationGraph channel={channel} edges={edges} />
         {isCustom && <BridgeEditor detail={channel} />}
 
         {isAgentInbox ? (

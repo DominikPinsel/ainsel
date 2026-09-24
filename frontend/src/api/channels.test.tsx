@@ -5,6 +5,7 @@ import type { ReactNode } from 'react'
 import {
   birthChannelPath,
   buildConnections,
+  buildRelationGraph,
   channelPath,
   isChannelDeletable,
   isDirectSource,
@@ -327,5 +328,96 @@ describe('useInvocations enabled option', () => {
     } finally {
       vi.unstubAllGlobals()
     }
+  })
+})
+
+describe('buildRelationGraph', () => {
+  const ch = (id: string, name: string, kind: 'connector' | 'agent' | 'custom' = 'agent') =>
+    ({ id, name, kind }) as Channel
+  const conn = (
+    from: Channel | undefined,
+    to: Channel | undefined,
+    subscription: string,
+    source: 'trigger' | 'bridge' = 'trigger',
+  ) => ({
+    subscription,
+    source,
+    from,
+    to,
+    fromRef: from?.id,
+    toRef: to?.id,
+  })
+
+  it('shows parents one level up and never explores their context', () => {
+    const forgejo = ch('ch-1', 'connector-forgejo', 'connector')
+    const inbox = ch('ch-2', 'agent-reviewer')
+    const group = ch('ch-3', 'team-inbox', 'custom')
+    const model = buildRelationGraph({ id: 'ch-3', name: 'team-inbox' }, [
+      conn(forgejo, inbox, 'trigger-dev-mention'),
+      conn(inbox, group, 'all-issues', 'bridge'),
+    ])
+    expect(model.definition).toContain('agent-reviewer')
+    // the forgejo channel feeds the parent but is NOT part of this view
+    expect(model.definition).not.toContain('connector-forgejo')
+    expect(model.fedBy).toEqual([
+      { id: 'ch-2', name: 'agent-reviewer', edge: 'bridged · all-issues' },
+    ])
+    expect(model.feeds).toHaveLength(0)
+  })
+
+  it('walks downstream only, within the depth budget', () => {
+    const a = ch('ch-a', 'A', 'connector')
+    const b = ch('ch-b', 'B')
+    const c = ch('ch-c', 'C', 'custom')
+    const d = ch('ch-d', 'D', 'custom')
+    const model = buildRelationGraph({ id: 'ch-a', name: 'A' }, [
+      conn(a, b, 't1'),
+      conn(b, c, 'br1', 'bridge'),
+      conn(c, d, 'br2', 'bridge'),
+    ])
+    // depth 0 children and depth 1 grandchildren render; the great-grandchild
+    // behind the budget does not.
+    expect(model.definition).toContain('"B"')
+    expect(model.definition).toContain('"C"')
+    expect(model.definition).not.toContain('"D"')
+    expect(model.feeds).toEqual([{ id: 'ch-b', name: 'B', edge: 'via t1' }])
+  })
+
+  it('deduplicates cycles instead of re-expanding them', () => {
+    const a = ch('ch-a', 'A', 'connector')
+    const b = ch('ch-b', 'B')
+    const model = buildRelationGraph({ id: 'ch-a', name: 'A' }, [
+      conn(a, b, 't1'),
+      conn(b, a, 't2'),
+    ])
+    // one node per channel, and each edge exactly once
+    expect(Object.keys(model.nodeChannels)).toHaveLength(2)
+    expect(model.definition.match(/-->/g)).toHaveLength(2)
+    expect(model.fedBy.map((f) => f.id)).toEqual(['ch-b'])
+    expect(model.feeds.map((f) => f.id)).toEqual(['ch-b'])
+  })
+
+  it('renders unresolvable endpoints as ghost nodes without ids', () => {
+    const inbox = ch('ch-2', 'agent-reviewer')
+    const dangling = {
+      subscription: 't-dangling',
+      source: 'trigger' as const,
+      from: undefined,
+      to: inbox,
+      fromRef: 'trigger:old-connector',
+    }
+    const model = buildRelationGraph({ id: 'ch-2', name: 'agent-reviewer' }, [dangling])
+    expect(model.definition).toContain(':::relGhost')
+    expect(model.definition).toContain('"trigger:old-connector"')
+    expect(model.fedBy).toEqual([
+      { id: undefined, name: 'trigger:old-connector', edge: 'via t-dangling' },
+    ])
+  })
+
+  it('is empty for an unconnected channel', () => {
+    const model = buildRelationGraph({ id: 'ch-x', name: 'lonely' }, [])
+    expect(model.empty).toBe(true)
+    expect(model.definition).not.toContain('-->')
+    expect(model.definition).toContain('"lonely"')
   })
 })
