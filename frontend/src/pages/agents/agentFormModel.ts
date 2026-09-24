@@ -45,6 +45,11 @@ export const agentSchema = z
     customProviderUrl: z.string().optional(),
     persona: z.object({ id: z.string().min(1, 'Persona is required') }),
     replicas: z.coerce.number().int().min(0).optional(),
+    // Whether the agent may sleep when its queue drains. Like `vision`, the
+    // form always sends a concrete value: the hub reads an absent
+    // minReplicas on update as "leave unchanged", so a missing field would
+    // make the checkbox impossible to turn off.
+    wakeOnDemand: z.boolean().optional(),
     groupId: z.string().optional(),
   })
   .superRefine((data, ctx) => {
@@ -71,6 +76,7 @@ export const agentDefaults: AgentFormInput = {
   providerApiKey: '',
   persona: { id: '' },
   replicas: 1,
+  wakeOnDemand: false,
   groupId: '',
 }
 
@@ -80,6 +86,11 @@ export const agentDefaults: AgentFormInput = {
  * A provider credential block is attached only when a key was entered, so an
  * edit that leaves the key blank keeps the stored one. The group is only sent
  * on create: an agent's group is fixed for its lifetime.
+ *
+ * `minReplicas` is always sent as a number, never omitted: the hub treats an
+ * absent field on update as "leave unchanged", so unchecking the box has to pin
+ * the floor to the ceiling (a fixed count — static scaling by another name)
+ * rather than try to clear a field the API cannot clear.
  */
 export function buildAgentRequest(
   values: AgentFormValues,
@@ -110,6 +121,7 @@ export function buildAgentRequest(
     customProvider,
     persona: { id: values.persona.id },
     replicas: values.replicas,
+    minReplicas: values.wakeOnDemand ? 0 : values.replicas,
     groupId: opts.isEdit ? undefined : values.groupId,
   }
 }
