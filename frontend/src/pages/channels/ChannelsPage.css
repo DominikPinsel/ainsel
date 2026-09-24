@@ -82,3 +82,27 @@
   padding-top: 10px;
   margin-top: 6px;
 }
+
+/* "Last 24h" stats — fixed grid tracks + tabular figures so the numbers
+   line up down the table. The unmatched track stays in place (visually
+   empty) on non-connector rows rather than shifting "failed" sideways. */
+.channel-counts {
+  display: grid;
+  grid-template-columns: 10ch 14ch 10ch;
+  justify-content: end;
+  gap: 18px;
+  font-variant-numeric: tabular-nums;
+}
+.channel-counts .ccount {
+  text-align: right;
+  white-space: nowrap;
+}
+.channel-counts .ccount .label {
+  color: var(--ink-4);
+}
+.channel-counts .ccount-off {
+  visibility: hidden;
+}
+.channel-counts .ccount-fail {
+  color: var(--err);
+}
