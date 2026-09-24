@@ -148,7 +148,7 @@ and should be used deliberately.
 | `summarize_workflows` | read | Agent-centric joined view: every agent with its triggers, connector, event type, filters, tools, MCPs. Orphaned triggers listed separately. |
 | `list_agents` | read | All agents and their status. |
 | `get_agent` | read | One agent: config, persona, pod state. |
-| `update_agent` | write | Update an agent's LLM config (`model`, `max_turns`, `temperature`). Omitted fields unchanged. |
+| `update_agent` | write | Update an agent's display name (`display_name`), `description`, or LLM config (`model`, `max_turns`, `temperature`). Omitted fields unchanged. The agent ID is immutable; renaming never recreates the agent or its channel. |
 
 ### Triggers
 
@@ -184,6 +184,7 @@ supported. Example: `"0 9 * * 1-5"` fires at 09:00 on weekdays.
 |------|------|-----------------|
 | `list_connectors` | read | All connectors and their status. |
 | `get_connector` | read | One connector: configuration and health. |
+| `update_connector` | write | Update a connector's display name (`display_name`) or pause/resume it (`disabled`). The connector ID and webhook endpoint are immutable; renaming never recreates the connector or its channel. |
 
 ### Channels
 
@@ -344,6 +345,7 @@ language and it will compose the right tool calls:
 - *"What did the last invocation of the triager do?"* → `list_invocations` + `get_invocation`
 - *"Is the platform healthy?"* → `get_platform_health` + `get_stats`
 - *"Update the code-reviewer to use qwen3.5:cloud and lower the temperature to 0.2."* → `update_agent`
+- *"Rename the developer agent to agent-developer and the forgejo connector to connector-forgejo-ainsel."* → `update_agent` (`display_name`) + `update_connector` (`display_name`) — channels follow the new names automatically
 - *"Add a cron trigger that asks the summarizer to write a daily standup at 9am on weekdays."* → `create_cron_trigger`
 - *"Create a new trigger that sends issue comments to the triager."* → `create_trigger`
 - *"Edit the reviewer persona to add a rule about not commenting on imports."* → `update_persona`
