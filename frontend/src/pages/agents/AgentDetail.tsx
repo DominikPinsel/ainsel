@@ -1,6 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { useAgent, useDeleteAgent } from '../../api/agents'
+import {
+  isAsleep,
+  useAgent,
+  useDeleteAgent
+} from '../../api/agents'
 import { ApiError } from '../../api/client'
 import { useAgentPersona } from '../../api/personas'
 import { recordAgentView, recentsScope } from '../../agentRecents'
@@ -70,6 +74,12 @@ export function AgentDetail() {
     }
   }
 
+  // Zero pods means different things: an opted-in agent that drained its queue
+  // is asleep by design, while the same count on any other agent is a pod that
+  // cannot be scheduled. Only the operator's own verdict tells them apart, so the
+  // UI must not infer it from the count.
+  const queueScaled = data?.status?.mode === 'queue'
+  const asleep = isAsleep(data?.status)
   return (
     <>
       <Titleblock
@@ -141,18 +151,31 @@ export function AgentDetail() {
                   <div>
                     <div className="k">Ready</div>
                     <div className="v">
-                      <Dot state={data.status?.ready ? 'ok' : 'warn'} />{' '}
-                      {data.status?.ready ? 'Ready' : 'Pending'}
+                      <Dot state={asleep ? 'stale' : data.status?.ready ? 'ok' : 'warn'} />{' '}
+                      {asleep ? 'Asleep' : data.status?.ready ? 'Ready' : 'Pending'}
                     </div>
                   </div>
                   <div>
-                    <div className="k">Replicas</div>
-                    <div className="v">{data.status?.replicas ?? '—'}</div>
+                    <div className="k">Containers</div>
+                    <div className="v">
+                      {asleep ? (
+                        <>
+                          0 of up to {data.replicas ?? '—'} · wakes on event
+                        </>
+                      ) : (
+                        <>
+                          {data.status?.replicas ?? '—'}
+                          {queueScaled ? ` of up to ${data.replicas ?? '—'}` : ''}
+                        </>
+                      )}
+                    </div>
                   </div>
-                  <div>
-                    <div className="k">Configured Replicas</div>
-                    <div className="v">{data.replicas ?? '—'}</div>
-                  </div>
+                  {!queueScaled ? (
+                    <div>
+                      <div className="k">Configured Replicas</div>
+                      <div className="v">{data.replicas ?? '—'}</div>
+                    </div>
+                  ) : null}
                 </div>
               </Panel>
 

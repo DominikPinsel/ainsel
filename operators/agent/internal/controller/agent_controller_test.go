@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -2269,6 +2270,182 @@ var _ = Describe("Agent Controller", func() {
 			Expect(internalToken).NotTo(BeNil())
 			Expect(internalToken.Value).To(Equal(platformToken))
 			Expect(internalToken.ValueFrom).To(BeNil(), "platform-owned values are injected as literals")
+		})
+	})
+
+	Context("When scaling on the hub's queue signal", func() {
+		const (
+			qImageName = "img-queue-scaling"
+			qAgentName = "queue-scaling"
+		)
+		var qKey types.NamespacedName
+
+		ctx = context.Background()
+
+		// A short window keeps the idle cases quick; the production default is
+		// two minutes, which is a tuning choice, not a behaviour.
+		reconciler := func() *AgentReconciler {
+			return &AgentReconciler{
+				Client:          k8sClient,
+				Scheme:          k8sClient.Scheme(),
+				ScaleDownWindow: time.Second,
+				QueueSignalTTL:  time.Minute,
+			}
+		}
+
+		// publish writes exactly what the hub writes: queue counts, when they
+		// were measured, and the idle clock. Nothing else on status.
+		publish := func(ctx context.Context, pending, active int32, observed, invoked time.Time) {
+			agent := &ainselv1alpha1.Agent{}
+			Expect(k8sClient.Get(ctx, qKey, agent)).To(Succeed())
+			agent.Status.PendingTasks = pending
+			agent.Status.ActiveTasks = active
+			agent.Status.QueueObservedAt = &metav1.Time{Time: observed}
+			agent.Status.LastInvocation = &metav1.Time{Time: invoked}
+			Expect(k8sClient.Status().Update(ctx, agent)).To(Succeed())
+		}
+
+		runningPods := func(ctx context.Context) int32 {
+			deploy := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      "agent-" + qAgentName,
+				Namespace: "default",
+			}, deploy)).To(Succeed())
+			Expect(deploy.Spec.Replicas).NotTo(BeNil())
+			return *deploy.Spec.Replicas
+		}
+
+		optIntoQueueScaling := func(ctx context.Context, min, max int32) {
+			agent := &ainselv1alpha1.Agent{}
+			Expect(k8sClient.Get(ctx, qKey, agent)).To(Succeed())
+			agent.Spec.Scaling = &ainselv1alpha1.AgentScaling{
+				Replicas:    ptr.To(max),
+				MinReplicas: ptr.To(min),
+			}
+			Expect(k8sClient.Update(ctx, agent)).To(Succeed())
+		}
+
+		BeforeEach(func() {
+			qKey = types.NamespacedName{Name: qAgentName, Namespace: "default"}
+
+			img := &ainselv1alpha1.AgentImage{
+				ObjectMeta: metav1.ObjectMeta{Name: qImageName, Namespace: "default"},
+				Spec: ainselv1alpha1.AgentImageSpec{
+					DisplayName: "Queue Scaling Image",
+					ImageURL:    "ghcr.io/dpinsel/ainsel-pi:test",
+				},
+			}
+			Expect(k8sClient.Create(ctx, img)).To(Succeed())
+			img.Status.Phase = ainselv1alpha1.AgentImagePhaseReady
+			Expect(k8sClient.Status().Update(ctx, img)).To(Succeed())
+
+			resource := &ainselv1alpha1.Agent{
+				ObjectMeta: metav1.ObjectMeta{Name: qAgentName, Namespace: "default"},
+				Spec: ainselv1alpha1.AgentSpec{
+					DisplayName: "Queue Scaling Agent",
+					ImageRef:    ainselv1alpha1.AgentImageRef{Name: qImageName},
+					Runtime:     ainselv1alpha1.AgentRuntime{},
+					LLM:         ainselv1alpha1.AgentLLM{Model: "glm-5.1:cloud"},
+					Persona:     ainselv1alpha1.AgentPersona{ID: "01hxtestpersona00000000000"},
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+		})
+
+		AfterEach(func() {
+			agent := &ainselv1alpha1.Agent{}
+			if err := k8sClient.Get(ctx, qKey, agent); err == nil {
+				Expect(k8sClient.Delete(ctx, agent)).To(Succeed())
+			}
+			img := &ainselv1alpha1.AgentImage{}
+			imgKey := types.NamespacedName{Name: qImageName, Namespace: "default"}
+			if err := k8sClient.Get(ctx, imgKey, img); err == nil {
+				Expect(k8sClient.Delete(ctx, img)).To(Succeed())
+			}
+		})
+
+		// The feature in one assertion: a Deployment that asks for nothing.
+		It("parks an opted-in agent at zero containers once the queue is quiet", func() {
+			optIntoQueueScaling(ctx, 0, 3)
+
+			now := time.Now()
+			publish(ctx, 0, 0, now, now.Add(-30*time.Second))
+			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: qKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(runningPods(ctx)).To(BeEquivalentTo(0),
+				"a drained agent that opted in should hold no containers")
+
+			agent := &ainselv1alpha1.Agent{}
+			Expect(k8sClient.Get(ctx, qKey, agent)).To(Succeed())
+			Expect(agent.Status.Scaling).NotTo(BeNil())
+			Expect(agent.Status.Scaling.Reason).To(Equal(ScaleReasonScaledDown))
+			Expect(agent.Status.Scaling.Mode).To(Equal("queue"))
+		})
+
+		It("wakes the agent when the hub counts queued work", func() {
+			optIntoQueueScaling(ctx, 0, 3)
+
+			now := time.Now()
+			publish(ctx, 0, 0, now, now.Add(-30*time.Second))
+			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: qKey})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(runningPods(ctx)).To(BeEquivalentTo(0))
+
+			By("publishing two waiting tasks, as a hub that just queued them would")
+			now = time.Now()
+			publish(ctx, 2, 0, now, now)
+			_, err = reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: qKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(runningPods(ctx)).To(BeEquivalentTo(2), "one container per waiting task")
+		})
+
+		// The failure this rule exists for: a hub that stopped publishing looks
+		// exactly like a queue that drained, and acting on that would park every
+		// agent while work sat waiting.
+		It("holds the running count when the hub's measurement goes stale", func() {
+			optIntoQueueScaling(ctx, 0, 5)
+
+			now := time.Now()
+			publish(ctx, 3, 0, now, now)
+			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: qKey})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(runningPods(ctx)).To(BeEquivalentTo(3))
+
+			By("freezing the signal, so an empty queue is unproven rather than true")
+			publish(ctx, 0, 0, time.Now().Add(-10*time.Minute), time.Now().Add(-10*time.Minute))
+			_, err = reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: qKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(runningPods(ctx)).To(BeEquivalentTo(3), "a stale signal must not scale anything down")
+
+			agent := &ainselv1alpha1.Agent{}
+			Expect(k8sClient.Get(ctx, qKey, agent)).To(Succeed())
+			Expect(agent.Status.Scaling.Reason).To(Equal(ScaleReasonQueueStale))
+		})
+
+		// The compatibility contract, against a real API server: an agent with no
+		// floor is not affected by queue state at all.
+		It("leaves an agent without a floor on its configured count", func() {
+			agent := &ainselv1alpha1.Agent{}
+			Expect(k8sClient.Get(ctx, qKey, agent)).To(Succeed())
+			agent.Spec.Scaling = &ainselv1alpha1.AgentScaling{Replicas: ptr.To[int32](2)}
+			Expect(k8sClient.Update(ctx, agent)).To(Succeed())
+
+			publish(ctx, 40, 0, time.Now(), time.Now())
+			_, err := reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: qKey})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(runningPods(ctx)).To(BeEquivalentTo(2))
+
+			By("and never scaling a static agent toward zero")
+			publish(ctx, 0, 0, time.Now(), time.Now().Add(-time.Hour))
+			_, err = reconciler().Reconcile(ctx, reconcile.Request{NamespacedName: qKey})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(runningPods(ctx)).To(BeEquivalentTo(2))
+
+			Expect(k8sClient.Get(ctx, qKey, agent)).To(Succeed())
+			Expect(agent.Status.Scaling.Mode).To(Equal("static"))
 		})
 	})
 })

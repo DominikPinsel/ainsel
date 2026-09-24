@@ -43,10 +43,34 @@ export type AgentSummary = {
   imageRef?: AgentImageRef
   persona?: AgentPersona
   replicas?: number
-  status?: { ready: boolean; replicas?: number }
+  /** Pod floor. Only present on agents that opted into queue scaling; the
+   *  agent sleeps down to this count when the queue drains. */
+  minReplicas?: number
+  status?: {
+    ready: boolean
+    /** Pods running right now. */
+    replicas?: number
+    /** Pods the operator wants, from the queue signal. */
+    desired?: number
+    /** 'queue' when scaling follows the queue, otherwise the count is static. */
+    mode?: string
+    /** Operator's one-word explanation, e.g. 'ScaledToZero'. */
+    reason?: string
+    message?: string
+  }
   /** RFC3339 timestamp of the last hub-mediated write (falls back to
    *  creation time for agents that predate the annotation). */
   updatedAt?: string
+}
+
+/**
+ * True when the agent is parked at zero containers by its own scaling floor
+ * rather than failing to schedule. Only the operator's mode says which, so the
+ * running count alone can never be the test — treating "0" as asleep would hide a
+ * genuinely broken agent.
+ */
+export function isAsleep(status?: AgentSummary['status']): boolean {
+  return status?.mode === 'queue' && (status.desired ?? 0) === 0
 }
 
 export type AgentResponse = AgentSummary & {

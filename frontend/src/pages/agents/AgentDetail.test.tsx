@@ -763,4 +763,61 @@ describe('AgentDetail', () => {
     // Dialog is still present.
     expect(screen.getByRole('dialog')).toBeInTheDocument()
   })
+
+  describe('container count', () => {
+    /** Serve the agent with an operator status block and zero running pods. */
+    function stubQueueStatus(status: Record<string, unknown>) {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn((url: string, init?: RequestInit) => {
+          if ((init?.method ?? 'GET') === 'GET' && url.includes('/agents/a1')) {
+            return Promise.resolve(
+              new Response(
+                JSON.stringify({
+                  id: 'a1',
+                  name: 'doc-writer',
+                  imageRef: { name: 'claude-tooling-base:1.4' },
+                  persona: { id: '01HXTEST00000000000000000' },
+                  replicas: 3,
+                  minReplicas: 0,
+                  status: { ready: false, replicas: 0, ...status },
+                }),
+                { status: 200 },
+              ),
+            )
+          }
+          return Promise.resolve(defaultFetch(url, init))
+        }),
+      )
+    }
+
+    function renderAgent() {
+      return renderWithProviders(
+        <Routes>
+          <Route path="/agents/:id" element={<AgentDetail />} />
+        </Routes>,
+        { route: '/agents/a1' },
+      )
+    }
+
+    it('calls a drained queue-scaled agent asleep rather than broken', async () => {
+      stubQueueStatus({ mode: 'queue', desired: 0, reason: 'ScaledToZero', message: 'quiet for 4m0s' })
+      renderAgent()
+
+      await waitFor(() => expect(screen.getByText('Asleep')).toBeInTheDocument())
+      expect(screen.getByText(/0 of up to 3 · wakes on event/)).toBeInTheDocument()
+    })
+
+    // Zero pods on an agent the operator is not driving is a scheduling failure.
+    // Both cases render "0", so only the operator's mode tells them apart —
+    // inferring "asleep" from the count alone would hide a broken agent.
+    it('still reports a static agent with zero pods as pending', async () => {
+      stubQueueStatus({ mode: 'static', desired: 3 })
+      renderAgent()
+
+      await waitFor(() => expect(screen.getByText('Pending')).toBeInTheDocument())
+      expect(screen.queryByText('Asleep')).not.toBeInTheDocument()
+    })
+  })
+
 })

@@ -16,6 +16,7 @@ import (
 	"github.com/DominikPinsel/ainsel/services/hub/internal/mcpservers"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/personas"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/prometheus"
+	"github.com/DominikPinsel/ainsel/services/hub/internal/queuesignal"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/router"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/skills"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/tasklogs"
@@ -46,6 +47,7 @@ type container struct {
 	transfer       *channels.Transfer
 	cronEmitter    *cron.Emitter
 	eventQueue     *eventqueue.Store
+	queueSignals   *queuesignal.Publisher
 	invStore       invocations.Store
 	mcpSvc         *mcpservers.Service
 	personaSvc     *personas.Service
@@ -119,6 +121,16 @@ func newContainer(ctx context.Context, cfg containerConfig, deps containerDeps) 
 		}
 		c.apiClient = ac
 	}
+
+	// --- Queue signals ---
+	// Publishes per-agent queue depth onto Agent status, which is what lets the
+	// operator scale pods on real work instead of a standing replica count. The
+	// observer is registered on the store rather than at the enqueue call sites
+	// (router, chat, cron, channel transfers) so a new publisher cannot forget to
+	// wake somebody up.
+	c.queueSignals = queuesignal.New(c.eventQueue,
+		queuesignal.NewK8sPatcher(c.apiClient, cfg.namespace))
+	c.eventQueue.SetQueueObserver(c.queueSignals.Observe)
 
 	// --- Triggers ---
 	c.idx = trigger.NewIndex()

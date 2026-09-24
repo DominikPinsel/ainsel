@@ -238,4 +238,65 @@ describe('AgentForm (edit)', () => {
       'Leave blank to keep existing key',
     )
   })
+
+  it('sends an explicit minReplicas floor when wake on demand is turned on', async () => {
+    const user = userEvent.setup()
+    renderEditForm()
+    await waitForPrefill()
+
+    const toggle = screen.getByRole('checkbox', { name: /wake on demand/i })
+    expect(toggle).not.toBeChecked()
+
+    await user.click(toggle)
+    expect(screen.getByText('Sleeps when the queue is empty')).toBeInTheDocument()
+    // The count the user typed is now a ceiling, and the form should say so.
+    expect(screen.getByLabelText('Max containers')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /^save$/i }))
+    await waitFor(() => expect(putBody(fetchMock)).toBeDefined())
+    expect(putBody(fetchMock)?.minReplicas).toBe(0)
+  })
+
+  it('pins the floor to the ceiling when the agent stays always-on', async () => {
+    const user = userEvent.setup()
+    renderEditForm()
+    await waitForPrefill()
+
+    await user.click(screen.getByRole('button', { name: /^save$/i }))
+    await waitFor(() => expect(putBody(fetchMock)).toBeDefined())
+    // The hub reads an absent minReplicas as "leave unchanged", so switching
+    // scale-to-zero *off* cannot be a missing field — the floor has to come back
+    // down to the standing count, which is what an always-on agent means.
+    expect(putBody(fetchMock)?.minReplicas).toBe(putBody(fetchMock)?.replicas)
+  })
+
+  it('reads a stored floor back as wake on demand being on', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) => {
+        if ((init?.method ?? 'GET') === 'GET' && url.includes('/agents/a1')) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                id: 'a1',
+                name: 'doc-writer',
+                imageRef: { name: IMAGE_ID },
+                llm: { model: 'claude-opus-4-7', provider: 'ollama-cloud', vision: false },
+                persona: { id: PERSONA_ID },
+                replicas: 3,
+                minReplicas: 0,
+              }),
+              { status: 200 },
+            ),
+          )
+        }
+        return Promise.resolve(defaultFetch(url, init))
+      }),
+    )
+    renderEditForm()
+    await waitForPrefill()
+
+    expect(screen.getByRole('checkbox', { name: /wake on demand/i })).toBeChecked()
+    expect(screen.getByLabelText('Max containers')).toHaveValue(3)
+  })
 })

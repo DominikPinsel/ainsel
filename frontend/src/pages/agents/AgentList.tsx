@@ -1,5 +1,8 @@
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { useAgents } from '../../api/agents'
+import {
+  isAsleep,
+  useAgents
+} from '../../api/agents'
 import type { AgentSummary } from '../../api/agents'
 import { Button } from '../../primitives/Button'
 import { Dot } from '../../primitives/Dot'
@@ -63,6 +66,15 @@ export function AgentList() {
       header: 'Status',
       width: 130,
       cell: (a) => {
+        // Asleep is its own state: a drained agent that opted into waking on
+        // demand has no ready container and nothing is wrong.
+        if (isAsleep(a.status)) {
+          return (
+            <>
+              <Dot state="stale" aria-label="Asleep" /> Asleep
+            </>
+          )
+        }
         const ok = a.status?.ready === true
         return (
           <>
