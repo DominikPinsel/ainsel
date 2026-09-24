@@ -218,7 +218,7 @@ spec:
 Configures a webhook receiver for an external source (e.g. Forgejo, GitHub),
 including the webhook endpoint, HMAC verification, and container image.
 
-> The previous `WebhookConnector` CRD was replaced by this generic
+> The previous `ForgejoConnector` CRD was replaced by this generic
 > `WebhookConnector`. The old fields (`url`, `externalUrl`, `credentials`,
 > `events`) no longer exist.
 

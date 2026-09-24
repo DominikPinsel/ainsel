@@ -24,6 +24,7 @@
 - [Cron Triggers](cron-triggers)
 - [Writing a Connector](writing-a-connector)
 - [Troubleshooting](troubleshooting)
+- [Registry Maintenance](maintenance)
 - [Upgrade Guide](upgrade-guide)
 
 ## Contributing

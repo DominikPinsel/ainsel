@@ -100,20 +100,18 @@ namespace: ainsel
 
 agentOperator:
   image:
-    repository: <registry>/ainsel/ainsel-k8s-ai-agent-operator
+    repository: dpinsel/ainsel-k8s-ai-agent-operator
     tag: latest
 
 connectorOperator:
   image:
-    repository: <registry>/ainsel/ainsel-k8s-event-source-gateway-operator
+    repository: dpinsel/ainsel-k8s-event-source-gateway-operator
     tag: latest
 
 hub:
   image:
-    repository: <registry>/ainsel/ainsel-hub-backend
+    repository: dpinsel/ainsel-hub-backend
     tag: latest
-  nats:
-    url: nats://nats.platform.svc.cluster.local:4222
   ingress:
     enabled: true
     host: your-domain.com
@@ -122,13 +120,20 @@ hub:
 ui:
   enabled: true
   image:
-    repository: <registry>/ainsel/ainsel-hub-frontend
+    repository: dpinsel/ainsel-hub-frontend
     tag: latest
   ingress:
     enabled: true
     host: your-domain.com
     path: /ainsel
 ```
+
+> **The database:** the hub stores everything in PostgreSQL — events, task
+> deliveries, triggers, cron triggers, channels. `postgres.enabled` (default
+> `true`) brings up the bundled single-pod StatefulSet; point the hub at your
+> own server through its database secret instead (`host`, `port`, `user`,
+> `password`, `dbname`, or a single `dsn`). The platform has no NATS
+> dependency — the event queue lives in that same Postgres instance.
 
 > **Note:** Connectors, agents, triggers, and personas are created at runtime via the hub UI or REST API (`/api/v1/connectors`, `/api/v1/agents`, `/api/v1/triggers`, `/api/v1/personas`). The chart does not bootstrap them.
 
