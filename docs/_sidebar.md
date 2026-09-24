@@ -12,6 +12,7 @@
 - [CRD Reference](crd-reference)
 - [Event Schema](event-schema)
 - [MCP Server](mcp)
+- [Naming Convention](naming)
 - [Observability](observability)
 - [Network Policies](network-policies)
 - [Security Hardening](security-hardening)
