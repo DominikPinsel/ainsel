@@ -541,6 +541,33 @@ spec:
                   the operator.
                 format: int32
                 type: integer
+              scaling:
+                description: |-
+                  Scaling explains the pod count the operator is driving toward. It exists
+                  because zero pods is now a valid steady state, and a reader needs to tell
+                  "asleep, waiting for work" from "broken".
+                properties:
+                  desired:
+                    description: |-
+                      Desired is the pod count the operator is converging on. Compare against
+                      status.replicas to see whether it is still catching up.
+                    format: int32
+                    type: integer
+                  message:
+                    description: Message is a one-line human-readable explanation,
+                      safe to show in a UI.
+                    type: string
+                  mode:
+                    description: |-
+                      Mode is "static" when the agent keeps a fixed pod count (no minReplicas
+                      set) or "queue" when pod count follows queue depth.
+                    type: string
+                  reason:
+                    description: |-
+                      Reason is a stable code for the decision: Static, QueueDepth, Dormant,
+                      ScaledToZero, IdleGrace, QueueSignalStale or Disabled.
+                    type: string
+                type: object
             type: object
         type: object
     served: true

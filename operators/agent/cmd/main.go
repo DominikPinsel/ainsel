@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"os"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -68,6 +69,15 @@ func main() {
 	var agentGracePeriod int64
 	flag.Int64Var(&agentGracePeriod, "agent-grace-period", 1800,
 		"Pod terminationGracePeriodSeconds for agent deployments.")
+
+	// Queue-driven scaling knobs. Zero leaves each at the controller's default,
+	// so the defaults live in one place (internal/controller/scaling.go).
+	var agentScaleDownWindow time.Duration
+	flag.DurationVar(&agentScaleDownWindow, "agent-scale-down-window", 0,
+		"How long an agent with minReplicas set must stay free of queued and in-flight work before its last pod is removed (e.g. 90s, 2m). 0 uses the controller default.")
+	var queueSignalTTL time.Duration
+	flag.DurationVar(&queueSignalTTL, "queue-signal-ttl", 0,
+		"How long the hub's published queue measurement may be trusted. Older than this, the operator holds the current pod count instead of scaling to zero (e.g. 5m). 0 uses the controller default.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -182,6 +192,8 @@ func main() {
 		Scheme:           mgr.GetScheme(),
 		Recorder:         mgr.GetEventRecorderFor("agent-controller"), //nolint:staticcheck // deprecated API still required for record.EventRecorder type compatibility
 		AgentGracePeriod: agentGracePeriod,
+		ScaleDownWindow:  agentScaleDownWindow,
+		QueueSignalTTL:   queueSignalTTL,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "Agent")
 		os.Exit(1)

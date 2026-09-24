@@ -243,8 +243,37 @@ type AgentStatus struct {
 	// agent asleep with a queue full of work nobody will wake them for.
 	QueueObservedAt *metav1.Time `json:"queueObservedAt,omitempty"`
 
+	// Scaling explains the pod count the operator is driving toward. It exists
+	// because zero pods is now a valid steady state, and a reader needs to tell
+	// "asleep, waiting for work" from "broken".
+	// +optional
+	Scaling *AgentScalingStatus `json:"scaling,omitempty"`
+
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 }
+
+// AgentScalingStatus is the operator's account of what it is doing with this
+// agent's pods.
+type AgentScalingStatus struct {
+	// Mode is "static" when the agent keeps a fixed pod count (no minReplicas
+	// set) or "queue" when pod count follows queue depth.
+	Mode string `json:"mode,omitempty"`
+	// Desired is the pod count the operator is converging on. Compare against
+	// status.replicas to see whether it is still catching up.
+	Desired int32 `json:"desired,omitempty"`
+	// Reason is a stable code for the decision: Static, QueueDepth, Dormant,
+	// ScaledToZero, IdleGrace, QueueSignalStale or Disabled.
+	Reason string `json:"reason,omitempty"`
+	// Message is a one-line human-readable explanation, safe to show in a UI.
+	// +optional
+	Message string `json:"message,omitempty"`
+}
+
+// Scaling mode values used by AgentScalingStatus.Mode.
+const (
+	ScalingModeStatic = "static"
+	ScalingModeQueue  = "queue"
+)
 
 const (
 	AgentConditionReady                 = "Ready"

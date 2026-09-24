@@ -453,10 +453,7 @@ func TestRunRepublishesQueuedWorkWithNoObservations(t *testing.T) {
 	go func() { _ = p.Run(ctx) }()
 
 	deadline := time.After(2 * time.Second)
-	for {
-		if patcher.count() > 0 {
-			break
-		}
+	for patcher.count() == 0 {
 		select {
 		case <-deadline:
 			t.Fatal("Run published nothing for an agent with queued work and no observations")
