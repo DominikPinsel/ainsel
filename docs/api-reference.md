@@ -52,9 +52,10 @@ List all Agents in the configured namespace, sorted by resource name.
       "llm": {"model": "glm-5.1:cloud", "maxTurns": 25, "vision": false},
       "persona": {"inline": "..."},
       "enabledTools": ["read", "edit"],
-      "scaling": {"minReplicas": 0, "maxReplicas": 3},
+      "replicas": 2,
+      "minReplicas": 0,
       "memory": {"enabled": true, "provider": "example"},
-      "status": {"ready": true, "replicas": 1},
+      "status": {"ready": true, "replicas": 2, "desired": 2, "mode": "queue"},
       "skills": {"items": ["git-review"]},
       "mcp": {"servers": [{"name": "github", "url": "https://mcp.github.com/sse", "tokenFromEnv": "GITHUB_TOKEN"}]},
       "env": [{"name": "LOG_LEVEL", "value": "debug"}, {"name": "API_TOKEN", "value": "", "secret": true}],
@@ -70,6 +71,21 @@ Agents carry an `updatedAt` timestamp (RFC3339) in both list and detail response
 Agents also carry an agent-scoped skill selection in `skills`: **present = explicit override** (`{"items": []}` means no skills at all), **absent = inherit** the referenced image's `enabledSkills` (legacy behavior). Every id must exist in the skill library (`/skills`); unknown ids are rejected with `400`. Once set, the selection is explicit — the API does not currently offer a reset-to-inherit.
 
 The same wrapper semantics apply to the agent-scoped MCP selection in `mcp`, with one asymmetry: **requests carry registry names** (`{"servers": ["github"]}`), and the hub resolves each name to its full definition from the MCP registry (`/mcp-servers`, unknown names → `400`) when writing — **responses return the resolved definitions** (`name`, `url`, `tokenFromEnv`). The agent CR holds a snapshot: later registry edits do not rewrite existing agents. Absent `mcp` inherits the referenced image's `mcpServers` (legacy); `{"servers": []}` explicitly connects to none.
+
+Agents scale on `replicas` and an optional `minReplicas` floor. Unset, `replicas` is a
+standing container count and the agent keeps exactly that many containers running. Set
+`minReplicas` (0 up to `replicas`) and the agent instead scales with its own queue:
+`replicas` becomes the ceiling it may burst to under load and `minReplicas` the floor it
+falls back to when idle, so `minReplicas: 0` parks the agent at zero containers until the
+hub sees work for it. A new event then pays the cold start — pod scheduling plus the
+runtime's own boot. The hub reports per-agent queue depth on the agent and the operator
+acts on it; if that report goes stale the operator keeps the containers it already has
+rather than scaling down, because a hub that stopped publishing is indistinguishable from
+a queue that drained. Scale-down waits until in-flight tasks have finished, so a busy
+agent never loses work to it. Both fields appear flat in responses and requests; the
+detail `status` object reports what is running (`replicas`) and what the operator wants
+(`desired`, `mode`, `reason`, `message`) — `mode: "queue"` alongside `desired: 0` is an
+agent that is asleep by request, not a pod that failed to schedule.
 
 Agents may also carry their own environment variables in `env`: a list of `{"name", "value", "secret"}` layered **on top of** the referenced image's `env`. Entries whose name matches an image variable override its value (and its `secret` flag); new names are added. Absent `env` means the agent runs on the image's variables alone. Names must be valid environment variable names and unique within the list (`400` otherwise). Values of entries with `secret: true` are never returned — they read back as `""`, matching the image `env` contract — and submitting a secret entry with an empty value on update keeps the stored value.
 

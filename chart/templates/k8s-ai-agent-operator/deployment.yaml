@@ -63,6 +63,12 @@ spec:
             - --leader-elect            {{- if .Values.agentOperator.agentGracePeriod }}
             - --agent-grace-period={{ .Values.agentOperator.agentGracePeriod }}
             {{- end }}
+            {{- with .Values.agentOperator.agentScaleDownWindow }}
+            - --agent-scale-down-window={{ . }}
+            {{- end }}
+            {{- with .Values.agentOperator.queueSignalTTL }}
+            - --queue-signal-ttl={{ . }}
+            {{- end }}
           env:
             - name: POD_NAMESPACE
               valueFrom:

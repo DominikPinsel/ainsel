@@ -43,7 +43,9 @@ for its container image and tool catalog.
 | `skills.items[]` | []string | No | Agent-scoped skill selection (skill ids). Present = explicit override (`items: []` = no skills at all); absent = inherit the referenced image's `enabledSkills` |
 | `mcp.servers[]` | []AgentMCPServer | No | Agent-scoped MCP servers (`name`, `url`, `tokenFromEnv`), resolved from the hub's MCP registry when the agent is written. Present = explicit override (`servers: []` = connect to none); absent = inherit the image's `mcpServers`. The operator injects `MCP_SERVERS` / `MCP_SERVER_TOKENS` from this list |
 | `env[]` | []AgentEnvVar | No | Per-agent environment variables (`name`, `value`, `secret`) layered on top of the referenced image's `env`: a matching name overrides the image's value and secret flag, a new name is added. The operator writes the effective set to the `<agent>-image-env` Secret and injects each entry into the agent container |
-| `scaling.replicas` | int32 | No | Desired replica count for the agent deployment |
+| `scaling.replicas` | int32 | No | Container count while the agent scales statically (default 1). Once `scaling.minReplicas` is set this becomes the **ceiling** the agent may burst to under queue pressure — one container claims one task at a time, so it also caps concurrent tasks |
+| `scaling.minReplicas` | int32 | No | Floor the agent falls back to when its queue is empty and drained. **Absent = static**: the operator ignores queue depth and keeps `replicas` running, which is how every agent behaved before this field existed. `0` = park the agent at zero containers until work arrives, paying one cold start per wake. Must not exceed `scaling.replicas` |
+| `scaling.disabled` | bool | No | Set by the operator for a stopped agent: hold at zero containers even if the hub still counts queued work. Cleared on start |
 | `memory.enabled` | bool | Yes | Enable shared memory |
 | `memory.provider` | string | No | Memory provider |
 | `ollamaCloud.apiKeySecretRef` | SecretKeySelector | No | Secret containing the Ollama Cloud API key (key: `api-key`). Used when `llm.provider` is `ollama-cloud` |
@@ -56,9 +58,19 @@ for its container image and tool catalog.
 | Field | Type | Description |
 |-------|------|-------------|
 | `conditions` | []Condition | `Ready`, `ConsumerReady`, `Degraded` |
-| `replicas` | int32 | Current replica count |
-| `lastInvocation` | Time | Last invocation timestamp |
+| `replicas` | int32 | Containers running now (operator, from the Deployment) |
+| `pendingTasks` | int32 | Tasks waiting for this agent — **written by the hub**, read by the operator |
+| `activeTasks` | int32 | Tasks claimed and in flight — hub-written; scale-down waits for these to finish |
+| `queueObservedAt` | Time | When the hub last *measured* this agent's queue — hub-written. If it goes stale the operator holds its container count instead of scaling down |
+| `lastInvocation` | Time | Last queue activity (hub-written idle clock driving the quiet window). `nil` means the hub has never observed this agent, which is not the same as its queue being empty |
+| `scaling` | AgentScalingStatus | The operator's decision: `desired` count, `mode` (`static` or `queue`), `reason` and `message` explaining it (`ScaledToZero`, `Draining`, `QueueSignalStale`, …) |
 | `observedGeneration` | int64 | Last observed generation |
+
+The hub and the operator both write this status, and neither clobbers the other's
+fields: each patches only its own (`pendingTasks`, `activeTasks`, `queueObservedAt`,
+`lastInvocation` for the hub; `replicas`, `scaling`, conditions for the operator). The
+split is load-bearing — the operator scales on a drain signal it does not own, so it
+must not be the one to clear it.
 
 ### Example
 
@@ -108,6 +120,9 @@ spec:
     - name: FEATURE_FLAGS
       value: beta
   scaling:
+    # Static: the operator keeps two containers running regardless of queue depth.
+    # Add `minReplicas: 0` to let this agent drain to nothing when idle and wake on
+    # the next event instead, with 2 as its ceiling.
     replicas: 2
   memory:
     enabled: true
