@@ -713,8 +713,8 @@ table.reg td.num { text-align: right; }
 }
 .md-body pre {
   font-family: var(--mono);
-  background: var(--ink);
-  color: var(--paper);
+  background: var(--code-bg);
+  color: var(--code-ink);
   padding: 12px 14px;
   overflow-x: auto;
   line-height: 1.55;
@@ -739,8 +739,8 @@ pre.code {
   font-family: var(--mono);
   font-size: 11.5px;
   line-height: 1.55;
-  background: var(--ink);
-  color: var(--paper);
+  background: var(--code-bg);
+  color: var(--code-ink);
   padding: 12px 14px;
   margin: 0;
   max-width: 100%;
@@ -1076,8 +1076,8 @@ html[data-theme="dark"] .tool-row.active .tool-meta { color: var(--signal); }
 }
 .example-block textarea {
   width: 100%;
-  background: var(--ink);
-  color: var(--paper);
+  background: var(--code-bg);
+  color: var(--code-ink);
   font-family: var(--mono);
   font-size: 11.5px;
   border: 0;
