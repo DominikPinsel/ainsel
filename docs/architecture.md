@@ -103,6 +103,59 @@ sequenceDiagram
     AR->>NE: Publish hub.invocation.completed
 ```
 
+## Channels
+
+A **channel** is the named stream an event lives in. Channels are not CRDs:
+they are rows in the hub's Postgres, and every stored event records the
+channel it was born in (`events.channel_id`).
+
+| Kind | Provisioned from | Deletable | What the channel means |
+|------|------------------|-----------|------------------------|
+| `connector` | each `WebhookConnector` | no | where that connector's events arrive |
+| `agent` | each `Agent` | no | that agent's inbox — everything in it is prompted to the agent |
+| `custom` | created by a user | yes, while nothing is attached | a grouping of subscriptions that can be handed to another agent |
+
+Identity is the channel **id**, never the name: a connector `forgejo` and an
+agent `forgejo` are two distinct channels that happen to share a display
+label. The reconciler (`services/hub/internal/channels/reconcile.go`) runs on
+a ticker, provisions a channel per registry entry, flags the ones whose
+entity is gone as orphaned (kept, so history stays readable), and stamps the
+birth channel on events recorded before channels existed.
+
+Two kinds of subscription move events between channels:
+
+| Source | Owned by | Route |
+|--------|----------|-------|
+| `trigger` | the trigger registry | connector channel → agent inbox |
+| `bridge` | the channel graph | any channel → any channel, at least one end custom |
+
+Triggers stay the single source of truth for connector→agent routing; bridges
+never copy them. Bridge edges cannot join two provisioned channels directly
+(that pairing is a trigger), cannot point a channel at itself, and the graph
+must stay acyclic — `POST /api/v1/channels/{id}/bridges` rejects a cycle
+rather than letting events loop.
+
+```mermaid
+flowchart LR
+    CF[forgejo<br/>connector channel] -->|trigger: on-issues| IB[review-bot<br/>agent inbox]
+    CF -->|bridge| GRP[code review<br/>custom channel]
+    GRP -->|bridge| INB[internal-bot<br/>agent inbox]
+    CRON[cron tick] -->|born directly| IB
+    CHAT[chat message] -->|born directly| IB
+```
+
+Scheduled ticks and chat messages have no connector: they are born directly
+in the target agent's inbox channel. The synthetic `cron` / `chat` producer
+labels are declared once in `shared/api` so the reconciler, the emitters and
+the UI agree that they are not channels.
+
+Both mechanisms run for every event. The router matches triggers first, then
+walks the bridge graph from the event's birth channel and enqueues a task per
+agent inbox reachable along it — skipping inboxes the trigger step already
+delivered to. A transfer failure is logged and counted; it never aborts the
+batch or stalls routing, because an event that partially arrived is worth
+more than one stuck in redelivery.
+
 ## Cron Trigger Flow
 
 A `CronTrigger` is a time-based source of events. Where the event-gateway

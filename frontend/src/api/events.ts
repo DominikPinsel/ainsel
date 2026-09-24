@@ -17,6 +17,9 @@ export type ActivityEntry = {
   id: string
   timestamp: string
   connector?: string
+  /** Channel the event was born in. Absent on history recorded before the
+   *  channel registry existed and on direct (cron/chat) births. */
+  channelId?: string
   status: ActivityStatus
   matches?: ActivityMatch[]
   payload?: unknown

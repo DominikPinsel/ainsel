@@ -115,7 +115,7 @@ export default function App() {
 
               <Route path="/activity" element={<Activity />} />
               <Route path="/channels" element={<ChannelsPage />} />
-              <Route path="/channels/:kind/:name" element={<ChannelDetailPage />} />
+              <Route path="/channels/:id" element={<ChannelDetailPage />} />
               <Route path="/observability" element={<Observability />} />
               <Route path="/observability/events" element={<EventsDetail />} />
               <Route path="/observability/events/:id" element={<EventView />} />

@@ -1,9 +1,13 @@
 import { useMemo, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { channelPath, channelIdForProducer, isDirectSource } from '../../../api/channels'
+import { birthChannelPath } from '../../../api/channels'
 import { useConversations } from '../../../api/conversations'
 import { useEvent } from '../../../api/events'
-import { useInvocations, invocationStatusVariant, type InvocationEntry } from '../../../api/invocations'
+import {
+  useInvocations,
+  invocationStatusVariant,
+  type InvocationEntry,
+} from '../../../api/invocations'
 import { EventJourney } from '../../../components/journey/EventJourney'
 import { Titleblock } from '../../../layout/Titleblock'
 import { Panel } from '../../../primitives/Panel'
@@ -131,12 +135,15 @@ export function EventView() {
   const { data, isLoading, error } = useEvent(id ?? '')
   // Any invocation still running means the event detail is a live view:
   // poll so status flips, new invocations, and the transcript show up.
-  const invocations = useInvocations({ event: id, pageSize: 50 }, {
-    refetchInterval: (query) =>
-      (query.state.data?.items ?? []).some((inv) => inv.status === 'running')
-        ? RUNNING_POLL_MS
-        : false,
-  })
+  const invocations = useInvocations(
+    { event: id, pageSize: 50 },
+    {
+      refetchInterval: (query) =>
+        (query.state.data?.items ?? []).some((inv) => inv.status === 'running')
+          ? RUNNING_POLL_MS
+          : false,
+    },
+  )
 
   return (
     <>
@@ -147,7 +154,11 @@ export function EventView() {
             <Link to="/observability/events">Events</Link> / <b>Detail</b>
           </>
         }
-        title={<>Event <em>Detail</em></>}
+        title={
+          <>
+            Event <em>Detail</em>
+          </>
+        }
       />
       <div style={{ padding: '28px 32px', display: 'grid', gap: 24 }}>
         {isLoading ? (
@@ -165,13 +176,17 @@ export function EventView() {
                 <div className="hd">
                   <span className="label">When</span>
                 </div>
-                <div className="figure" style={{ fontSize: 18 }}>{formatISO(data.timestamp)}</div>
+                <div className="figure" style={{ fontSize: 18 }}>
+                  {formatISO(data.timestamp)}
+                </div>
               </div>
               <div className="kpi">
                 <div className="hd">
                   <span className="label">Connector</span>
                 </div>
-                <div className="figure" style={{ fontSize: 18 }}>{data.connector ?? '—'}</div>
+                <div className="figure" style={{ fontSize: 18 }}>
+                  {data.connector ?? '—'}
+                </div>
               </div>
               <div className="kpi">
                 <div className="hd">
@@ -224,16 +239,18 @@ export function EventView() {
             <Panel
               title="Channel journey"
               className="cropped"
-              right={
-                data.connector && !isDirectSource(data.connector) ? (
-                  <Link to={channelPath(channelIdForProducer(data.connector))} className="label">
+              right={(() => {
+                const href = birthChannelPath(data)
+                return href ? (
+                  <Link to={href} className="label">
                     Trace channel →
                   </Link>
                 ) : undefined
-              }
+              })()}
             >
               <EventJourney
                 connector={data.connector}
+                channelId={data.channelId}
                 timestamp={data.timestamp}
                 matches={data.matches ?? []}
               />
@@ -262,7 +279,8 @@ export function EventView() {
                 </div>
                 {(invocations.data?.total ?? 0) > (invocations.data?.items.length ?? 0) ? (
                   <div className="label" style={{ padding: '6px 2px', color: 'var(--ink-3)' }}>
-                    Showing {invocations.data?.items.length} of {invocations.data?.total} invocations.
+                    Showing {invocations.data?.items.length} of {invocations.data?.total}{' '}
+                    invocations.
                   </div>
                 ) : null}
               </>

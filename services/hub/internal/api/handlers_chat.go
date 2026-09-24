@@ -9,8 +9,10 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/DominikPinsel/ainsel/services/hub/internal/channels"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/chat"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/eventqueue"
+	ainselapishared "github.com/DominikPinsel/ainsel/shared/api"
 	agentv1alpha1 "github.com/DominikPinsel/ainsel/shared/api/api/v1alpha1"
 	"github.com/DominikPinsel/ainsel/shared/auth/oidc"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -275,7 +277,7 @@ func (s *Server) addChatMessage(w http.ResponseWriter, r *http.Request, sessionI
 			Type: "chat.message",
 			Data: map[string]any{
 				"sessionId": sessionID,
-				"message":    msg,
+				"message":   msg,
 			},
 		})
 	}
@@ -296,10 +298,25 @@ func (s *Server) addChatMessage(w http.ResponseWriter, r *http.Request, sessionI
 				"session_id": sessionID,
 				"message":    req.Content,
 			})
-			headersJSON, _ := json.Marshal(map[string]string{"type": "chat.message"})
+			headers := map[string]string{"type": "chat.message"}
+			headersJSON, _ := json.Marshal(headers)
+
+			// A chat message is born directly in the agent's inbox: no connector
+			// published it, the user typed it into that conversation.
+			var birthChannel string
+			if s.channelSvc != nil {
+				id, err := s.channelSvc.InboxChannelFor(r.Context(), agentName)
+				if err != nil {
+					slog.Warn("chat publish: could not resolve inbox channel", "agent", agentName, "error", err)
+				} else {
+					birthChannel = id
+				}
+			}
+
 			if err := s.eventQueue.InsertEvent(r.Context(), eventqueue.Event{
 				ID:        eventID,
-				Connector: "chat",
+				Connector: ainselapishared.SourceChat,
+				ChannelID: birthChannel,
 				Headers:   headersJSON,
 				Data:      dataJSON,
 				Raw:       string(dataJSON),
@@ -308,21 +325,43 @@ func (s *Server) addChatMessage(w http.ResponseWriter, r *http.Request, sessionI
 				return
 			}
 			_ = s.eventQueue.MarkRouted(r.Context(), eventID)
-			taskHeaders, _ := json.Marshal(map[string]string{"type": "chat.message", "X-Trigger-Name": "chat"})
+			taskHeaders := map[string]string{"type": "chat.message", "X-Trigger-Name": ainselapishared.SourceChat}
+			taskHeadersJSON, _ := json.Marshal(taskHeaders)
 			if err := s.eventQueue.EnqueueTask(r.Context(), eventqueue.Task{
-				EventID:   eventID,
-				AgentName: agentName,
-				TriggerName: "chat",
-				Headers:   taskHeaders,
-				Payload:   dataJSON,
+				EventID:     eventID,
+				AgentName:   agentName,
+				TriggerName: ainselapishared.SourceChat,
+				Headers:     taskHeadersJSON,
+				Payload:     dataJSON,
 			}); err != nil {
 				writeError(w, http.StatusBadGateway, "failed to enqueue chat event for agent: "+err.Error())
 				return
 			}
+			// Anything attached to that inbox now sees the message too.
+			s.transferChatMessage(r.Context(), eventID, birthChannel, agentName, headers, dataJSON)
 		}
 	}
 
 	writeJSON(w, http.StatusCreated, msg)
+}
+
+// transferChatMessage performs the bridge subscriptions out of an inbox a chat
+// message was just delivered to. Failures are logged: the user's message has
+// already been stored and queued for their own agent.
+func (s *Server) transferChatMessage(ctx context.Context, eventID, birthChannel, agentName string, headers map[string]string, payload json.RawMessage) {
+	if s.channelTransfer == nil || birthChannel == "" {
+		return
+	}
+	if _, err := s.channelTransfer.Apply(ctx, channels.TransferInput{
+		EventID:      eventID,
+		BirthChannel: birthChannel,
+		SourceLabel:  ainselapishared.SourceChat,
+		Headers:      headers,
+		Payload:      payload,
+		Delivered:    []string{agentName},
+	}); err != nil {
+		slog.Error("chat transfer failed", "event_id", eventID, "channel", birthChannel, "error", err)
+	}
 }
 
 // --- Internal (agent-sidecar) chat endpoints ---

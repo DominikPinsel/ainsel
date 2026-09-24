@@ -3,12 +3,17 @@ import { renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
 import {
+  birthChannelPath,
   buildConnections,
   channelPath,
   isChannelDeletable,
   isDirectSource,
+  useChannel,
+  useChannelIds,
   useChannels,
-  type ChannelSummary,
+  type Channel,
+  type ChannelSubscription,
+  type ChannelView,
 } from './channels'
 import { useInvocations } from './invocations'
 
@@ -17,181 +22,219 @@ function wrapper({ children }: { children: ReactNode }) {
   return <QueryClientProvider client={qc}>{children}</QueryClientProvider>
 }
 
-const agentsPayload = {
-  items: [{ id: 'a1', name: 'review-bot' }],
-  total: 1,
+const channelPage = {
+  items: [
+    {
+      id: 'ch-forgejo',
+      kind: 'connector',
+      name: 'forgejo',
+      description: 'Events published by connector "forgejo"',
+      entityRef: 'c1',
+      counts: { events: 12, unmatched: 3, failed: 1 },
+      bridges: 0,
+      subscriptions: 2,
+    },
+    {
+      id: 'ch-inbox',
+      kind: 'agent',
+      name: 'forgejo',
+      description: 'Inbox channel for agent "forgejo"',
+      entityRef: 'a9',
+      counts: { events: 9, unmatched: 0, failed: 0 },
+      bridges: 1,
+      subscriptions: 3,
+    },
+    {
+      id: 'ch-group',
+      kind: 'custom',
+      name: 'team-inbox',
+      description: 'grouped',
+      counts: { events: 0, unmatched: 0, failed: 0 },
+      bridges: 1,
+      subscriptions: 1,
+    },
+  ],
+  total: 3,
   page: 1,
   pageSize: 500,
   totalPages: 1,
+  window: '24h0m0s',
 }
 
-const connectorsPayload = {
-  items: [{ id: 'c1', name: 'forgejo' }],
-  total: 1,
-  page: 1,
-  pageSize: 500,
-  totalPages: 1,
+function stubChannels(payload: unknown = channelPage) {
+  const fetchMock = vi.fn((url: string) => {
+    if (String(url).includes('/channels/ch-group')) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            ...channelPage.items[2],
+            counts: channelPage.items[2].counts,
+            incoming: [],
+            outgoing: [],
+          }),
+          { status: 200 },
+        ),
+      )
+    }
+    return Promise.resolve(new Response(JSON.stringify(payload), { status: 200 }))
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  return fetchMock
 }
 
-function stubLists(agents: unknown, connectors: unknown) {
-  vi.stubGlobal(
-    'fetch',
-    vi.fn((url: string) => {
-      if (url.includes('/agents')) {
-        return Promise.resolve(new Response(JSON.stringify(agents), { status: 200 }))
-      }
-      if (url.includes('/connectors')) {
-        return Promise.resolve(new Response(JSON.stringify(connectors), { status: 200 }))
-      }
-      return Promise.resolve(new Response('{}', { status: 200 }))
-    }),
-  )
-}
-
-const customChannel: ChannelSummary = {
-  id: 'custom:team-inbox',
-  name: 'team-inbox',
-  displayName: 'team-inbox',
-  description: 'Custom grouping channel for "team-inbox"',
-  kind: 'custom',
-}
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 
 describe('useChannels', () => {
-  afterEach(() => {
-    vi.unstubAllGlobals()
-    localStorage.clear()
+  it('reads the hub registry rather than synthesising from other lists', async () => {
+    const fetchMock = stubChannels()
+    const { result } = renderHook(() => useChannels({ pageSize: 500 }), { wrapper })
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/v1/channels?')
+    expect(String(fetchMock.mock.calls[0][0])).toContain('pageSize=500')
+    // One request: the hub already returns kinds, counts and subscription totals.
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    const ids = result.current.data!.items.map((c) => c.id)
+    expect(ids).toEqual(['ch-forgejo', 'ch-inbox', 'ch-group'])
+    const home = result.current.data!.items[0]
+    expect(home.kind).toBe('connector')
+    expect(home.entityRef).toBe('c1')
+    expect(home.counts.unmatched).toBe(3)
   })
 
-  it('lists connectors and agents as id-addressed channels of their kind', async () => {
-    stubLists(agentsPayload, connectorsPayload)
+  it('keeps same-labeled channels distinct: a connector and an agent both named forgejo', async () => {
+    stubChannels()
     const { result } = renderHook(() => useChannels(), { wrapper })
-    await waitFor(() => expect(result.current.isLoading).toBe(false))
-    const ids = result.current.channels.map((c) => c.id)
-    // one channel per connector and agent, none deletable-by-kind
-    expect(ids).toEqual(['connector:forgejo', 'agent:review-bot'])
-    const forgejo = result.current.channels.find((c) => c.id === 'connector:forgejo')
-    expect(forgejo?.description).toContain('forgejo')
-    expect(forgejo?.entityId).toBe('c1')
-    expect(forgejo?.kind).toBe('connector')
-    const bot = result.current.channels.find((c) => c.id === 'agent:review-bot')
-    expect(bot?.kind).toBe('agent')
-    expect(bot?.entityId).toBe('a1')
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    const sameName = result.current.data!.items.filter((c) => c.name === 'forgejo')
+    expect(sameName.map((c) => c.id).sort()).toEqual(['ch-forgejo', 'ch-inbox'])
+    expect(new Set(sameName.map((c) => c.kind)).size).toBe(2)
   })
 
-  it('merges browser-local custom channels into the registry', async () => {
-    stubLists(agentsPayload, connectorsPayload)
-    localStorage.setItem(
-      'ainsel.customChannels.v1',
-      JSON.stringify({
-        channels: [
-          { id: 'custom:team-inbox', name: 'team-inbox', description: 'grouped', createdAt: 'x' },
-        ],
-        bridges: [],
-      }),
-    )
-    const { result } = renderHook(() => useChannels(), { wrapper })
-    await waitFor(() => expect(result.current.isLoading).toBe(false))
-    const team = result.current.channels.find((c) => c.id === 'custom:team-inbox')
-    expect(team?.kind).toBe('custom')
-    expect(team?.description).toBe('grouped')
-    expect(team?.entityId).toBeUndefined()
+  it('forwards the kind filter to the hub', async () => {
+    const fetchMock = stubChannels()
+    renderHook(() => useChannels({ kind: 'agent' }), { wrapper })
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+    expect(String(fetchMock.mock.calls[0][0])).toContain('kind=agent')
   })
+})
 
-  it('keeps same-named channels distinct (connector and agent are two channels)', async () => {
-    stubLists(
-      { items: [{ id: 'a9', name: 'forgejo' }], total: 1 },
-      { items: [{ id: 'c9', name: 'forgejo' }], total: 1 },
-    )
-    const { result } = renderHook(() => useChannels(), { wrapper })
-    await waitFor(() => expect(result.current.isLoading).toBe(false))
-    const forgejos = result.current.channels.filter((c) => c.name === 'forgejo')
-    expect(forgejos.map((c) => c.id).sort()).toEqual(['agent:forgejo', 'connector:forgejo'])
+describe('useChannel', () => {
+  it('fetches one channel by id with its subscriptions', async () => {
+    const fetchMock = stubChannels()
+    const { result } = renderHook(() => useChannel('ch-group'), { wrapper })
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/v1/channels/ch-group')
+    expect(result.current.data!.kind).toBe('custom')
+    expect(result.current.data!.incoming).toEqual([])
   })
 })
 
 describe('buildConnections', () => {
-  afterEach(() => {
-    vi.unstubAllGlobals()
-    localStorage.clear()
+  const view = (
+    over: Partial<ChannelView> & Pick<Channel, 'id' | 'kind' | 'name'>,
+  ): ChannelView => ({
+    description: '',
+    counts: { events: 0, unmatched: 0, failed: 0 },
+    bridges: 0,
+    subscriptions: 0,
+    ...over,
   })
 
-  it('maps hub subscriptions to channel-to-channel edges', async () => {
-    stubLists(agentsPayload, connectorsPayload)
-    const { result } = renderHook(() => useChannels(), { wrapper })
-    await waitFor(() => expect(result.current.isLoading).toBe(false))
-    const conns = buildConnections(
-      result.current.channels,
-      [
-        { id: 't1', name: 'on-issues', agentRef: 'a1', connectorRef: 'c1', filters: [] },
-        { id: 't2', name: 'ghost', agentRef: 'gone', connectorRef: 'cX', filters: [] },
-      ],
-      [],
-    )
-    expect(conns[0].from?.id).toBe('connector:forgejo')
-    expect(conns[0].to?.id).toBe('agent:review-bot')
-    expect(conns[0].subscription).toBe('on-issues')
-    expect(conns[0].source).toBe('hub')
-    // unresolvable endpoints keep their registry refs
-    expect(conns[1].from).toBeUndefined()
-    expect(conns[1].fromRef).toBe('connector#cX')
-    expect(conns[1].to).toBeUndefined()
-    expect(conns[1].toRef).toBe('agent#gone')
-  })
+  const channels = [
+    view({ id: 'ch-forgejo', kind: 'connector', name: 'forgejo', entityRef: 'c1' }),
+    view({ id: 'ch-inbox', kind: 'agent', name: 'forgejo', entityRef: 'a9' }),
+    view({ id: 'ch-group', kind: 'custom', name: 'team-inbox' }),
+  ]
 
-  it('adds local bridges as preview edges between any channels', () => {
-    const channels: ChannelSummary[] = [
+  it('resolves trigger and bridge edges onto their channels', () => {
+    const subs: ChannelSubscription[] = [
       {
-        id: 'connector:forgejo',
-        name: 'forgejo',
-        displayName: 'forgejo',
-        description: '',
-        kind: 'connector' as const,
-        entityId: 'c1',
+        source: 'trigger',
+        refId: 'on-issues',
+        name: 'on-issues',
+        fromChannel: 'ch-forgejo',
+        toChannel: 'ch-inbox',
       },
-      customChannel,
+      {
+        source: 'bridge',
+        refId: 'br-1',
+        name: 'all-issues',
+        fromChannel: 'ch-forgejo',
+        toChannel: 'ch-group',
+      },
     ]
-    const conns = buildConnections(
-      channels,
-      [],
-      [{ id: 'b1', from: 'connector:forgejo', to: 'custom:team-inbox', name: 'all-issues' }],
-    )
+    const conns = buildConnections(subs, channels)
+    expect(conns[0].from?.id).toBe('ch-forgejo')
+    expect(conns[0].to?.id).toBe('ch-inbox')
+    expect(conns[0].source).toBe('trigger')
+    // Only bridges are removable here; a trigger edge has no bridge id.
+    expect(conns[0].edgeId).toBeUndefined()
+    expect(conns[1].edgeId).toBe('br-1')
+    expect(conns[1].from?.name).toBe('forgejo')
+  })
+
+  it('keeps dangling endpoints as refs so the row still renders', () => {
+    const subs: ChannelSubscription[] = [
+      {
+        source: 'trigger',
+        refId: 'ghost',
+        name: 'ghost',
+        fromChannel: '',
+        toChannel: '',
+        fromRef: 'cX',
+        toRef: 'gone',
+      },
+    ]
+    const conns = buildConnections(subs, channels)
+    expect(conns[0].from).toBeUndefined()
+    expect(conns[0].fromRef).toBe('trigger:cX')
+    expect(conns[0].toRef).toBe('agent:gone')
+  })
+
+  it('drops nothing when the channel list is missing entries', () => {
+    const subs: ChannelSubscription[] = [
+      { source: 'bridge', refId: 'br-9', name: 'x', fromChannel: 'ch-gone', toChannel: 'ch-group' },
+    ]
+    const conns = buildConnections(subs, channels)
     expect(conns).toHaveLength(1)
-    expect(conns[0].source).toBe('local')
-    expect(conns[0].edgeId).toBe('b1')
-    expect(conns[0].from?.id).toBe('connector:forgejo')
-    expect(conns[0].to?.id).toBe('custom:team-inbox')
+    expect(conns[0].from).toBeUndefined()
+    expect(conns[0].fromRef).toBe('ch-gone')
+    expect(conns[0].to?.name).toBe('team-inbox')
   })
 })
 
 describe('isChannelDeletable', () => {
-  afterEach(() => vi.unstubAllGlobals())
+  const mk = (over: Partial<Channel> & Pick<Channel, 'id' | 'kind' | 'name'>): Channel => ({
+    description: '',
+    ...over,
+  })
 
-  it('only custom channels can be deleted, and only while nothing bridges to them', () => {
-    const connector: ChannelSummary = {
-      id: 'connector:forgejo',
-      name: 'forgejo',
-      displayName: 'forgejo',
-      description: '',
-      kind: 'connector',
-    }
-    const agent: ChannelSummary = {
-      id: 'agent:review-bot',
-      name: 'review-bot',
-      displayName: 'review-bot',
-      description: '',
-      kind: 'agent',
-    }
+  it('only custom channels, and only while nothing subscribes through them', () => {
+    const connector = mk({ id: 'ch-forgejo', kind: 'connector', name: 'forgejo' })
+    const agent = mk({ id: 'ch-inbox', kind: 'agent', name: 'forgejo' })
+    const custom = mk({ id: 'ch-group', kind: 'custom', name: 'team-inbox' })
     const conns = buildConnections(
-      [connector, agent, customChannel],
-      [],
-      [{ id: 'b1', from: 'connector:forgejo', to: 'custom:team-inbox', name: 'x' }],
+      [
+        {
+          source: 'bridge',
+          refId: 'br-1',
+          name: 'x',
+          fromChannel: 'ch-forgejo',
+          toChannel: 'ch-group',
+        },
+      ],
+      [connector, agent, custom],
     )
     expect(isChannelDeletable(connector, conns)).toBe(false)
     expect(isChannelDeletable(agent, conns)).toBe(false)
     // referenced by a bridge → stays
-    expect(isChannelDeletable(customChannel, conns)).toBe(false)
+    expect(isChannelDeletable(custom, conns)).toBe(false)
     // bridge removed → deletable again
-    expect(isChannelDeletable(customChannel, [])).toBe(true)
+    expect(isChannelDeletable(custom, [])).toBe(true)
   })
 })
 
@@ -205,10 +248,51 @@ describe('isDirectSource', () => {
 })
 
 describe('channelPath', () => {
-  it('namespaces routes by kind', () => {
-    expect(channelPath('connector:forgejo')).toBe('/channels/connector/forgejo')
-    expect(channelPath('agent:my agent')).toBe('/channels/agent/my%20agent')
-    expect(channelPath('custom:team-inbox')).toBe('/channels/custom/team-inbox')
+  it('addresses channels by id', () => {
+    expect(channelPath('ch-forgejo')).toBe('/channels/ch-forgejo')
+    expect(channelPath('ch my agent')).toBe('/channels/ch%20my%20agent')
+  })
+})
+
+describe('birthChannelPath', () => {
+  const channels = [
+    {
+      id: 'ch-forgejo',
+      kind: 'connector' as const,
+      // The display name is rename-able; entityRef is the label events carry.
+      name: 'Forgejo',
+      description: '',
+      entityRef: 'forgejo',
+    },
+  ]
+
+  it('links the id the hub stamped on the event', () => {
+    expect(birthChannelPath({ channelId: 'ch-group', connector: 'forgejo' })).toBe(
+      '/channels/ch-group',
+    )
+  })
+
+  it('falls back to the connector channel that owns the label when the record has no id', () => {
+    expect(birthChannelPath({ connector: 'forgejo' }, channels)).toBe('/channels/ch-forgejo')
+  })
+
+  it('never guesses a channel for a direct source or an unknown label', () => {
+    expect(birthChannelPath({ connector: 'cron' }, channels)).toBeUndefined()
+    expect(birthChannelPath({ connector: 'chat' }, channels)).toBeUndefined()
+    expect(birthChannelPath({ connector: 'slack' }, channels)).toBeUndefined()
+    expect(birthChannelPath({ connector: undefined }, channels)).toBeUndefined()
+    // Without a channel list to resolve against, a label alone is not a link.
+    expect(birthChannelPath({ connector: 'forgejo' })).toBeUndefined()
+  })
+})
+
+describe('useChannelIds', () => {
+  it('resolves labels per kind so a shared name cannot collapse', async () => {
+    stubChannels()
+    const { result } = renderHook(() => useChannelIds(), { wrapper })
+    await waitFor(() => expect(result.current.inbox('forgejo')).toBe('ch-inbox'))
+    expect(result.current.home('forgejo')).toBe('ch-forgejo')
+    expect(result.current.inbox('nobody')).toBeUndefined()
   })
 })
 

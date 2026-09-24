@@ -185,6 +185,30 @@ supported. Example: `"0 9 * * 1-5"` fires at 09:00 on weekdays.
 | `list_connectors` | read | All connectors and their status. |
 | `get_connector` | read | One connector: configuration and health. |
 
+### Channels
+
+| Tool | Mode | What it answers |
+|------|------|-----------------|
+| `list_channels` | read | Every event stream with its traffic counts. |
+| `get_channel` | read | One channel plus every subscription touching it. |
+| `list_channel_subscriptions` | read | All edges at once: trigger-owned and bridge-owned. |
+| `get_channel_events` | read | A channel's timeline — births plus what was transferred in. |
+| `create_channel` | write | Create a custom grouping channel. |
+| `update_channel` | write | Rename or re-describe a custom channel. |
+| `delete_channel` | write | Delete a custom channel (refused while subscriptions are attached). |
+| `attach_channel_bridge` | write | Transfer one channel's events into another. |
+| `detach_channel_bridge` | write | Remove a bridge between two channels. |
+
+A channel is the stream events are born in: one per connector, one per
+agent (its inbox), plus custom grouping channels. Connector and agent
+channels are provisioned from their registry and cannot be created or
+renamed through these tools.
+
+`name` accepts a channel id, a display name, an entity ref, or the
+qualified `kind:ref` form (`connector:forgejo`, `agent:forgejo`). A
+label that names both a connector stream and an agent inbox is reported
+as ambiguous with the candidate ids listed rather than guessed.
+
 ### Agent images (runtimes)
 
 | Tool | Mode | What it answers |
@@ -272,6 +296,8 @@ limits** when the caller does not pass an explicit parameter:
 | `list_triggers` | `pageSize=50` | `page`, `pageSize` |
 | `list_cron_triggers` | `pageSize=50` | `page`, `pageSize` |
 | `list_connectors` | `pageSize=50` | `page`, `pageSize` |
+| `list_channels` | `pageSize=50` | `page`, `pageSize`, `kind`, `since` |
+| `get_channel_events` | `limit=50` | `limit`, `since`, `status`, `subject` |
 | `list_agent_images` | `pageSize=50` | `page`, `pageSize` |
 | `list_personas` | `pageSize=50` | `page`, `pageSize` |
 | `list_skills` | `pageSize=50` | `page`, `pageSize` |

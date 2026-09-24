@@ -22,6 +22,47 @@ function defaultFetch(url: string, init?: RequestInit): Response {
   if (init?.method === 'DELETE') {
     return new Response(null, { status: 204 })
   }
+  if (url.includes('/api/v1/channels')) {
+    return new Response(
+      JSON.stringify({
+        items: [
+          {
+            id: 'ch-inbox-a1',
+            kind: 'agent',
+            name: 'doc-writer',
+            description: 'The inbox agent doc-writer drains',
+            entityRef: 'a1',
+            counts: { events: 7, unmatched: 0, failed: 1 },
+            bridges: 0,
+            subscriptions: 1,
+          },
+        ],
+        total: 1,
+        page: 1,
+        pageSize: 500,
+        totalPages: 1,
+        window: '24h0m0s',
+      }),
+      { status: 200 },
+    )
+  }
+  if (url.includes('/channel-subscriptions')) {
+    return new Response(
+      JSON.stringify({
+        items: [
+          {
+            source: 'trigger',
+            refId: 't1',
+            name: 'on-doc-issue',
+            fromChannel: 'ch-conn-c',
+            toChannel: 'ch-inbox-a1',
+          },
+        ],
+        total: 1,
+      }),
+      { status: 200 },
+    )
+  }
   if (url.includes('/triggers')) {
     return new Response(
       JSON.stringify({
@@ -64,9 +105,7 @@ function defaultFetch(url: string, init?: RequestInit): Response {
         name: alt ? 'ops-triager' : 'docs-writer',
         description: 'docs persona',
         currentVersion: 1,
-        text: alt
-          ? '# Persona\n\nYou triage issues.'
-          : '# Persona\n\nYou are a docs writer.',
+        text: alt ? '# Persona\n\nYou triage issues.' : '# Persona\n\nYou are a docs writer.',
         createdAt: '2026-05-01T00:00:00Z',
         updatedAt: '2026-05-01T00:00:00Z',
       }),
@@ -225,9 +264,7 @@ describe('AgentDetail', () => {
     localStorage.clear()
     vi.stubGlobal(
       'fetch',
-      vi.fn((url: string, init?: RequestInit) =>
-        Promise.resolve(defaultFetch(url, init)),
-      ),
+      vi.fn((url: string, init?: RequestInit) => Promise.resolve(defaultFetch(url, init))),
     )
   })
   afterEach(() => {
@@ -241,9 +278,7 @@ describe('AgentDetail', () => {
       </Routes>,
       { route: '/agents/a1' },
     )
-    await waitFor(() =>
-      expect(screen.getAllByText('doc-writer')[0]).toBeInTheDocument(),
-    )
+    await waitFor(() => expect(screen.getAllByText('doc-writer')[0]).toBeInTheDocument())
     expect(screen.getByText('claude-opus-4-7')).toBeInTheDocument()
     expect(screen.getByText('claude-tooling-base:1.4')).toBeInTheDocument()
   })
@@ -284,9 +319,7 @@ describe('AgentDetail', () => {
     expect(container.querySelector('.md-body h1')?.textContent).toBe('Persona')
     expect(screen.getByText(/persona · docs-writer/i)).toBeInTheDocument()
     expect(screen.getByText(/docs persona/)).toBeInTheDocument()
-    expect(
-      screen.getByRole('button', { name: /configure persona/i }),
-    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /configure persona/i })).toBeInTheDocument()
   })
 
   it('marks an agent-owned persona on the overview panel', async () => {
@@ -325,9 +358,7 @@ describe('AgentDetail', () => {
       { route: '/agents/a1' },
     )
     await waitFor(() => expect(container.querySelector('.md-body h1')).not.toBeNull())
-    expect(
-      screen.getByText(/persona · doc-writer \(own\) · own/i),
-    ).toBeInTheDocument()
+    expect(screen.getByText(/persona · doc-writer \(own\) · own/i)).toBeInTheDocument()
     expect(screen.queryByText(/shared template/i)).not.toBeInTheDocument()
   })
 
@@ -336,9 +367,7 @@ describe('AgentDetail', () => {
       'fetch',
       vi.fn((url: string, init?: RequestInit) => {
         if (/\/api\/v1\/agents\/a1\/persona$/.test(url)) {
-          return Promise.resolve(
-            new Response(JSON.stringify({ owned: false }), { status: 200 }),
-          )
+          return Promise.resolve(new Response(JSON.stringify({ owned: false }), { status: 200 }))
         }
         return Promise.resolve(defaultFetch(url, init))
       }),
@@ -351,9 +380,7 @@ describe('AgentDetail', () => {
       { route: '/agents/a1' },
     )
     expect(await screen.findByText(/no persona yet/i)).toBeInTheDocument()
-    expect(
-      screen.getByRole('button', { name: /configure persona/i }),
-    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /configure persona/i })).toBeInTheDocument()
   })
 
   it('opens the Persona tab from the overview button, loads the editor, and switches personas', async () => {
@@ -375,9 +402,7 @@ describe('AgentDetail', () => {
       { route: '/agents/a1' },
     )
     await screen.findAllByText('doc-writer')
-    await userEvent.click(
-      await screen.findByRole('button', { name: /configure persona/i }),
-    )
+    await userEvent.click(await screen.findByRole('button', { name: /configure persona/i }))
 
     // The editor loads the linked persona's content.
     const text = await screen.findByLabelText('Persona Text')
@@ -422,24 +447,14 @@ describe('AgentDetail', () => {
 
     // The embedded editor loads the referenced image's identity and env.
     const urlInput = await screen.findByLabelText('Image URL')
-    await waitFor(() =>
-      expect(urlInput).toHaveValue('ghcr.io/ainsel/claude-tooling:1.4'),
-    )
-    expect(
-      screen.getByRole('heading', { name: 'Environment Variables' }),
-    ).toBeInTheDocument()
+    await waitFor(() => expect(urlInput).toHaveValue('ghcr.io/ainsel/claude-tooling:1.4'))
+    expect(screen.getByRole('heading', { name: 'Environment Variables' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^save$/i })).toBeInTheDocument()
-    expect(
-      screen.queryByRole('button', { name: /^cancel$/i }),
-    ).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^cancel$/i })).not.toBeInTheDocument()
 
     // No tools-side or skills sections leak onto this tab.
-    expect(
-      screen.queryByRole('heading', { name: 'MCP Servers' }),
-    ).not.toBeInTheDocument()
-    expect(
-      screen.queryByRole('heading', { name: 'Skills' }),
-    ).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'MCP Servers' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Skills' })).not.toBeInTheDocument()
 
     // Switching the image patches the agent with the new reference.
     await userEvent.selectOptions(screen.getByLabelText('Agent image'), 'minimal:1.0')
@@ -465,21 +480,13 @@ describe('AgentDetail', () => {
 
     // The shared image profile keeps its own editor and heading ...
     expect(await screen.findByLabelText('Image URL')).toBeInTheDocument()
-    expect(
-      screen.getByRole('heading', { name: 'Environment Variables' }),
-    ).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Environment Variables' })).toBeInTheDocument()
 
     // ... and the agent's own override list sits beside it, framed as
     // inherited until the first change pins it.
-    expect(
-      screen.getByRole('heading', { name: /^environment$/i }),
-    ).toBeInTheDocument()
-    expect(
-      screen.getByText(/Currently inherited from the runtime image/i),
-    ).toBeInTheDocument()
-    expect(
-      screen.getByRole('button', { name: /save overrides/i }),
-    ).toBeDisabled()
+    expect(screen.getByRole('heading', { name: /^environment$/i })).toBeInTheDocument()
+    expect(screen.getByText(/Currently inherited from the runtime image/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /save overrides/i })).toBeDisabled()
   })
 
   it('opens the Tools tab with the image catalog and an agent-scoped MCP selection', async () => {
@@ -536,18 +543,12 @@ describe('AgentDetail', () => {
       }),
     ).toBeInTheDocument()
     expect(screen.getByRole('option', { name: /github/i })).toBeInTheDocument()
-    expect(
-      screen.getByText(/inherited from the runtime image/i),
-    ).toBeInTheDocument()
+    expect(screen.getByText(/inherited from the runtime image/i)).toBeInTheDocument()
 
     // No image-side, skills, or picker sections on this tab.
     expect(screen.queryByLabelText('Image URL')).not.toBeInTheDocument()
-    expect(
-      screen.queryByRole('heading', { name: 'Environment Variables' }),
-    ).not.toBeInTheDocument()
-    expect(
-      screen.queryByRole('heading', { name: 'Skills' }),
-    ).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Environment Variables' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Skills' })).not.toBeInTheDocument()
     expect(screen.queryByLabelText('Agent image')).not.toBeInTheDocument()
 
     // Enabling an MCP server pins the selection to the agent.
@@ -620,17 +621,13 @@ describe('AgentDetail', () => {
     ).toBeInTheDocument()
     expect(screen.getByRole('option', { name: /pr review/i })).toBeInTheDocument()
     expect(screen.getByRole('option', { name: /issue triage/i })).toBeInTheDocument()
-    expect(
-      screen.getByText(/inherited from the runtime image/i),
-    ).toBeInTheDocument()
+    expect(screen.getByText(/inherited from the runtime image/i)).toBeInTheDocument()
 
     // No image-side sections leak onto this tab, and no embedded form save:
     // the picker PUTs the agent directly.
     expect(screen.queryByLabelText('Image URL')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^save$/i })).not.toBeInTheDocument()
-    expect(
-      screen.queryByRole('heading', { name: 'MCP Servers' }),
-    ).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'MCP Servers' })).not.toBeInTheDocument()
 
     // Enabling a skill pins the selection to the agent.
     await userEvent.click(screen.getByRole('option', { name: /pr review/i }))
@@ -659,9 +656,14 @@ describe('AgentDetail', () => {
     await userEvent.click(screen.getByRole('tab', { name: /channel/i }))
     expect(await screen.findByText('agent inbox')).toBeInTheDocument()
     expect(screen.getByText('The inbox agent doc-writer drains')).toBeInTheDocument()
+    // addressed by the hub's channel id, not a synthesized kind:name key
     expect(
-      screen.getByRole('link', { name: /open channel/i }),
-    ).toHaveAttribute('href', '/channels/agent/doc-writer')
+      screen.getByText((_, el) => el?.textContent === '7 events reached this inbox in 24h'),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /open channel/i })).toHaveAttribute(
+      'href',
+      '/channels/ch-inbox-a1',
+    )
   })
 
   it('does not show the Access card on the overview tab', async () => {
@@ -685,9 +687,7 @@ describe('AgentDetail', () => {
     await screen.findByText('claude-opus-4-7')
     expect(screen.getByRole('heading', { name: 'Runtime Status' })).toBeInTheDocument()
     expect(screen.getByText('Configured Replicas')).toBeInTheDocument()
-    expect(
-      screen.queryByRole('tab', { name: /^status$/i }),
-    ).not.toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: /^status$/i })).not.toBeInTheDocument()
   })
 
   it('opens the Channel tab directly via the ?tab=channel deep link', async () => {
@@ -698,9 +698,7 @@ describe('AgentDetail', () => {
       { route: '/agents/a1?tab=channel' },
     )
     // Channel panel content loads without clicking the tab.
-    await waitFor(() =>
-      expect(screen.getByText('agent inbox')).toBeInTheDocument(),
-    )
+    await waitFor(() => expect(screen.getByText('agent inbox')).toBeInTheDocument())
   })
 
   it('falls back to the Overview tab for an invalid ?tab value', async () => {
@@ -759,9 +757,7 @@ describe('AgentDetail', () => {
     // Click Delete inside the modal — should fail with 403.
     await userEvent.click(within(dialog).getByRole('button', { name: /^delete/i }))
     // Modal stays open and shows the error message.
-    await waitFor(() =>
-      expect(screen.getByText('forbidden')).toBeInTheDocument(),
-    )
+    await waitFor(() => expect(screen.getByText('forbidden')).toBeInTheDocument())
     // Should NOT have navigated to the list.
     expect(screen.queryByText('LIST')).not.toBeInTheDocument()
     // Dialog is still present.
