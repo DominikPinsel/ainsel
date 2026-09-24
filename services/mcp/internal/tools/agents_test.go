@@ -211,3 +211,71 @@ func TestUpdateAgent_MissingName(t *testing.T) {
 		t.Error("expected error when name is missing")
 	}
 }
+func TestUpdateAgent_DisplayNameOnly(t *testing.T) {
+	var capturedPath, capturedBody string
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		b, _ := io.ReadAll(r.Body)
+		capturedBody = string(b)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":   "a-director",
+			"name": "agent-director",
+		})
+	}))
+	defer hub.Close()
+
+	at := &AgentTools{HubURL: hub.URL, HTTPClient: hub.Client()}
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"name":         "a-director",
+		"display_name": "agent-director",
+	}
+	result, err := at.UpdateAgent(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("tool returned error: %s", result.Content[0].(mcp.TextContent).Text)
+	}
+	if capturedPath != "/api/v1/agents/a-director" {
+		t.Errorf("unexpected path: %s", capturedPath)
+	}
+	if !strings.Contains(capturedBody, `"name":"agent-director"`) {
+		t.Errorf("expected display name in request body; got: %s", capturedBody)
+	}
+	// A pure rename must not touch the LLM config.
+	if strings.Contains(capturedBody, `"llm"`) {
+		t.Errorf("expected llm to be omitted; got: %s", capturedBody)
+	}
+}
+
+func TestUpdateAgent_DisplayNameWithLLM(t *testing.T) {
+	var capturedBody string
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		capturedBody = string(b)
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "a-director", "name": "agent-director"})
+	}))
+	defer hub.Close()
+
+	at := &AgentTools{HubURL: hub.URL, HTTPClient: hub.Client()}
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"name":         "a-director",
+		"display_name": "agent-director",
+		"description":  "Plans and coordinates work",
+		"model":        "glm-5.1",
+	}
+	result, err := at.UpdateAgent(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("tool returned error: %s", result.Content[0].(mcp.TextContent).Text)
+	}
+	for _, want := range []string{`"name":"agent-director"`, `"description":"Plans and coordinates work"`, `"model":"glm-5.1"`} {
+		if !strings.Contains(capturedBody, want) {
+			t.Errorf("expected %s in body; got: %s", want, capturedBody)
+		}
+	}
+}

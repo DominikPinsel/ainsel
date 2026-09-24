@@ -45,6 +45,7 @@ func New(log *slog.Logger, b Backends) *server.MCPServer {
 	connectors := tools.NewConnectorTools(b.HubURL)
 	s.AddTool(connectors.ListConnectorsTool(), connectors.ListConnectors)
 	s.AddTool(connectors.GetConnectorTool(), connectors.GetConnector)
+	s.AddTool(connectors.UpdateConnectorTool(), connectors.UpdateConnector)
 
 	// Channels are the streams events live in: one per connector, one per agent
 	// inbox, plus custom grouping channels. The subscription list answers
