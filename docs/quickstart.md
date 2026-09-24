@@ -6,7 +6,12 @@ This page is a 5-minute orientation. For the full technical reference, see the [
 
 ## What AInsel does
 
-A connector turns webhook deliveries (from Forgejo today) into a canonical event stream. The hub matches events against triggers and routes them to agents via the event queue. Agents act on the forge — commenting, opening PRs, pushing code. Everything is a Kubernetes CRD, managed by a single Helm chart.
+A connector turns webhook deliveries (from Forgejo or GitHub) into a canonical
+event stream. The hub matches events against triggers and routes them to agents
+via the event queue. Agents act on the forge — commenting, opening PRs,
+pushing code. Agents, connector gateways, and runtime images are Kubernetes
+CRDs managed by a single Helm chart; triggers, cron triggers, personas, skills,
+MCP servers, and the channel registry live in the hub's PostgreSQL database.
 
 ## The core building blocks
 

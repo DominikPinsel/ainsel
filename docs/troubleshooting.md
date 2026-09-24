@@ -15,7 +15,7 @@ kubectl logs -n <namespace> deploy/ainsel-hub
 Common causes and fixes:
 
 - **Missing Postgres secret** — The hub exits early if the database secret is absent or has the wrong key names. Verify the secret exists and contains the expected keys (`host`, `port`, `user`, `password`, `dbname` or a single `dsn`). Re-create the secret and restart the hub deployment.
-- **Hub not reachable** — If you see `hub: connection refused` or a connection-refused error, confirm the hub URL in `values.yaml` is correct and that the hub pod in the platform namespace is running: `kubectl get pods -n <nats-namespace>`.
+- **Hub not reachable** — If you see `hub: connection refused` or a connection-refused error, confirm the hub URL in `values.yaml` is correct and that the hub pod is running in the release namespace: `kubectl get pods -n <namespace>`.
 - **Bad OIDC config** — An `oidc: failed to fetch provider metadata` error means the issuer URL is unreachable from inside the cluster. Check that the URL is correct, that DNS resolves, and that the cluster can reach the OIDC provider. Verify the client ID matches what is registered.
 - **CRD not installed** — A `no kind "Agent" is registered` error means CRDs were not applied. Run `kubectl apply -f chart/templates/crds/` and restart the hub.
 
@@ -288,4 +288,4 @@ kubectl logs -n <namespace> deploy/ainsel-connector-operator --tail=100
 kubectl get events -n <namespace> --sort-by='.lastTimestamp'
 ```
 
-If Loki is configured in your cluster, use its query interface to aggregate logs across all pods in the namespace by filtering on `namespace=<namespace>`. This is especially useful for correlating a NATS event with the hub routing decision and the agent pod startup that followed it.
+If Loki is configured in your cluster, use its query interface to aggregate logs across all pods in the namespace by filtering on `namespace=<namespace>`. This is especially useful for correlating an ingested event with the hub routing decision and the agent pod startup that followed it.
