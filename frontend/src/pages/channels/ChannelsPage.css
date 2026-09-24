@@ -3,51 +3,54 @@
   gap: 24px;
 }
 
-/* Relation tree on the channel view */
-.tree-root {
-  padding: 4px 0 8px;
-  font-size: 14px;
+/* Relation graph on the channel view (Mermaid SVG + accessible summary) */
+.relation-diagram {
+  display: flex;
+  justify-content: center;
+  overflow-x: auto;
+  padding: 8px 0 4px;
 }
-ul.channel-tree {
-  list-style: none;
-  margin: 0;
-  padding: 0 0 0 16px;
+.relation-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+.relation-diagram g.node:hover {
+  opacity: 0.82;
+}
+.relation-summary {
   display: grid;
   gap: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--rule-ghost);
+  font-size: 13px;
 }
-ul.channel-tree ul.channel-tree {
-  margin-top: 4px;
-  border-left: 1px solid var(--rule-ghost);
-}
-.channel-tree li {
+.relation-line {
   display: flex;
   gap: 8px;
   align-items: baseline;
   flex-wrap: wrap;
-  font-size: 13px;
 }
-.tree-arrow {
-  color: var(--ink-4);
-  width: 1em;
-  text-align: center;
-}
-.tree-arrow.in {
-  color: var(--ok, var(--ink-2));
-}
-.tree-arrow.out {
-  color: var(--accent, var(--ink-2));
-}
-.tree-node {
-  font-weight: 600;
-  color: var(--ink);
-}
-.tree-node.muted {
-  color: var(--ink-4);
-  font-weight: 400;
-}
-.tree-edge {
+.relation-line-label {
   color: var(--ink-4);
   font-size: 12px;
+  min-width: 4em;
+}
+.relation-line-item + .relation-line-item::before {
+  content: '·';
+  color: var(--ink-4);
+  margin-right: 8px;
+}
+.relation-line-item a {
+  font-weight: 600;
+}
+.relation-line-item .muted {
+  color: var(--ink-4);
+}
+.relation-line-item em {
+  color: var(--ink-4);
+  font-style: normal;
+  font-size: 12px;
+  margin-left: 6px;
 }
 
 /* Bridges (custom channels) */
