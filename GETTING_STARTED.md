@@ -8,7 +8,6 @@ This guide takes you from zero to a running AInsel install with one connector, o
 - `kubectl` configured for the target cluster
 - Helm 3.x (`helm version` to verify)
 - A container registry the cluster can pull images from
-- NATS JetStream — bundled by default in the AInsel Helm chart, no separate install needed
 - _(Optional)_ An OIDC provider (e.g. Dex, Keycloak, Zitadel) for authentication on the operations console
 
 ## 1. Install AInsel
@@ -33,18 +32,20 @@ kubectl get pods -n ainsel
 Expected output (all pods `Running`):
 
 ```
-NAME                                          READY   STATUS    RESTARTS   AGE
-ainsel-hub-xxxxxxxxx-xxxxx                    1/1     Running   0          2m
-ainsel-agent-operator-xxxxxxxx-xxxxx          1/1     Running   0          2m
-ainsel-connector-operator-xxxxxxxx-xxxxx      1/1     Running   0          2m
-ainsel-nats-0                                 1/1     Running   0          2m
-ainsel-frontend-xxxxxxxxx-xxxxx               1/1     Running   0          2m
+NAME                                              READY   STATUS    RESTARTS   AGE
+hub-backend-xxxxxxxxx-xxxxx                       1/1     Running   0          2m
+hub-frontend-xxxxxxxxx-xxxxx                      1/1     Running   0          2m
+k8s-ai-agent-operator-xxxxxxxx-xxxxx              1/1     Running   0          2m
+k8s-event-source-gateway-operator-xxxxxxxx-xxxxx  1/1     Running   0          2m
+ainsel-mcp-xxxxxxxxx-xxxxx                        1/1     Running   0          2m
+postgres-0                                        1/1     Running   0          2m
+qdrant-0                                          1/1     Running   0          2m
 ```
 
 If a pod is not `Running`, check logs:
 
 ```bash
-kubectl logs -n ainsel deployment/ainsel-hub
+kubectl logs -n ainsel deployment/hub-backend
 ```
 
 ## 3. Create a Connector
@@ -148,8 +149,8 @@ curl -X POST https://your-domain.example.com/api/v1/triggers \
     "agentRef": "pr-reviewer",
     "connectorRef": "my-forge",
     "filters": [
-      {"field": "type", "operator": "eq", "value": "pull_request"},
-      {"field": "action", "operator": "eq", "value": "opened"}
+      {"field": "type", "op": "eq", "value": "pull_request"},
+      {"field": "action", "op": "eq", "value": "opened"}
     ]
   }'
 ```
@@ -188,7 +189,7 @@ You should see the event received, the LLM invocation, and the tool call that po
 
 | Document | What it covers |
 |---|---|
-| [`docs/deployment.md`](docs/deployment.md) | Full Helm values reference, TLS, OIDC, external NATS, upgrades |
+| [`docs/deployment.md`](docs/deployment.md) | Full Helm values reference, TLS, OIDC, upgrades |
 | [`docs/writing-a-connector.md`](docs/writing-a-connector.md) | Building a connector for a new source system |
 | [`docs/administrator-guide.md`](docs/administrator-guide.md) | Concepts, persona authoring, cost management, cookbook |
 | [`docs/crd-reference.md`](docs/crd-reference.md) | Full CRD specs for `Agent`, `AgentImage`, `WebhookConnector` |

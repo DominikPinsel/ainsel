@@ -205,8 +205,9 @@ agent (its inbox), plus custom grouping channels. Connector and agent
 channels are provisioned from their registry and cannot be created or
 renamed through these tools.
 
-`name` accepts a channel id, a display name, an entity ref, or the
-qualified `kind:ref` form (`connector:forgejo`, `agent:forgejo`). A
+`name` accepts a channel id, a display name, an entity ref (the entity's
+CR name — `c-…` for connectors, `a-…` for console-created agents), or the
+qualified `kind:ref` form (`connector:c-1a2b3c`, `agent:a-3f9a2b`). A
 label that names both a connector stream and an agent inbox is reported
 as ambiguous with the candidate ids listed rather than guessed.
 
@@ -242,14 +243,12 @@ as ambiguous with the candidate ids listed rather than guessed.
 | `update_skill` | write | Update a skill's name/description/body. Omitted fields preserved. |
 | `delete_skill` | write | Delete a skill. Fails with 409 if referenced by any agent image. |
 
-### MCP servers, GitHub apps
+### MCP servers
 
 | Tool | Mode | What it answers |
 |------|------|-----------------|
 | `list_mcp_servers` | read | MCP servers in the registry: URLs and the tools each exposes. |
 | `get_mcp_server` | read | One MCP server entry: URL, transport, tool names, non-secret auth config. |
-| `list_github_apps` | read | GitHub App installations, install state, and which connectors use them. |
-| `get_github_app` | read | One GitHub App: app ID, install state, referencing connectors. Does not expose private keys. |
 
 ### Invocations & activity
 

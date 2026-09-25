@@ -148,7 +148,7 @@ graph TD
     AR2 .-.->|store/recall| QD
 ```
 
-For the full data flow, NATS subjects, CRD relationships, and deployment
+For the full data flow, derived event subjects, CRD relationships, and deployment
 topology, see [`docs/architecture.md`](docs/architecture.md).
 
 ## Repository layout
@@ -198,7 +198,7 @@ in the same style as the in-app Docs page.
 **For evaluators:**
 
 - This README — value prop, stakeholders, use cases
-- [`docs/architecture.md`](docs/architecture.md) — full technical architecture, data flow, NATS streams
+- [`docs/architecture.md`](docs/architecture.md) — full technical architecture, data flow, event routing
 
 **For platform contributors:**
 

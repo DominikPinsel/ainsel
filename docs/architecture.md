@@ -280,15 +280,15 @@ classDiagram
 graph TD
     subgraph "Kubernetes Cluster"
         subgraph "ainsel namespace"
-            AO[ainsel-k8s-ai-agent-operator<br/>Deployment, 1 replica]
-            CO[ainsel-k8s-event-source-gateway-operator<br/>Deployment, 1 replica]
-            HUB[ainsel-hub-backend<br/>Deployment + Service]
-            UI_POD[ainsel-hub-frontend<br/>Deployment + Service<br/>nginx]
+            AO[k8s-ai-agent-operator<br/>Deployment, 1 replica]
+            CO[k8s-event-source-gateway-operator<br/>Deployment, 1 replica]
+            HUB[hub-backend<br/>Deployment + Service]
+            UI_POD[hub-frontend<br/>Deployment + Service<br/>nginx]
             QD[qdrant<br/>StatefulSet + PVC]
             PG[PostgreSQL<br/>StatefulSet + PVC]
 
             subgraph "Dynamic (created by operators)"
-                FC_POD[connector-<name><br/>webhook-receiver<br/>Deployment + Service, one per WebhookConnector]
+                FC_POD[connector-<id><br/>webhook-receiver<br/>Deployment + Service, one per WebhookConnector]
                 AR1_POD[agent: code-reviewer<br/>Deployment]
                 AR2_POD[agent: issue-triager<br/>Deployment]
             end
@@ -300,7 +300,7 @@ graph TD
 
         subgraph "CRDs (cluster-scoped)"
             CRD1[Agent CRD]
-            CRD2[Trigger CRD]
+            CRD2[AgentImage CRD]
             CRD3[WebhookConnector CRD]
         end
     end
@@ -348,8 +348,8 @@ Key properties:
 
 - **Connector-stamped ingestion.** Every event is inserted with the
   connector that produced it. Webhook events carry the `WebhookConnector`
-  name; the cron emitter and the chat handler insert synthetic events with
-  the pseudo-connectors `"cron"` and `"chat"`.
+  CR name — the connector's `c-…` id; the cron emitter and the chat handler
+  insert synthetic events with the pseudo-connectors `"cron"` and `"chat"`.
 - **Fan-out by trigger match.** The router matches unrouted events against
   the trigger index (`trigger.connectorRef == event.connector` plus data
   filters) and inserts one `agent_tasks` row per matched agent. The
@@ -373,9 +373,9 @@ derived from the webhook headers: any header ending in `-Event` (e.g.
 
 | Level | Meaning | Example |
 |-------|---------|---------|
-| 1 | Connector (channel) | `forgejo`, `cron`, `chat` |
+| 1 | Connector (channel) | `c-1a2b3c`, `cron`, `chat` |
 | 2 | Event type | `push`, `issues`, `chat.message` |
-| Pattern | `*` / `>` wildcards supported | `forgejo.*`, `*.push` |
+| Pattern | `*` / `>` wildcards supported | `c-1a2b3c.*`, `*.push` |
 
 ## Component Interactions
 
@@ -385,7 +385,7 @@ derived from the webhook headers: any header ending in `-Event` (e.g.
 | services/hub | PostgreSQL, Kubernetes API | `agent_tasks` rows, invocations, WebSocket activity | unrouted `events` rows |
 | services/hub (cron emitter) | PostgreSQL | synthetic `events` + `agent_tasks` rows (scheduled) | `cron_triggers` table |
 | services/hub (chat handler) | PostgreSQL | synthetic `events` + `agent_tasks` rows | chat sessions |
-| operators/agent | Kubernetes API | Deployments, ConfigMaps | Agent CRDs, Trigger CRDs |
+| operators/agent | Kubernetes API | Deployments, ConfigMaps | Agent CRDs |
 | operators/event-gateway | Kubernetes API, Forgejo API | Deployments, Services, Webhooks | WebhookConnector CRDs |
 | agent runtime (pi runner) | hub internal API | acks/nacks, task logs | `agent_tasks` rows (long-poll) |
 | frontend | services/hub REST API + WebSocket | User actions | Hub API responses, activity events |

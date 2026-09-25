@@ -40,16 +40,16 @@ kubectl describe webhookconnector <name> -n <namespace>
 The `Ready` condition must be `True`. If it is not, the operator has not yet provisioned the receiver Deployment and Ingress — check operator logs:
 
 ```bash
-kubectl logs -n <namespace> deploy/ainsel-connector-operator
+kubectl logs -n <namespace> deploy/k8s-event-source-gateway-operator
 ```
 
-Check the webhook-receiver (event-gateway) pod logs for incoming requests:
+Check the webhook-receiver pod logs for incoming requests (the receiver Deployment is named `connector-<id>`, e.g. `connector-c-0c4b01e3`):
 
 ```bash
-kubectl logs -n <namespace> deploy/<connector-name>-event-gateway
+kubectl logs -n <namespace> deploy/connector-<connector-id>
 ```
 
-A `403 Forbidden` or `HMAC mismatch` error means the secret on the Forgejo webhook does not match the secret stored in the Kubernetes secret referenced by the connector. Update the Forgejo webhook secret or recreate the Kubernetes secret to match, then restart the event-gateway pod.
+A `403 Forbidden` or `HMAC mismatch` error means the secret on the Forgejo webhook does not match the secret stored in the Kubernetes secret referenced by the connector (`connector-<id>-webhook-hmac`). Update the Forgejo webhook secret or rotate the connector's secret (`POST /api/v1/connectors/{id}/rotate-secret`), then restart the webhook-receiver pod.
 
 Verify the Ingress is present and routing correctly:
 
@@ -77,7 +77,7 @@ Inspect hub logs for routing decisions. The hub logs each event it receives and 
 kubectl logs -n <namespace> deploy/ainsel-hub | grep -i trigger
 ```
 
-Look for lines indicating an event was received but no trigger matched — this usually means the event type or filter does not align with what is being sent. Adjust the trigger's `eventType` and `filters` fields via the UI or API.
+Look for lines indicating an event was received but no trigger matched — this usually means the event type or filter does not align with what is being sent. Adjust the trigger's `filters` via the UI or API (match on the derived `type`/`action` fields and payload paths — there is no separate `eventType` field).
 
 Verify the connector is publishing events to the event queue by checking the `hub_events_consumed_total` metric:
 
@@ -282,7 +282,7 @@ kubectl describe trigger <name> -n <namespace>
 # Recent logs from all platform components
 kubectl logs -n <namespace> deploy/ainsel-hub --tail=100
 kubectl logs -n <namespace> deploy/ainsel-agent-operator --tail=100
-kubectl logs -n <namespace> deploy/ainsel-connector-operator --tail=100
+kubectl logs -n <namespace> deploy/k8s-event-source-gateway-operator --tail=100
 
 # Events in the namespace (often the fastest way to find the root cause)
 kubectl get events -n <namespace> --sort-by='.lastTimestamp'
