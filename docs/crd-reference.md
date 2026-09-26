@@ -263,18 +263,18 @@ including the webhook endpoint, HMAC verification, and container image.
 apiVersion: ainsel.dev/v1alpha1
 kind: WebhookConnector
 metadata:
-  name: forgejo
+  name: c-0c4b01e3 # the connector's generated id — set by the hub, routes events
   namespace: ainsel
 spec:
-  displayName: "Forgejo Webhook"
-  webhookEndpoint: "http://ainsel-event-source-gateway-forgejo.ainsel.svc:8080/"
+  displayName: "connector-forgejo-ainsel"
+  webhookEndpoint: "https://ainsel.example.com/webhooks/c-0c4b01e3"
   signatureHeader: "X-Forgejo-Signature"
   webhookSecret:
     secretRef:
-      name: forgejo-webhook-hmac
+      name: connector-c-0c4b01e3-webhook-hmac
       key: secret
   image:
-    repository: localhost:30500/ainsel/ainsel-event-source-gateway-forgejo
+    repository: dpinsel/ainsel-webhook-receiver
     tag: latest
 ```
 
@@ -294,8 +294,8 @@ Routes events from a connector to an agent, with optional filters.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `displayName` | string | Yes | User-facing trigger name |
-| `agentRef` | string | Yes | Name of the Agent that should receive matching events |
-| `connectorRef` | string | Yes | Name of the connector (e.g. `WebhookConnector`) that sources events |
+| `agentRef` | string | Yes | **Id** of the agent that should receive matching events (the `a-…` name of its `Agent` CR) — display names are not valid refs |
+| `connectorRef` | string | Yes | **Id** of the connector that sources events (the `c-…` name of its `WebhookConnector` CR) — display names are not valid refs |
 | `filters[]` | []Filter | No | Event filters to apply before delivering to the agent |
 
 #### Filter
@@ -337,10 +337,10 @@ Filters are combined with AND logic — all filters must match for the trigger t
 ```yaml
 # DB-backed schema (not a Kubernetes CRD). Shown as YASL for illustration.
 displayName: "Code Review on PR Open"
-agentRef: code-reviewer
-connectorRef: forgejo
+agentRef: a-3f9a2b
+connectorRef: c-1a2b3c
 filters:
-  - field: event_type
+  - field: type
     op: eq
     value: pull_request
 ```

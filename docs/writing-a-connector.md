@@ -8,7 +8,7 @@ form POST, and wiring events to agents is a trigger. You write code only for
 sources that don't fit that shape — and even then, the code is a small
 standalone program that posts canonical events to one HTTP endpoint.
 
-> **Last verified against:** `develop` (commit `a8b2500b`), September 2026.
+> **Last verified against:** `develop` (commit `274bab0a`), September 2026.
 > File paths and field names should match the current codebase; if they
 > drift, please open an issue or PR to update this doc.
 
@@ -51,10 +51,11 @@ things:
 2. **Events are stored raw.** The hub does not require you to translate
    your payload into anything. Headers and body are kept verbatim; a
    matching-time view is derived (see [Filters](#filters-how-triggers-match-your-events)).
-3. **The connector label routes everything.** An event's `connector` field
-   is the connector's registry name; the router only considers triggers
-   whose `connectorRef` equals it, and the hub stamps the event's birth
-   [channel](architecture.md#channels) from it.
+3. **The connector label routes everything.** An event's `connector` field is
+   the connector's **id** (`c-…`), which is also its CR name; the display
+   name you pass at creation is a label only. The router only considers
+   triggers whose `connectorRef` equals it, and the hub stamps the event's
+   birth [channel](architecture.md#channels) from it.
 
 ## The Canonical Event
 
@@ -63,8 +64,8 @@ Defined once in [`shared/api/event.go`](../shared/api/event.go):
 ```json
 {
   "id": "uuid",
-  "version": "1.0",
-  "connector": "connector-forgejo-ainsel",
+  "version": "1",
+  "connector": "c-0c4b01e3",
   "timestamp": "2026-09-24T18:44:26Z",
   "headers": { "X-GitHub-Event": "issues", "User-Agent": "GitHub-Hookshot/…" },
   "data": { "action": "opened", "issue": { "number": 42, "title": "…" } },
@@ -106,8 +107,11 @@ The hub then:
   Deployment, Service and ingress path;
 - hands you `webhookEndpoint` — paste it into the source's webhook settings.
 
-Names are labels — identity is the id (`c-…`). Follow the platform naming
-convention: `connector-<platform>-<scope>`, lowercase kebab.
+Names are labels — identity is the id (`c-…`). The create response's `id`
+field is what you put in `Event.connector` (Path B) and in a trigger's
+`connectorRef`; the `name` you send is display-only and never routes
+anything. Follow the platform naming convention for that display name:
+`connector-<platform>-<scope>`, lowercase kebab.
 
 ### 2. Send a test event
 
@@ -173,8 +177,9 @@ func main() {
 
 	evt := ainselapishared.Event{
 		ID:        newUUID(),
-		Version:   "1.0",
-		Connector: "connector-buildfarm", // must equal the connector's registry name
+		Version:   "1",
+		Connector: "c-4f2a91b7", // the connector's id: the `id` field of POST /api/v1/connectors
+		                       // (the `name` you send is display-only — routing uses the id)
 		Timestamp: time.Now().UTC(),
 		Headers:   map[string]string{"type": "build"}, // the derived event kind
 		Data:      json.RawMessage(payload),
@@ -245,6 +250,7 @@ own comment user — the hub's own chat/cron events already bypass triggers.)
 |---------|------------|
 | no events on the connector channel | receiver pod logs (`kubectl logs deploy/…`): `signature invalid` names the header it read; then the source's delivery log |
 | events stored, agent never runs | trigger's `connectorRef` vs event's `connector` label — they must match exactly; then filter fields against the stored payload (the console event view shows the derived match payload) |
+| events stored, a second channel appears named after your connector, nothing routes | you posted the display name instead of the id — `connector` must be the `c-…` id |
 | agent runs on everything | missing `type`/`action` filter — bare triggers match all events from the connector |
 | duplicated deliveries | your poster minted a fresh `id` per retry — the same `id` is deduped silently, so a retry must reuse it |
 | orphan-flagged channel | events arrived for a connector label nobody registered — create or rename the connector |

@@ -25,15 +25,15 @@ can adapt.
 Six concepts; read them in order.
 
 **Connector.** The bridge between AInsel and a source system. It
-receives native events (Forgejo webhooks today) and turns them into
-the canonical event format AInsel uses internally (see
-[`event-schema.md`](event-schema.md)). You configure the source URL,
-admin credentials, webhook secret, and which event types to
-subscribe to. CRD: `WebhookConnector`
-(see [`crd-reference.md`](crd-reference.md#webhookconnector)). A
-`GitHubConnector` CRD is scaffolded but not yet end-to-end wired —
-[`roadmap.md`](roadmap.md) tracks its status. For writing your own
-connector, see the
+receives native webhooks (Forgejo, GitHub, or any HMAC-signed source)
+and turns them into the canonical event format AInsel uses internally
+(see [`event-schema.md`](event-schema.md)). A connector is a
+declaration, not a program: you register it in the console (or via
+`POST /api/v1/connectors`), the hub generates the webhook HMAC secret
+and endpoint, and you paste both into the source's webhook settings.
+CRD: `WebhookConnector`
+(see [`crd-reference.md`](crd-reference.md#webhookconnector)). For
+writing your own connector, see the
 [connector developer tutorial](writing-a-connector.md).
 
 **Agent.** One AI worker, configured with a model, persona, tool
@@ -58,12 +58,19 @@ explicitly opts the agent into each tool; nothing is implicit. This
 limits blast radius: a code reviewer doesn't need `shell` or
 `docker-builder`, so don't grant them.
 
-**Trigger.** Says "when an event of this type matches these filters,
-invoke this agent". You configure `eventType` (exact or wildcard),
-`agentRef`, `connectorRef`, optional `filters` (operators: `eq`,
-`neq`, `prefix`, `suffix`, `contains`, `in`, `regex`, ANDed), and
-`ignoreBotEvents` (defaults to `true`). CRD: `Trigger`
-(see [`crd-reference.md`](crd-reference.md#trigger)).
+**Trigger.** Says "when an event from this connector matches these
+filters, invoke this agent". Triggers are DB-backed (not CRDs) —
+create them in the console or via `POST /api/v1/triggers`
+(see [`api-reference.md`](api-reference.md#post-apiv1triggers)). You
+configure `name` (a display label), `agentRef` (the agent's CR name —
+its `a-…` id for console-created agents), `connectorRef` (the
+connector's `c-…` id), and optional `filters` (operators: `eq`,
+`neq`, `prefix`, `suffix`, `contains`, `not-contains`, `in`, `not-in`,
+`regex`, ANDed) evaluated against the event payload — typically the
+derived `type` and `action` fields. There is no `eventType` field and
+no built-in bot filtering: match what you need with filters, and guard
+agent loops by filtering out the agent's own forge user. Schema:
+[`crd-reference.md`](crd-reference.md#trigger).
 
 **CronTrigger.** A time-based trigger: "at this cron schedule, send
 this prompt to this agent". Unlike a webhook `Trigger` it has no
@@ -145,7 +152,8 @@ standards before deploying.
 opened PRs targeting `main`. Doesn't replace human review — catches
 the things humans skim past.
 
-**Trigger:** `pull_request.opened` with `pull_request.base eq "main"`.
+**Trigger:** filters `type eq pull_request`, `action eq opened`,
+`pull_request.base.ref eq main`.
 **Tools:** `forgejo`, `code-review`.
 
 **Persona:**
@@ -201,22 +209,24 @@ spec:
     maxReplicas: 3
     cooldownPeriod: 300
     lagThreshold: 5
----
-apiVersion: ainsel.dev/v1alpha1
-kind: Trigger
-metadata:
-  name: code-reviewer-on-main-prs
-  namespace: ainsel
-spec:
-  displayName: "Code review on PRs targeting main"
-  agentRef: code-reviewer
-  connectorRef: forgejo
-  eventType: "pull_request.opened"
-  ignoreBotEvents: true
-  filters:
-    - field: "pull_request.base"
-      op: eq
-      value: "main"
+```
+
+**Trigger:** created in the console or via `POST /api/v1/triggers` —
+triggers are DB-backed, not CRDs. `connectorRef` is the connector's
+`c-…` id (`GET /api/v1/connectors` lists them); `agentRef` is the
+agent's CR name:
+
+```json
+{
+  "name": "trigger-reviewer-pr-opened",
+  "agentRef": "code-reviewer",
+  "connectorRef": "c-1a2b3c",
+  "filters": [
+    {"field": "type", "op": "eq", "value": "pull_request"},
+    {"field": "action", "op": "eq", "value": "opened"},
+    {"field": "pull_request.base.ref", "op": "eq", "value": "main"}
+  ]
+}
 ```
 
 **What end users see:** A comment on the PR within a minute or two,
@@ -237,7 +247,7 @@ and inline comments on changed lines.
 issue is opened. Prepares the issue for a human; doesn't make
 decisions.
 
-**Trigger:** `issue.opened`. **Tools:** `forgejo`.
+**Trigger:** filters `type eq issues`, `action eq opened`. **Tools:** `forgejo`.
 
 **Persona:**
 
@@ -292,18 +302,20 @@ spec:
     maxReplicas: 2
     cooldownPeriod: 300
     lagThreshold: 5
----
-apiVersion: ainsel.dev/v1alpha1
-kind: Trigger
-metadata:
-  name: issue-triager-on-open
-  namespace: ainsel
-spec:
-  displayName: "Triage newly opened issues"
-  agentRef: issue-triager
-  connectorRef: forgejo
-  eventType: "issue.opened"
-  ignoreBotEvents: true
+```
+
+**Trigger:** via `POST /api/v1/triggers`:
+
+```json
+{
+  "name": "trigger-triager-issue-opened",
+  "agentRef": "issue-triager",
+  "connectorRef": "c-1a2b3c",
+  "filters": [
+    {"field": "type", "op": "eq", "value": "issues"},
+    {"field": "action", "op": "eq", "value": "opened"}
+  ]
+}
 ```
 
 **What end users see:** A triage comment on their issue within a
@@ -324,9 +336,12 @@ follow-up question if information is missing.
 mentions the agent's handle (e.g., `@docs-helper`). Not a chatbot —
 silent unless called.
 
-**Triggers:** `issue.comment.created` and `pull_request.comment.created`
-(two triggers, same agent), each filtered to comments containing
-the handle. **Tools:** `forgejo`.
+**Triggers:** filters `type eq issue_comment`, `action eq created`
+and `type eq pull_request_review_comment`, `action eq created`
+(two triggers, same agent — on GitHub-style forges, plain conversation
+comments on issues *and* PRs both arrive as `issue_comment`; review
+comments are a separate type), each also filtered to comments
+containing the handle. **Tools:** `forgejo`.
 
 **Persona:**
 
@@ -377,38 +392,33 @@ spec:
   scaling:
     minReplicas: 0
     maxReplicas: 2
----
-apiVersion: ainsel.dev/v1alpha1
-kind: Trigger
-metadata:
-  name: docs-helper-on-issue-comments
-  namespace: ainsel
-spec:
-  displayName: "Reply when mentioned in issue comments"
-  agentRef: docs-helper
-  connectorRef: forgejo
-  eventType: "issue.comment.created"
-  ignoreBotEvents: true
-  filters:
-    - field: "comment.body"
-      op: contains
-      value: "@docs-helper"
----
-apiVersion: ainsel.dev/v1alpha1
-kind: Trigger
-metadata:
-  name: docs-helper-on-pr-comments
-  namespace: ainsel
-spec:
-  displayName: "Reply when mentioned in PR comments"
-  agentRef: docs-helper
-  connectorRef: forgejo
-  eventType: "pull_request.comment.created"
-  ignoreBotEvents: true
-  filters:
-    - field: "comment.body"
-      op: contains
-      value: "@docs-helper"
+```
+
+**Triggers:** two `POST /api/v1/triggers` calls:
+
+```json
+[
+  {
+    "name": "trigger-docs-helper-issue-comment",
+    "agentRef": "docs-helper",
+    "connectorRef": "c-1a2b3c",
+    "filters": [
+      {"field": "type", "op": "eq", "value": "issue_comment"},
+      {"field": "action", "op": "eq", "value": "created"},
+      {"field": "comment.body", "op": "contains", "value": "@docs-helper"}
+    ]
+  },
+  {
+    "name": "trigger-docs-helper-review-comment",
+    "agentRef": "docs-helper",
+    "connectorRef": "c-1a2b3c",
+    "filters": [
+      {"field": "type", "op": "eq", "value": "pull_request_review_comment"},
+      {"field": "action", "op": "eq", "value": "created"},
+      {"field": "comment.body", "op": "contains", "value": "@docs-helper"}
+    ]
+  }
+]
 ```
 
 **What end users see:** When they write `@docs-helper how do I run
@@ -430,7 +440,8 @@ within a minute or two. Comments without the handle are ignored.
 agent clones the repo, makes the change, and opens a draft PR back
 for human review. Humans still review and merge.
 
-**Trigger:** `issue.label.added` with `label.name eq "ai-please"`.
+**Trigger:** filters `type eq issues`, `action eq labeled`,
+`label.name eq ai-please`.
 **Tools:** `forgejo`, `git`, `shell`, `test-runner`.
 
 **Persona:**
@@ -503,22 +514,21 @@ spec:
     maxReplicas: 2
     cooldownPeriod: 600
     lagThreshold: 1
----
-apiVersion: ainsel.dev/v1alpha1
-kind: Trigger
-metadata:
-  name: implementer-on-ai-please
-  namespace: ainsel
-spec:
-  displayName: "Implement issues labeled ai-please"
-  agentRef: implementer
-  connectorRef: forgejo
-  eventType: "issue.label.added"
-  ignoreBotEvents: true
-  filters:
-    - field: "label.name"
-      op: eq
-      value: "ai-please"
+```
+
+**Trigger:** via `POST /api/v1/triggers`:
+
+```json
+{
+  "name": "trigger-implementer-label-ai-please",
+  "agentRef": "implementer",
+  "connectorRef": "c-1a2b3c",
+  "filters": [
+    {"field": "type", "op": "eq", "value": "issues"},
+    {"field": "action", "op": "eq", "value": "labeled"},
+    {"field": "label.name", "op": "eq", "value": "ai-please"}
+  ]
+}
 ```
 
 **What end users see:** Within minutes of applying the `ai-please`
@@ -546,23 +556,17 @@ event (connector `cron`) into the `events` table and enqueues the task
 for the trigger's agent directly, so the existing pull-based delivery
 model (and invocation tracking) applies unchanged. There is no connector.
 
-**CronTrigger:**
+**CronTrigger:** DB-backed like webhook triggers — create it in the
+console or via `POST /api/v1/cron-triggers`:
 
-```yaml
-apiVersion: ainsel.dev/v1alpha1
-kind: CronTrigger
-metadata:
-  name: daily-standup-summary
-  namespace: ainsel
-spec:
-  displayName: "Daily standup summary"
-  agentRef: standup-bot
-  schedule: "0 9 * * 1-5"      # 09:00 weekdays
-  prompt: |
-    Summarize all pull requests opened in the last 24h and any issues
-    labelled "stale". Post a short digest as a comment on the team's
-    standup issue (#42).
-  enabled: true
+```json
+{
+  "name": "cron-standup-digest",
+  "agentRef": "standup-bot",
+  "schedule": "0 9 * * 1-5",
+  "prompt": "Summarize all pull requests opened in the last 24h and any issues labelled \"stale\". Post a short digest as a comment on the team's standup issue (#42).",
+  "enabled": true
+}
 ```
 
 The agent (`standup-bot`) must already exist and reference a persona
@@ -577,7 +581,8 @@ comment, unprompted.
 
 - Schedule fires in the **hub's local time**. Confirm the hub pod's
   timezone (default UTC) when picking times.
-- Pausing without deletion → set `spec.enabled: false`.
+- Pausing without deletion → update it with `enabled: false`
+  (console, MCP, or `PUT /api/v1/cron-triggers/{id}`).
 - Backfill missed runs is intentionally not supported — each fire is
   one invocation; if the hub is down during a slot, that slot is
   skipped.
@@ -595,7 +600,7 @@ summary, a sparkline, and a per-agent / per-repo / per-model breakdown
 that the frontend renders as the "Tokens last 24h" tile. So you can *see*
 what's being consumed today.
 
-What is **not yet** wired up (see [`roadmap.md`](roadmap.md)):
+What is **not yet** wired up:
 
 - **Per-agent / per-repo budget enforcement** — no policy pauses an
   agent on budget overrun. *Planned.*
@@ -614,12 +619,13 @@ platform supplements this with:
 
 - **Per-agent tool restrictions** via `Agent.spec.enabledTools` —
   a reviewer without `git` can't push. Use this aggressively.
-- **`ignoreBotEvents: true`** on triggers (default) prevents agent
-  loops.
+- **Bot-loop guards via filters** — triggers fire on every matching
+  event, including agent-authored ones. Filter out the agent's own
+  forge user (e.g. `sender.login neq <bot-user>`) to prevent loops.
 - **Filter operators** on triggers scope by repo, branch, label,
   comment body, etc.
 
-Not yet platform-enforced (see [`roadmap.md`](roadmap.md)):
+Not yet platform-enforced:
 **rate limiting per agent/repo** (*Planned*);
 **approval workflows for destructive actions** (*Planned*).
 
@@ -642,10 +648,10 @@ span a rollout.
 
 Three escalating options, fastest to most thorough:
 
-1. **Disable the trigger.** Delete the `Trigger` CRD (or set its
-   `eventType` to a value that never matches), and/or set any
-   `CronTrigger` referencing the agent to `spec.enabled: false`.
-   Reversible; in-flight invocations finish.
+1. **Disable the trigger.** Delete the trigger (console, MCP, or
+   `DELETE /api/v1/triggers/{id}`), or update its filters to something
+   that never matches, and/or disable any cron trigger referencing the
+   agent (`enabled: false`). Reversible; in-flight invocations finish.
 2. **Scale to zero.** Set `Agent.spec.scaling.maxReplicas: 0`. KEDA
    scales the Deployment to zero; events queue in the event queue until you
    scale back up.
@@ -714,4 +720,3 @@ authentication, the complete tool reference, and example conversations.
 - [`adding-memory.md`](adding-memory.md) — give agents persistent memory
   with the self-hosted mem0 REST API.
 - [`architecture.md`](architecture.md) — technical deep-dive.
-- [`roadmap.md`](roadmap.md) — what's wired up today vs. planned.
