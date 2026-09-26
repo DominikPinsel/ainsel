@@ -24,10 +24,16 @@ type SimpleTriggerResponse struct {
 }
 
 // TriggerFilterInfo is a simplified representation of a filter condition.
+//
+// Values carries the operand list for the set operators (`in`, `not-in`); the
+// filter engine in shared/api matches against it and never against Value. Both
+// fields must be carried across the API boundary — dropping Values stores an
+// empty list, which makes the filter unable to ever match, without any error.
 type TriggerFilterInfo struct {
-	Field string `json:"field"`
-	Op    string `json:"op"`
-	Value string `json:"value"`
+	Field  string   `json:"field"`
+	Op     string   `json:"op"`
+	Value  string   `json:"value"`
+	Values []string `json:"values,omitempty"`
 }
 
 // SimpleTriggerStatus summarises the validation conditions of a Trigger.
@@ -63,9 +69,10 @@ func toSimpleTriggerResponse(t *triggers.Trigger) SimpleTriggerResponse {
 
 	for _, f := range t.Filters {
 		resp.Filters = append(resp.Filters, TriggerFilterInfo{
-			Field: f.Field,
-			Op:    f.Op,
-			Value: f.Value,
+			Field:  f.Field,
+			Op:     f.Op,
+			Value:  f.Value,
+			Values: f.Values,
 		})
 	}
 
@@ -229,9 +236,10 @@ func (s *Server) createTrigger(ctx context.Context, w http.ResponseWriter, r *ht
 	filters := make([]ainselapishared.Filter, 0, len(req.Filters))
 	for _, f := range req.Filters {
 		filters = append(filters, ainselapishared.Filter{
-			Field: f.Field,
-			Op:    f.Op,
-			Value: f.Value,
+			Field:  f.Field,
+			Op:     f.Op,
+			Value:  f.Value,
+			Values: f.Values,
 		})
 	}
 
@@ -291,9 +299,10 @@ func (s *Server) updateTrigger(ctx context.Context, w http.ResponseWriter, r *ht
 		fl := make([]ainselapishared.Filter, 0, len(req.Filters))
 		for _, f := range req.Filters {
 			fl = append(fl, ainselapishared.Filter{
-				Field: f.Field,
-				Op:    f.Op,
-				Value: f.Value,
+				Field:  f.Field,
+				Op:     f.Op,
+				Value:  f.Value,
+				Values: f.Values,
 			})
 		}
 		filters = &fl
