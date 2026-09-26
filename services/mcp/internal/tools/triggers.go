@@ -48,10 +48,14 @@ func (t *TriggerTools) DeleteTriggerTool() mcp.Tool {
 	)
 }
 
+// triggerFilter mirrors the hub's filter shape. Values carries the operand list
+// for the set operators (in, not-in); omitting it would drop those values on the
+// way to the hub and leave a filter that can never match.
 type triggerFilter struct {
-	Field string `json:"field"`
-	Op    string `json:"op"`
-	Value string `json:"value"`
+	Field  string   `json:"field"`
+	Op     string   `json:"op"`
+	Value  string   `json:"value"`
+	Values []string `json:"values,omitempty"`
 }
 
 func (t *TriggerTools) CreateTriggerTool() mcp.Tool {
@@ -60,7 +64,7 @@ func (t *TriggerTools) CreateTriggerTool() mcp.Tool {
 		mcp.WithString("name", mcp.Required(), mcp.Description("Display name for the trigger")),
 		mcp.WithString("agentRef", mcp.Required(), mcp.Description("Agent reference")),
 		mcp.WithString("connectorRef", mcp.Required(), mcp.Description("Connector reference")),
-		mcp.WithString("filters", mcp.Description("Optional JSON array of filter objects with field, op, and value")),
+		mcp.WithString("filters", mcp.Description("Optional JSON array of filter objects with field, op, and value. Set operators (in, not-in) take a values array instead of value, e.g. {\"field\":\"action\",\"op\":\"in\",\"values\":[\"opened\",\"reopened\"]}.")),
 		mcp.WithString("groupId", mcp.Description("Group to assign the trigger to; must be a group the caller has write access to. Required on hubs with access control enabled.")),
 	)
 }
@@ -72,7 +76,7 @@ func (t *TriggerTools) UpdateTriggerTool() mcp.Tool {
 		mcp.WithString("displayName", mcp.Description("New display name for the trigger")),
 		mcp.WithString("agentRef", mcp.Description("New agent reference")),
 		mcp.WithString("connectorRef", mcp.Description("New connector reference")),
-		mcp.WithString("filters", mcp.Description("Optional JSON array of filter objects with field, op, and value. Pass empty array [] to clear filters.")),
+		mcp.WithString("filters", mcp.Description("Optional JSON array of filter objects with field, op, and value. Set operators (in, not-in) take a values array instead of value. Pass empty array [] to clear filters.")),
 	)
 }
 
