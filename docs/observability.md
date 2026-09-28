@@ -66,6 +66,17 @@ filter that is quietly too narrow.*
 
 The event detail view lists each invocation matched to that event with its agent, trigger, status, duration, and total token usage. Below that it renders the full agent conversation transcript for the invocation: the user prompt, assistant thinking and text, tool calls, and tool results. These messages are served by [`GET /api/v1/observability/conversations`](api-reference.md).
 
+![The event detail view for a matched pull_request.opened event: event id,
+connector and MATCH status across the top, the agents whose triggers matched,
+the channel journey from connector to agent delivery, the invocation table
+with agent, trigger, status, duration and token total, and beneath it the
+recorded conversation opening with the event envelope rendered verbatim as
+the agent's prompt](images/event-detail.webp)
+
+*One event, end to end: routing decision, channel journey, invocation
+outcome, and the exact prompt the agent received. (Source-identifying
+fields redacted.)*
+
 Transcripts are populated by the agent runtime, which reports its messages back to the hub when a task completes. If an invocation has no reported messages, the event detail view says so explicitly rather than rendering an empty transcript.
 
 ## Metrics
