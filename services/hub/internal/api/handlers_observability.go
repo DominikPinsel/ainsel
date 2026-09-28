@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	agentv1alpha1 "github.com/DominikPinsel/ainsel/shared/api/api/v1alpha1"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/prometheus"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/tasklogs"
+	agentv1alpha1 "github.com/DominikPinsel/ainsel/shared/api/api/v1alpha1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -210,6 +210,12 @@ func (s *Server) handleObservability(w http.ResponseWriter, r *http.Request) {
 // and forwards the request directly to Prometheus, returning the unmodified JSON
 // response. This allows MCP tools and power users to run freeform PromQL without
 // needing a direct Prometheus connection.
+//
+// Restricted to admins: this is an operator escape hatch, not a dashboard
+// input — the UI reads the structured summary/timeseries/agents endpoints,
+// which build their own namespace-scoped PromQL. Handing every authenticated
+// user a raw Prometheus proxy let them read metrics from outside the AInsel
+// namespace and submit arbitrarily expensive expressions.
 func (s *Server) handleObservabilityMetricsQuery(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -219,14 +225,23 @@ func (s *Server) handleObservabilityMetricsQuery(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusServiceUnavailable, "metrics backend not configured")
 		return
 	}
+	// With no authz wired there is no notion of admin and the whole API is open
+	// by design, so the check passes through exactly as requireRead does.
+	// requireAdmin alone would fail closed here and break local development.
+	if s.authzChecker != nil && !s.requireAdmin(w, r) {
+		return
+	}
 	query := r.URL.Query().Get("query")
 	if query == "" {
 		writeError(w, http.StatusBadRequest, "query is required")
 		return
 	}
-	// Enforce namespace scoping: the query must contain a namespace label
-	// matcher for the AInsel namespace to prevent cross-namespace metric
-	// disclosure.
+	// Namespace scoping, kept as defence in depth now that the endpoint is
+	// admin-only. Note this is a substring heuristic, not a PromQL parse: it
+	// confirms the query mentions the namespace somewhere, which an expression
+	// like `up{namespace="ainsel"} or up` satisfies while still selecting
+	// unscoped series. It is adequate as a backstop against an admin typo, and
+	// must not be relied on as the access control.
 	ns := s.ns
 	if !containsNamespaceMatcher(query, ns) {
 		writeError(w, http.StatusBadRequest,
@@ -245,6 +260,11 @@ func (s *Server) handleObservabilityMetricsQuery(w http.ResponseWriter, r *http.
 // containsNamespaceMatcher checks whether a PromQL query contains a namespace
 // label matcher for the given namespace. It looks for both namespace="<ns>"
 // and namespace=~"<ns>" patterns.
+//
+// This is a substring heuristic: it does not parse the expression, so a query
+// that mentions the matcher anywhere passes even when other parts of it select
+// unscoped series. See handleObservabilityMetricsQuery, which no longer relies
+// on it as the sole control.
 func containsNamespaceMatcher(query, ns string) bool {
 	sanitized := sanitizeLabelValue(ns)
 	return strings.Contains(query, fmt.Sprintf("namespace=%q", sanitized)) ||

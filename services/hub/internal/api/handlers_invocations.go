@@ -38,7 +38,7 @@ func taskStateFromTask(task eventqueue.Task) *invocations.TaskState {
 // each invocation by ID, and appends synthetic invocation records for tasks
 // whose invocation is missing from the in-memory store (pre-restart history
 // or tasks still waiting in the queue).
-func (s *Server) enrichWithTasks(r *http.Request, list []invocations.Invocation, total int, eventID string) ([]invocations.Invocation, int) {
+func (s *Server) enrichWithTasks(r *http.Request, scope telemetryScope, list []invocations.Invocation, total int, eventID string) ([]invocations.Invocation, int) {
 	tasks, err := s.eventQueue.TasksForEvents(r.Context(), []string{eventID})
 	if err != nil {
 		// Queue state is best-effort enrichment; never fail the endpoint
@@ -66,6 +66,13 @@ func (s *Server) enrichWithTasks(r *http.Request, list []invocations.Invocation,
 	for i := len(tasks) - 1; i >= 0; i-- {
 		t := tasks[i]
 		if t.InvocationID == "" || known[t.InvocationID] {
+			continue
+		}
+		// Synthesized entries come straight from agent_tasks and never passed
+		// through the scoped store query, so they need the same check here —
+		// otherwise ?event=<id> would reintroduce every agent the caller
+		// cannot read.
+		if !scope.allowsAgent(t.AgentName) {
 			continue
 		}
 		known[t.InvocationID] = true
@@ -110,7 +117,7 @@ func (s *Server) handleInvocation(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		s.getInvocation(w, id)
+		s.getInvocation(w, r, id)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
@@ -134,6 +141,29 @@ func (s *Server) listInvocations(w http.ResponseWriter, r *http.Request) {
 		Status:      q.Get("status"),
 		TriggerName: q.Get("trigger"),
 		EventID:     q.Get("event"),
+	}
+
+	// An invocation belongs to the agent that ran it. Naming one requires read
+	// access to that agent; an unfiltered query is restricted to the agents the
+	// caller may read. The other filters narrow within that scope.
+	scope := s.telemetryScopeFor(r)
+	if opts.AgentName != "" {
+		if !s.requireRead(w, r, "agent", opts.AgentName) {
+			return
+		}
+	} else if !scope.unrestricted {
+		if len(scope.agents) == 0 {
+			writeJSON(w, http.StatusOK, map[string]interface{}{
+				"invocations": []invocations.Invocation{},
+				"total":       0,
+				"capacity":    s.invocations.Capacity(),
+				"page":        page.Page,
+				"pageSize":    page.PageSize,
+				"totalPages":  0,
+			})
+			return
+		}
+		opts.AgentNames = scope.agents
 	}
 	if v := q.Get("since"); v != "" {
 		if t, err := time.Parse(time.RFC3339, v); err == nil {
@@ -162,7 +192,7 @@ func (s *Server) listInvocations(w http.ResponseWriter, r *http.Request) {
 	// records, but agent_tasks persists. This keeps the event detail page
 	// meaningful for older events and for tasks that are still queued.
 	if opts.EventID != "" && s.eventQueue != nil {
-		list, total = s.enrichWithTasks(r, list, total, opts.EventID)
+		list, total = s.enrichWithTasks(r, scope, list, total, opts.EventID)
 	}
 	lo, hi := page.Slice(len(list))
 	pageItems := list[lo:hi]
@@ -179,7 +209,7 @@ func (s *Server) listInvocations(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) getInvocation(w http.ResponseWriter, id string) {
+func (s *Server) getInvocation(w http.ResponseWriter, r *http.Request, id string) {
 	if s.invocations == nil {
 		writeError(w, http.StatusServiceUnavailable, "invocation history not configured")
 		return
@@ -187,6 +217,16 @@ func (s *Server) getInvocation(w http.ResponseWriter, id string) {
 	inv, ok := s.invocations.Get(id)
 	if !ok {
 		writeError(w, http.StatusNotFound, "invocation not found")
+		return
+	}
+	// A record with no agent cannot be attributed to any resource, so only an
+	// unrestricted caller may see it.
+	if inv.AgentName == "" {
+		if scope := s.telemetryScopeFor(r); !scope.unrestricted {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+	} else if !s.requireRead(w, r, "agent", inv.AgentName) {
 		return
 	}
 	writeJSON(w, http.StatusOK, inv)

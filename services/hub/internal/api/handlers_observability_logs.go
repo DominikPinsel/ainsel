@@ -84,6 +84,26 @@ func (s *Server) handleObservabilityLogs(w http.ResponseWriter, r *http.Request)
 		Limit:     limit,
 	}
 
+	// Task logs are conversation content rather than aggregate telemetry: they
+	// carry whatever the agent and the user actually said. Without a scope any
+	// authenticated caller could read every tenant's raw logs, whether or not
+	// they named an agent.
+	if opts.AgentName != "" {
+		if !s.requireRead(w, r, "agent", opts.AgentName) {
+			return
+		}
+	} else if scope := s.telemetryScopeFor(r); !scope.unrestricted {
+		if len(scope.agents) == 0 {
+			writeJSON(w, http.StatusOK, LogsResponse{
+				Logs:  []LogLine{},
+				Total: 0,
+				Query: "task_logs",
+			})
+			return
+		}
+		opts.AgentNames = scope.agents
+	}
+
 	entries, err := s.taskLogs.List(r.Context(), opts)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "failed to query logs: "+err.Error())

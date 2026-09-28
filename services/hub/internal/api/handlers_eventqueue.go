@@ -304,6 +304,19 @@ func (s *Server) handleQueueRecent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to get recent events")
 		return
 	}
+
+	// Recent events carry the raw webhook payload just like /api/v1/events, so
+	// they get the same scope. An explicit ?connector= the caller cannot read
+	// yields an empty list rather than a 403, so the parameter cannot be used
+	// to probe which connectors exist.
+	if scope := s.telemetryScopeFor(r); !scope.unrestricted {
+		if connector != "" && !scope.allowsConnector(connector) {
+			writeJSON(w, http.StatusOK, []eventqueue.Event{})
+			return
+		}
+		events = s.filterEventsByScope(r, scope, events)
+	}
+
 	if events == nil {
 		events = []eventqueue.Event{}
 	}
