@@ -9,19 +9,29 @@ import (
 )
 
 // TokenEntry represents token consumption for one agent + repo + issue + model combination.
+//
+// The runtime publishes prompt-cache traffic as its own token_type series, and
+// pi's usage.input excludes it, so the cache components are reported alongside
+// input/output rather than folded into them.
 type TokenEntry struct {
-	Agent        string  `json:"agent"`
-	Repository   string  `json:"repository"`
-	IssueNumber  string  `json:"issueNumber"`
-	Model        string  `json:"model"`
-	InputTokens  float64 `json:"inputTokens"`
-	OutputTokens float64 `json:"outputTokens"`
+	Agent            string  `json:"agent"`
+	Repository       string  `json:"repository"`
+	IssueNumber      string  `json:"issueNumber"`
+	Model            string  `json:"model"`
+	InputTokens      float64 `json:"inputTokens"`
+	OutputTokens     float64 `json:"outputTokens"`
+	CacheReadTokens  float64 `json:"cacheReadTokens"`
+	CacheWriteTokens float64 `json:"cacheWriteTokens"`
+	TotalTokens      float64 `json:"totalTokens"`
 }
 
 // TokenTotals holds aggregate token counts.
 type TokenTotals struct {
-	InputTokens  float64 `json:"inputTokens"`
-	OutputTokens float64 `json:"outputTokens"`
+	InputTokens      float64 `json:"inputTokens"`
+	OutputTokens     float64 `json:"outputTokens"`
+	CacheReadTokens  float64 `json:"cacheReadTokens"`
+	CacheWriteTokens float64 `json:"cacheWriteTokens"`
+	TotalTokens      float64 `json:"totalTokens"`
 }
 
 func (s *Server) handleTokens(w http.ResponseWriter, r *http.Request) {
@@ -72,7 +82,7 @@ func (s *Server) listTokens(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Merge input/output rows into TokenEntry objects.
+	// Merge the per-token_type rows into TokenEntry objects.
 	// Key: agent|repo|issue_id|model
 	type entryKey struct {
 		Agent       string
@@ -100,20 +110,28 @@ func (s *Server) listTokens(w http.ResponseWriter, r *http.Request) {
 			merged[key] = entry
 		}
 		switch m.Labels["token_type"] {
-		case "input":
-			entry.InputTokens = m.Value
-		case "output":
-			entry.OutputTokens = m.Value
+		case tokenTypeInput:
+			entry.InputTokens += m.Value
+		case tokenTypeOutput:
+			entry.OutputTokens += m.Value
+		case tokenTypeCacheRead:
+			entry.CacheReadTokens += m.Value
+		case tokenTypeCacheWrite:
+			entry.CacheWriteTokens += m.Value
 		}
 	}
 
 	tokens := make([]TokenEntry, 0, len(merged))
 	var totals TokenTotals
 	for _, entry := range merged {
+		entry.TotalTokens = tokenTotal(entry.InputTokens, entry.OutputTokens, entry.CacheReadTokens, entry.CacheWriteTokens)
 		tokens = append(tokens, *entry)
 		totals.InputTokens += entry.InputTokens
 		totals.OutputTokens += entry.OutputTokens
+		totals.CacheReadTokens += entry.CacheReadTokens
+		totals.CacheWriteTokens += entry.CacheWriteTokens
 	}
+	totals.TotalTokens = tokenTotal(totals.InputTokens, totals.OutputTokens, totals.CacheReadTokens, totals.CacheWriteTokens)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"tokens": tokens,

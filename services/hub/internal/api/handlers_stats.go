@@ -109,18 +109,30 @@ func (s *Server) GetStats(ctx context.Context) Stats {
 		}
 	}
 
-	// Token totals — query Prometheus
+	// Token totals — query Prometheus. The runtime publishes prompt-cache
+	// traffic as its own token_type series and pi's usage.input excludes it, so
+	// all four components are read and summed.
 	if s.prom != nil {
 		result, err := s.prom.Query(ctx, `sum by (token_type) (agent_tokens_used_total)`)
 		if err == nil {
 			for _, m := range result.Data {
 				switch m.Labels["token_type"] {
-				case "input":
-					stats.Tokens.InputTokens = m.Value
-				case "output":
-					stats.Tokens.OutputTokens = m.Value
+				case tokenTypeInput:
+					stats.Tokens.InputTokens += m.Value
+				case tokenTypeOutput:
+					stats.Tokens.OutputTokens += m.Value
+				case tokenTypeCacheRead:
+					stats.Tokens.CacheReadTokens += m.Value
+				case tokenTypeCacheWrite:
+					stats.Tokens.CacheWriteTokens += m.Value
 				}
 			}
+			stats.Tokens.TotalTokens = tokenTotal(
+				stats.Tokens.InputTokens,
+				stats.Tokens.OutputTokens,
+				stats.Tokens.CacheReadTokens,
+				stats.Tokens.CacheWriteTokens,
+			)
 		} else {
 			slog.Warn("prometheus token query failed", "error", err)
 		}

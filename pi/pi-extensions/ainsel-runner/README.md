@@ -90,6 +90,18 @@ The runner exports Prometheus metrics on `:9090/metrics`:
 |--------|------|--------|-------------|
 | `agent_tokens_used_total` | Counter | `agent`, `repo`, `org`, `event_type`, `token_type`, `model` | Total tokens consumed by the agent |
 
+`token_type` is one of `input`, `output`, `cache_read`, `cache_write`. Pi reports
+prompt-cache traffic separately from billable input — `usage.input` excludes it and
+`usage.totalTokens` is the sum of all four — so each component gets its own series.
+Summing only `input` and `output` under-reports what the model actually processed by
+the whole cached volume, which in an agent loop is usually the large majority of the
+prompt.
+
+Components that are zero or absent are not published, so a provider without prompt
+caching produces no `cache_read` / `cache_write` series at all. Treat a missing series
+as zero, and use `cache_read / (input + cache_read + cache_write)` as the cache hit
+rate when checking whether prompt caching is actually working.
+
 ## Why an extension, not a separate Node process
 
 Pi already provides:

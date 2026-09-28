@@ -36,12 +36,15 @@ func TestTokensSummary_ReturnsCurrentAndPriorWindowTotals(t *testing.T) {
 	srv := fakePromServer(t, func(path string, params url.Values) interface{} {
 		q := params.Get("query")
 		switch {
-		case strings.Contains(q, `token_type="input"`):
-			return vectorResponse([]vectorSample{{Labels: map[string]string{}, Value: "1500"}})
-		case strings.Contains(q, `token_type="output"`):
-			return vectorResponse([]vectorSample{{Labels: map[string]string{}, Value: "300"}})
 		case strings.Contains(q, "offset 24h"):
 			return vectorResponse([]vectorSample{{Labels: map[string]string{}, Value: "1200"}})
+		case strings.Contains(q, "sum by (token_type)"):
+			return vectorResponse([]vectorSample{
+				{Labels: map[string]string{"token_type": "input"}, Value: "1500"},
+				{Labels: map[string]string{"token_type": "output"}, Value: "300"},
+				{Labels: map[string]string{"token_type": "cache_read"}, Value: "9000"},
+				{Labels: map[string]string{"token_type": "cache_write"}, Value: "700"},
+			})
 		}
 		t.Fatalf("unexpected query: %s", q)
 		return nil
@@ -61,8 +64,16 @@ func TestTokensSummary_ReturnsCurrentAndPriorWindowTotals(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if body.InputTokens != 1500 || body.OutputTokens != 300 || body.TotalTokens != 1800 {
-		t.Errorf("token totals wrong: %+v", body)
+	if body.InputTokens != 1500 || body.OutputTokens != 300 {
+		t.Errorf("input/output wrong: %+v", body)
+	}
+	if body.CacheReadTokens != 9000 || body.CacheWriteTokens != 700 {
+		t.Errorf("cache components wrong: %+v", body)
+	}
+	// The total must include cache traffic. Pi's usage.input excludes it, so
+	// input+output alone (1800) would under-report the 11500 actually used.
+	if body.TotalTokens != 11500 {
+		t.Errorf("total must include cache components, got %v", body.TotalTokens)
 	}
 	if body.PreviousTotalTokens != 1200 {
 		t.Errorf("previous total wrong: %v", body.PreviousTotalTokens)
@@ -93,6 +104,9 @@ func TestTokensSummary_HandlesEmptyResults(t *testing.T) {
 	}
 	if body.InputTokens != 0 || body.OutputTokens != 0 || body.TotalTokens != 0 || body.PreviousTotalTokens != 0 {
 		t.Errorf("expected zeros, got %+v", body)
+	}
+	if body.CacheReadTokens != 0 || body.CacheWriteTokens != 0 {
+		t.Errorf("expected zero cache components, got %+v", body)
 	}
 }
 
@@ -261,8 +275,10 @@ func TestTokensBySubject_AggregatesRows(t *testing.T) {
 			return vectorResponse([]vectorSample{
 				{Labels: map[string]string{"agent": "developer", "repo": "frontend", "event_type": "pull_request.opened", "model": "gpt-4", "token_type": "input"}, Value: "10000"},
 				{Labels: map[string]string{"agent": "developer", "repo": "frontend", "event_type": "pull_request.opened", "model": "gpt-4", "token_type": "output"}, Value: "2000"},
+				{Labels: map[string]string{"agent": "developer", "repo": "frontend", "event_type": "pull_request.opened", "model": "gpt-4", "token_type": "cache_read"}, Value: "60000"},
 				{Labels: map[string]string{"agent": "architect", "repo": "backend", "event_type": "issue.assigned", "model": "claude-3", "token_type": "input"}, Value: "5000"},
 				{Labels: map[string]string{"agent": "architect", "repo": "backend", "event_type": "issue.assigned", "model": "claude-3", "token_type": "output"}, Value: "1500"},
+				{Labels: map[string]string{"agent": "architect", "repo": "backend", "event_type": "issue.assigned", "model": "claude-3", "token_type": "cache_write"}, Value: "2500"},
 			})
 		}
 		t.Fatalf("unexpected query: %s", q)
@@ -309,8 +325,14 @@ func TestTokensBySubject_AggregatesRows(t *testing.T) {
 	if architect.AgentName != "Architect Bot" {
 		t.Errorf("architect agentName wrong: got %q", architect.AgentName)
 	}
-	if architect.InputTokens != 5000 || architect.OutputTokens != 1500 || architect.TotalTokens != 6500 {
-		t.Errorf("architect tokens wrong: %+v", architect)
+	if architect.InputTokens != 5000 || architect.OutputTokens != 1500 {
+		t.Errorf("architect input/output wrong: %+v", architect)
+	}
+	if architect.CacheWriteTokens != 2500 || architect.CacheReadTokens != 0 {
+		t.Errorf("architect cache components wrong: %+v", architect)
+	}
+	if architect.TotalTokens != 9000 {
+		t.Errorf("architect total must include cache_write, got %v", architect.TotalTokens)
 	}
 	if developer.Agent != "developer" || developer.EventType != "pull_request.opened" || developer.Model != "gpt-4" {
 		t.Errorf("developer row mislabeled: %+v", developer)
@@ -318,8 +340,30 @@ func TestTokensBySubject_AggregatesRows(t *testing.T) {
 	if developer.AgentName != "Developer Bot" {
 		t.Errorf("developer agentName wrong: got %q", developer.AgentName)
 	}
-	if developer.InputTokens != 10000 || developer.OutputTokens != 2000 || developer.TotalTokens != 12000 {
-		t.Errorf("developer tokens wrong: %+v", developer)
+	if developer.InputTokens != 10000 || developer.OutputTokens != 2000 {
+		t.Errorf("developer input/output wrong: %+v", developer)
+	}
+	if developer.CacheReadTokens != 60000 || developer.CacheWriteTokens != 0 {
+		t.Errorf("developer cache components wrong: %+v", developer)
+	}
+	if developer.TotalTokens != 72000 {
+		t.Errorf("developer total must include cache_read, got %v", developer.TotalTokens)
+	}
+}
+
+// TestTokenTotal_IncludesEveryComponent locks the accounting rule: pi reports
+// usage.input excluding cache traffic, so a total that drops the cache
+// components under-reports consumption by the whole cached volume.
+func TestTokenTotal_IncludesEveryComponent(t *testing.T) {
+	if got := tokenTotal(1, 2, 3, 4); got != 10 {
+		t.Errorf("tokenTotal(1,2,3,4) = %v, want 10", got)
+	}
+	if got := tokenTotal(5, 5, 0, 0); got != 10 {
+		t.Errorf("tokenTotal with no cache = %v, want 10", got)
+	}
+	// A pure cache hit has no billable input but is still real consumption.
+	if got := tokenTotal(0, 0, 500, 0); got != 500 {
+		t.Errorf("tokenTotal for cache-only message = %v, want 500", got)
 	}
 }
 
@@ -445,9 +489,10 @@ func TestTokensSummary_Caches(t *testing.T) {
 			t.Fatalf("call %d: expected 200, got %d", i, rec.Code)
 		}
 	}
-	// 3 queries on the first call (input + output + prior); none thereafter.
-	if got := calls.Load(); got != 3 {
-		t.Errorf("expected 3 prometheus calls (cached after first), got %d", got)
+	// 2 queries on the first call (all token types in one grouped query, plus
+	// the prior window); none thereafter.
+	if got := calls.Load(); got != 2 {
+		t.Errorf("expected 2 prometheus calls (cached after first), got %d", got)
 	}
 }
 
