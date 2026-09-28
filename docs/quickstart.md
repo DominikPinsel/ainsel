@@ -41,6 +41,12 @@ Under **Agents**, the sidebar also lists up to five shortcuts: the agents you la
 
 5. **Create an agent** — **Fleet → Agents → New Agent** walks you through five steps: identity and group, runtime image, model and provider, persona, then a review of what will be created. Each step validates on its own, so nothing is submitted half-filled.
 
+   ![The New Agent wizard on its Identity step: name and description fields,
+   a group selector, and the five-step rail — Identity, Runtime, Model,
+   Persona, Review](images/agent-wizard.webp)
+
+   *The wizard's first step: identity and group.*
+
 6. **Tune the agent** — After creation, the agent's detail tabs hold what belongs to that agent alone: **Persona** (fork an agent-owned copy of a shared template), **Runtime** (switch image, override environment variables), **Tools** (tool selection and MCP servers) and **Skills**. Overrides start out inherited from the image; the first change pins them to the agent.
 
 7. **Add triggers** — Decide when the agent fires from its **Triggers** and **Schedule** tabs.

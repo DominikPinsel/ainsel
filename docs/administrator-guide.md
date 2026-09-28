@@ -90,6 +90,13 @@ editing the registry never rewrites running agents. The bundled MCP server
 today is configured as a generic MCP server in the frontend; you can
 register more.
 
+![The MCP servers registry: a table of registered servers with name, URL,
+token environment variable and last-updated age — a forge MCP server, the
+GitHub MCP endpoint and a mem0 memory server](images/mcp-registry.webp)
+
+*The registry behind the Tools tab — every MCP server an agent can opt
+into. (In-cluster URLs redacted.)*
+
 > **Removed:** `Agent.spec.enabledMCPs`, the older list of in-cluster
 > `mcp-<name>` Service names. For one release beforehand the operator
 > converted it into an equivalent `spec.mcp` snapshot on reconcile, folding in
@@ -607,6 +614,15 @@ to Prometheus. The hub's observability endpoints expose a 24h
 summary, a sparkline, and a per-agent / per-repo / per-model breakdown
 that the frontend renders as the "Tokens last 24h" tile. So you can *see*
 what's being consumed today.
+
+![The Token Detail page: all-time total and 24-hour input/output tiles above
+a by-agent table breaking usage down per repo/event, agent and model, with
+input, output, I/O ratio and total columns and a per-row link to the
+underlying events](images/token-detail.webp)
+
+*The full token view behind the dashboard tile — per-agent, per-model,
+per-event-type spend, with the I/O ratio that spots context-heavy agents
+at a glance. (Private repo names redacted.)*
 
 What is **not yet** wired up:
 
