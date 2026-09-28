@@ -85,14 +85,35 @@ function parseHeadings(md: string): TocEntry[] {
   return entries
 }
 
-// Rewrite relative .md links in markdown source to in-app /docs/<slug> routes.
+// Rewrite relative references in markdown source so they resolve inside the
+// app rather than against the repository layout. Two kinds:
+//
+//   links  [text](slug.md)   -> in-app route /docs/<slug>
+//   images ![alt](path)      -> DOCS_BASE + path
+//
+// Images need the base prefix because the docs are served as static assets
+// under <base>/docs/ (see repoDocsPlugin in vite.config.ts), and the base
+// differs per deployment: `/ainsel/` on GitHub Pages, `/ainsel-dev/` in-app.
+// A root-absolute `/docs/...` would 404 under both.
+//
+// The leading `!` is what separates the two — it can only appear immediately
+// before the `[`, so link text ending in "!" is not mistaken for an image.
 function rewriteDocLinks(md: string): string {
-  return md.replace(/\]\(([^)]+)\)/g, (match, href: string) => {
-    // Leave external, mailto, and anchor-only links untouched
-    if (/^(https?:|mailto:|#)/.test(href)) return match
-    // Leave links pointing outside the docs/ directory (../…) untouched —
-    // they reference repo files that have no in-app route.
+  return md.replace(/(!)?\[([^\]]*)\]\(([^)]+)\)/g, (match, bang: string | undefined, text: string, href: string) => {
+    // Leave external, mailto, anchor-only and data URIs untouched.
+    if (/^(https?:|mailto:|#|data:)/.test(href)) return match
+    // Leave references pointing outside the docs/ directory (../…) untouched —
+    // they reference repo files that have no in-app route or served asset.
     if (/^\.\.\//.test(href)) return match
+
+    if (bang) {
+      const stripped = href
+        .replace(/^\.\//, '')
+        .replace(/^docs\//, '')
+        .replace(/^\//, '')
+      return `![${text}](${DOCS_BASE}${stripped})`
+    }
+
     // Split off any in-page anchor (#fragment) so it survives the rewrite.
     const [path, anchor] = href.split('#')
     const stripped = path
@@ -101,7 +122,7 @@ function rewriteDocLinks(md: string): string {
       .replace(/^\//, '')
       .replace(/\.md$/, '')
     const route = `/docs/${stripped}`
-    return `](${route}${anchor ? `#${anchor}` : ''})`
+    return `[${text}](${route}${anchor ? `#${anchor}` : ''})`
   })
 }
 

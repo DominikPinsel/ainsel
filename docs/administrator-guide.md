@@ -102,6 +102,14 @@ register more.
 
 Six steps from a fresh cluster to a working agent.
 
+![The operations console after the journey below is complete: 8 active agents,
+4 platform connectors, 28 routing rules and no recent errors, with the
+connector table showing each webhook endpoint as Ready, a 24-hour throughput
+chart, and a live activity feed](images/dashboard-overview.webp)
+
+*Where the six steps land — the console reports agent, connector and trigger
+state as the operators reconcile it.*
+
 1. **Deploy AInsel itself.** Follow [`deployment.md`](deployment.md) to
    install the chart. By the end of this step you have the operators,
    hub, gateway, and frontend running, but no agents and no triggers
@@ -614,7 +622,19 @@ misbehaves, scale it to zero (below) while you fix the persona.
 ### Quality guardrails
 
 Mostly persona-driven today: refusal patterns ("never close
-issues"), output-format constraints, blast-radius limits. The
+issues"), output-format constraints, blast-radius limits.
+
+![The agent detail view for agent-reviewer-gh, showing its model and image, a
+runtime status of Ready with configured replicas and containers, and the
+persona-reviewer shared template rendered alongside its Scope Constraint
+section](images/agent-persona.webp)
+
+*A reviewer agent's guardrails, in the console. The persona's scope
+constraints — review the diff only, never propose rewrites of unchanged code,
+never open issues or apply labels — are the guardrail, and they are versioned
+with the persona rather than living in someone's head.*
+
+The
 platform supplements this with:
 
 - **Per-agent tool restrictions** via `Agent.spec.enabledTools` —

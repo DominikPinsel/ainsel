@@ -55,6 +55,15 @@ Replace `<namespace>` with the Kubernetes namespace where ainsel is deployed.
 
 Activity events (see [`GET /api/v1/events`](api-reference.md)) are the entry point for tracing what happened for a given event. From the **Activity** page or **Observability → Events**, every event row shows an always-visible `open →` link (and a **View full event** link when the row is expanded). Either opens the event detail view at `/observability/events/<id>`.
 
+![The Activity stream listing 16,921 events, with filters for free-text search,
+status, outcome, connector and agent above a table of when, connector, trigger,
+agent and status — each row resolving to either MATCH, where the event routed
+to an agent, or SKIP, where no trigger matched](images/activity-stream.webp)
+
+*Every event the platform has seen, and the routing decision made for it.
+`SKIP` rows are as useful as `MATCH` ones: they are how you find a trigger
+filter that is quietly too narrow.*
+
 The event detail view lists each invocation matched to that event with its agent, trigger, status, duration, and total token usage. Below that it renders the full agent conversation transcript for the invocation: the user prompt, assistant thinking and text, tool calls, and tool results. These messages are served by [`GET /api/v1/observability/conversations`](api-reference.md).
 
 Transcripts are populated by the agent runtime, which reports its messages back to the hub when a task completes. If an invocation has no reported messages, the event detail view says so explicitly rather than rendering an empty transcript.
