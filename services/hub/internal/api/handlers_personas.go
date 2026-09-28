@@ -312,6 +312,9 @@ func (h *personaHandlers) itemVersions(w http.ResponseWriter, r *http.Request, i
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	if !h.requireRead(w, r, id) {
+		return
+	}
 	page, err := ParsePageParams(r.URL.Query())
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -342,6 +345,9 @@ func (h *personaHandlers) itemVersion(w http.ResponseWriter, r *http.Request, id
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	if !h.requireRead(w, r, id) {
+		return
+	}
 	v, err := h.svc.GetVersion(r.Context(), id, n)
 	if err != nil {
 		h.writePersonaError(w, err)
@@ -353,6 +359,9 @@ func (h *personaHandlers) itemVersion(w http.ResponseWriter, r *http.Request, id
 func (h *personaHandlers) itemRollback(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !h.requireWrite(w, r, id) {
 		return
 	}
 	var body struct {
