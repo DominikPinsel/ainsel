@@ -22,7 +22,21 @@ spec:
     - host: {{ .Values.hub.ingress.host }}
       http:
         paths:
-          - path: {{ .Values.hub.ingress.path }}(/|$)(.*)
+          # Only /api/v1/* is published. The capture group is deliberately
+          # restricted to `v1(/.*)?` rather than `.*` so that the hub's
+          # /api/internal/* routes (agent task ack/nack, event ingest,
+          # task logs, user-token validation) cannot be reached from outside
+          # the cluster via the rewrite-target below. Those endpoints
+          # authenticate with the cluster-wide X-Internal-Token shared
+          # secret, which must never be exposed to internet traffic where it
+          # can be replayed or brute-forced.
+          #
+          # Do not widen this back to `.*` without also moving the internal
+          # routes onto a port the Service and Ingress do not publish.
+          #
+          # /health stays in-cluster only: the liveness and readiness probes
+          # in deployment.yaml hit it directly on the pod.
+          - path: {{ .Values.hub.ingress.path }}(/|$)(v1(/.*)?)
             pathType: ImplementationSpecific
             backend:
               service:

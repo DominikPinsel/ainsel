@@ -18,14 +18,27 @@ List responses include `total`, `page`, `pageSize`, and `totalPages` alongside t
 
 ### GET /health
 
+Liveness/readiness endpoint for Kubernetes probes. It is served **in-cluster
+only** — the hub ingress publishes `/api/v1/*` and deliberately does not expose
+`/api/internal/*` or `/health`.
+
 ```bash
-curl https://ainsel.example.com/ainsel/api/health
+# From inside the cluster
+kubectl run curl-test -n ainsel --rm -it --image=curlimages/curl --restart=Never -- \
+  curl -s http://hub-backend:8080/health
+
+# Or via port-forward
+kubectl port-forward -n ainsel svc/hub-backend 8080:8080 &
+curl http://localhost:8080/health
 ```
 
 **Response:** `200 OK`
 ```json
 {"status": "ok"}
 ```
+
+For an externally reachable status check, use `GET /api/v1/platform/health`
+instead (requires a bearer token).
 
 ---
 

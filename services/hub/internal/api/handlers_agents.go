@@ -499,7 +499,9 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Dispatch event-queue sub-routes before CRUD.
+	// Dispatch event-queue sub-routes before CRUD. These are agent-runtime
+	// endpoints: each one enforces X-Internal-Token itself, so an OIDC session
+	// alone is never sufficient to drive another tenant's task queue.
 	if strings.HasSuffix(name, "/next-task") {
 		s.handleAgentNextTask(w, r)
 		return
@@ -547,7 +549,15 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 // These paths bypass the OIDC middleware (they don't match /api/v1/) and are
 // protected by X-Internal-Token at the handler level. Only task operations
 // (next-task, ack, nack) are exposed; CRUD operations remain on /api/v1/.
+//
+// The token check runs here, before any sub-route dispatch, so that adding a
+// new task sub-route cannot accidentally ship unauthenticated. The leaf
+// handlers repeat the check because they are also reachable from the legacy
+// /api/v1/agents/ dispatch, which does not pass through this function.
 func (s *Server) handleInternalAgent(w http.ResponseWriter, r *http.Request) {
+	if !s.requireInternalToken(w, r) {
+		return
+	}
 	name := extractName(r.URL.Path, "/api/internal/agents/")
 	if name == "" {
 		writeError(w, http.StatusBadRequest, "missing agent name")
