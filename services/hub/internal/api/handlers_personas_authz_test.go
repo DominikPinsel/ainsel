@@ -114,7 +114,7 @@ func TestHandlerListVersionsForbidden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusForbidden)
@@ -133,7 +133,7 @@ func TestHandlerGetVersionForbidden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusForbidden)
@@ -152,7 +152,7 @@ func TestHandlerRollbackForbidden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusForbidden)
@@ -184,7 +184,7 @@ func TestHandlerVersionsUnauthorized(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != http.StatusUnauthorized {
 				t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusUnauthorized)
@@ -211,7 +211,7 @@ func TestHandlerVersionsAllowedForWriter(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
@@ -237,7 +237,7 @@ func TestHandlerVersionsAllowedForWriter(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
@@ -256,7 +256,7 @@ func TestHandlerVersionsAllowedForWriter(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
@@ -280,7 +280,7 @@ func TestHandlerPublicPersonaReadableButNotRollbackable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listResp.Body.Close()
+	defer func() { _ = listResp.Body.Close() }()
 	if listResp.StatusCode != http.StatusOK {
 		t.Errorf("list versions status = %d, want %d", listResp.StatusCode, http.StatusOK)
 	}
@@ -289,7 +289,7 @@ func TestHandlerPublicPersonaReadableButNotRollbackable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rollbackResp.Body.Close()
+	defer func() { _ = rollbackResp.Body.Close() }()
 	if rollbackResp.StatusCode != http.StatusForbidden {
 		t.Errorf("rollback status = %d, want %d", rollbackResp.StatusCode, http.StatusForbidden)
 	}
