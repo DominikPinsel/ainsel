@@ -1,4 +1,18 @@
 import '@testing-library/jest-dom/vitest'
+import { configure } from '@testing-library/react'
+
+// Testing Library's async utils (`waitFor`, `findBy*`) default to a 1000 ms
+// wall-clock budget, and that budget is spent waiting for a scheduler tick — so
+// what consumes it is CPU contention, not the page. ChannelDetailPage's first
+// render, the assertion that flakes in #245, settles in ~66 ms on an idle
+// machine (cold first query in the file), 213 ms with the suite pinned to 2
+// workers under moderate load, and 1031 ms under heavy load. Same page, same
+// work; only the clock changed. The page is fine, the budget is what fails.
+//
+// Raising it here lifts every async assertion in the suite off the cliff instead
+// of hand-tuning one `waitFor` at a time, and only costs time on runs that were
+// going to fail anyway.
+configure({ asyncUtilTimeout: 3000 })
 
 // Node ≥ 22 ships an experimental `localStorage` global that is `undefined`
 // unless `--localstorage-file` is passed.  This shadows the jsdom-provided
