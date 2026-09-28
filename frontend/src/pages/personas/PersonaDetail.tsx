@@ -7,14 +7,14 @@ import { Button } from '../../primitives/Button'
 import { ConfirmModal } from '../../primitives/ConfirmModal'
 import { Markdown } from '../../primitives/Markdown'
 import { Panel } from '../../primitives/Panel'
-import { SectionStatus } from '../../primitives/SectionStatus'
 import { Tabs } from '../../primitives/Tabs'
 import { Titleblock } from '../../layout/Titleblock'
 import { formatISO } from '../../utils/time'
+import { PersonaVersionHistory } from './PersonaVersionHistory'
 
 const TABS = [
   { value: 'overview', label: 'Overview' },
-  { value: 'status', label: 'Status' },
+  { value: 'history', label: 'History' },
 ] as const
 
 export function PersonaDetail() {
@@ -135,14 +135,11 @@ export function PersonaDetail() {
             </div>
           ) : null}
 
-          {data && tab === 'status' ? (
-            <Panel title="Version history" className="cropped">
-              <SectionStatus
-                state="unavailable"
-                title="Version history coming soon"
-                detail={`Current version: v${data.currentVersion}`}
-              />
-            </Panel>
+          {data && tab === 'history' ? (
+            <PersonaVersionHistory
+              personaId={data.id}
+              currentVersion={data.currentVersion}
+            />
           ) : null}
         </div>
       </div>
