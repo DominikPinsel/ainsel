@@ -120,6 +120,7 @@ repository on Forgejo, not here.
 | --- | --- | --- |
 | `ci-<component>.yml` (10) | PR based on `main` or `develop`, path-filtered | build, test, lint that component |
 | `pr-title.yml` | PR opened, edited or updated | reject a PR title release-please could not parse |
+| `dependabot-auto-merge.yml` | PR by `dependabot[bot]`, or dispatch with a PR number | wait for every other check on the PR, then squash-merge it; refuse on any red check |
 | `ci-chart.yml` | same, for `chart/**` and `operators/*/config/crd/**` | helm lint, template with default/example/medium/large values, CRD sync check |
 | `ci-workflows.yml` | same, for `dev-image-*.yml` and their test | assert the publish decision for every event/branch combination |
 | `dev-image-<component>.yml` (8) | push to `main` or `develop`, path-filtered | build and push images (see tags below) |
