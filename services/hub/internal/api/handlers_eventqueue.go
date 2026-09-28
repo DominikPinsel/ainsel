@@ -88,11 +88,11 @@ func (s *Server) handleIngestEvent(w http.ResponseWriter, r *http.Request) {
 // Long-polls for the next pending task for the named agent.
 // Returns 200 with the task JSON, or 204 No Content on timeout.
 func (s *Server) handleAgentNextTask(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	if !s.requireInternalToken(w, r) {
 		return
 	}
-	if !s.requireInternalToken(w, r) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	if s.eventQueue == nil {
@@ -136,7 +136,16 @@ func (s *Server) handleAgentNextTask(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAgentTaskAck serves POST /api/internal/agents/{name}/tasks/{id}/ack.
+//
+// The X-Internal-Token check lives here, not only in handleInternalAgent,
+// because this handler is also reachable through the legacy
+// /api/v1/agents/{name}/tasks/{id}/ack dispatch in handleAgent — a path that
+// does not pass through the internal dispatcher. Gating the leaf keeps both
+// entry points covered and fails closed when the secret is unset.
 func (s *Server) handleAgentTaskAck(w http.ResponseWriter, r *http.Request) {
+	if !s.requireInternalToken(w, r) {
+		return
+	}
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -184,7 +193,13 @@ func (s *Server) handleAgentTaskAck(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAgentTaskNack serves POST /api/internal/agents/{name}/tasks/{id}/nack.
+//
+// Gated at the leaf for the same reason as handleAgentTaskAck: it is reachable
+// from both the internal dispatcher and the legacy /api/v1/agents/ dispatch.
 func (s *Server) handleAgentTaskNack(w http.ResponseWriter, r *http.Request) {
+	if !s.requireInternalToken(w, r) {
+		return
+	}
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return

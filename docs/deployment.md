@@ -239,9 +239,13 @@ kubectl get pods -n ainsel
 # Check CRDs are registered (no resources expected on a fresh install — create them via UI)
 kubectl get agentimages,webhookconnectors -n ainsel
 
-# Test API
-curl https://your-domain.com/ainsel/api/health
-curl https://your-domain.com/ainsel/api/v1/agents
+# Test the API (requires a bearer token)
+curl -H "Authorization: Bearer $TOKEN" https://your-domain.com/ainsel/api/v1/agents
+
+# The /health endpoint is in-cluster only (used by the pod probes); the ingress
+# publishes /api/v1/* and nothing else.
+kubectl run curl-test -n ainsel --rm -it --image=curlimages/curl --restart=Never -- \
+  curl -s http://hub-backend:8080/health
 ```
 
 ## ArgoCD Deployment

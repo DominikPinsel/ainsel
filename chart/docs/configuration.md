@@ -66,10 +66,18 @@ CPU/memory tiers; scale them independently.
 | `hub.namespace` | string | `ainsel` | CRD namespace |
 | `hub.ingress.enabled` | bool | `true` | Enable ingress |
 | `hub.ingress.host` | string | `ainsel.example.com` | Ingress hostname |
-| `hub.ingress.path` | string | `/ainsel/api` | Ingress path |
+| `hub.ingress.path` | string | `/ainsel/api` | Ingress path prefix; only `<path>/v1/*` is published |
 | `hub.ingress.className` | string | `nginx` | Ingress class |
 | `hub.ingress.annotations` | object | cert-manager, ssl, rewrite | Ingress annotations |
 | `hub.resources` | object | 50m/128Mi - 200m/256Mi | CPU/memory |
+
+> **Security note:** the hub ingress intentionally publishes only
+> `<hub.ingress.path>/v1/*`. The hub also serves `/api/internal/*` (agent task
+> ack/nack, event ingest, task logs, user-token validation), which authenticate
+> with the cluster-wide `X-Internal-Token` shared secret and must stay
+> unreachable from outside the cluster. `/health` is likewise in-cluster only —
+> the pod liveness/readiness probes call it directly. See
+> `chart/templates/hub-backend/ingress.yaml` before widening the path regex.
 
 #### Hub Environment Variables
 
