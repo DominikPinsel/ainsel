@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
@@ -72,6 +73,16 @@ type AgentReconciler struct {
 	// AgentGracePeriod is the pod terminationGracePeriodSeconds for agent
 	// deployments. Zero uses the default (1800).
 	AgentGracePeriod int64
+
+	// ScaleDownWindow is how long an opted-in agent must stay free of queued and
+	// in-flight work before its last pod is removed. Zero uses the default.
+	ScaleDownWindow time.Duration
+
+	// QueueSignalTTL bounds how long the hub's published queue measurement can be
+	// trusted. Beyond it the operator holds the current pod count rather than
+	// scaling to zero, because "nobody told me lately" is not evidence that the
+	// queue is empty. Zero uses the default; it must exceed the hub's sweep.
+	QueueSignalTTL time.Duration
 }
 
 //+kubebuilder:rbac:groups=ainsel.dev,resources=agents,verbs=get;list;watch;create;update;patch;delete
@@ -128,7 +139,7 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 				Message:            fmt.Sprintf("AgentImage %q not found in namespace %q", agent.Spec.ImageRef.Name, agent.Namespace),
 				LastTransitionTime: metav1.Now(),
 			})
-			if updErr := r.Status().Update(ctx, &agent); updErr != nil {
+			if updErr := r.patchStatus(ctx, &agent); updErr != nil {
 				return ctrl.Result{}, updErr
 			}
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
@@ -163,7 +174,7 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	})
 
 	// 5. Deployment
-	deploy, mcpMissingEnv, err := r.reconcileDeployment(ctx, &agent, agentName, &img, podImage)
+	deploy, scale, mcpMissingEnv, err := r.reconcileDeployment(ctx, &agent, agentName, &img, podImage)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -235,14 +246,22 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	}
 
 	// 8. Update status
-	if err := r.updateStatus(ctx, &agent, deploy); err != nil {
+	if err := r.updateStatus(ctx, &agent, deploy, scale); err != nil {
 		return ctrl.Result{}, err
 	}
 
-	log.Info("Successfully reconciled Agent", "agent", agent.Name)
+	log.Info("Successfully reconciled Agent", "agent", agent.Name,
+		"desiredReplicas", scale.Replicas, "scalingReason", scale.Reason)
 	// Requeue periodically so the operator detects new image digests
 	// behind mutable tags (e.g. :dev) and restarts agent pods.
-	return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
+	requeue := 5 * time.Minute
+	// An agent sitting in its idle grace window, or running on an untrusted
+	// queue signal, must be looked at again sooner than that or it would never
+	// notice the condition changing.
+	if scale.RequeueAfter > 0 && scale.RequeueAfter < requeue {
+		requeue = scale.RequeueAfter
+	}
+	return ctrl.Result{RequeueAfter: requeue}, nil
 }
 
 type piProviderConfig struct {
@@ -373,14 +392,7 @@ func platformSidecarEnv() []corev1.EnvVar {
 
 // desiredReplicas returns the replica count for an agent's Deployment.
 // Defaults to 1 when spec.scaling is nil or spec.scaling.replicas is unset.
-func desiredReplicas(agent *ainselv1alpha1.Agent) int32 {
-	if agent.Spec.Scaling != nil && agent.Spec.Scaling.Replicas != nil {
-		return *agent.Spec.Scaling.Replicas
-	}
-	return 1
-}
-
-func (r *AgentReconciler) reconcileDeployment(ctx context.Context, agent *ainselv1alpha1.Agent, agentName string, img *ainselv1alpha1.AgentImage, podImage string) (*appsv1.Deployment, []mcpservers.MissingEnvEntry, error) {
+func (r *AgentReconciler) reconcileDeployment(ctx context.Context, agent *ainselv1alpha1.Agent, agentName string, img *ainselv1alpha1.AgentImage, podImage string) (*appsv1.Deployment, ScaleDecision, []mcpservers.MissingEnvEntry, error) {
 	// missingEnv captures MCP servers whose tokenFromEnv references an
 	// env var not defined on the AgentImage. It is populated inside the
 	// CreateOrUpdate closure and returned to the caller so the Reconcile
@@ -533,10 +545,22 @@ func (r *AgentReconciler) reconcileDeployment(ctx context.Context, agent *ainsel
 		},
 	}
 
+	// scale is decided inside the mutate function, where the Deployment's current
+	// replica count is known: holding in place on an untrusted queue signal needs
+	// it, and deciding outside would mean reading the Deployment a second time.
+	var scale ScaleDecision
+
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, deploy, func() error {
 		if err := controllerutil.SetControllerReference(agent, deploy, r.Scheme); err != nil {
 			return err
 		}
+
+		// Current count before this reconcile overwrites it.
+		current := int32(0)
+		if deploy.Spec.Replicas != nil {
+			current = *deploy.Spec.Replicas
+		}
+		scale = r.resolveReplicas(agent, current, time.Now())
 
 		// The Deployment selector is immutable. Deployments created before
 		// app.kubernetes.io/component was added to the labels carry a selector
@@ -603,7 +627,7 @@ func (r *AgentReconciler) reconcileDeployment(ctx context.Context, agent *ainsel
 		}
 
 		deploy.Spec = appsv1.DeploymentSpec{
-			Replicas: ptr.To(desiredReplicas(agent)),
+			Replicas: ptr.To(scale.Replicas),
 			Selector: selector,
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
@@ -987,9 +1011,9 @@ func (r *AgentReconciler) reconcileDeployment(ctx context.Context, agent *ainsel
 		return nil
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, scale, missingEnv, err
 	}
-	return deploy, missingEnv, nil
+	return deploy, scale, missingEnv, nil
 }
 
 // reconcileMCPTokenEnvCondition sets or clears the Degraded condition on the
@@ -1218,11 +1242,35 @@ func (r *AgentReconciler) reconcileMetricsService(ctx context.Context, agent *ai
 	return err
 }
 
-func (r *AgentReconciler) updateStatus(ctx context.Context, agent *ainselv1alpha1.Agent, deploy *appsv1.Deployment) error {
+func (r *AgentReconciler) updateStatus(ctx context.Context, agent *ainselv1alpha1.Agent, deploy *appsv1.Deployment, scale ScaleDecision) error {
+	// Record what the scaler decided, so a reader can tell an agent that is
+	// deliberately asleep from one that cannot get pods.
+	mode := ainselv1alpha1.ScalingModeStatic
+	if scale.Reason != ScaleReasonStatic {
+		mode = ainselv1alpha1.ScalingModeQueue
+	}
+	agent.Status.Scaling = &ainselv1alpha1.AgentScalingStatus{
+		Mode:    mode,
+		Desired: scale.Replicas,
+		Reason:  scale.Reason,
+		Message: scale.Message,
+	}
+
 	// DeploymentReady condition
 	if deploy != nil {
-		desired := desiredReplicas(agent)
-		if deploy.Status.ReadyReplicas >= desired {
+		desired := scale.Replicas
+		if desired == 0 {
+			// Zero pods is a valid steady state for an opted-in agent: there is
+			// nothing to be ready. Reporting False here would make every dormant
+			// agent look broken in the UI and in alerts.
+			apimeta.SetStatusCondition(&agent.Status.Conditions, metav1.Condition{
+				Type:               ainselv1alpha1.AgentConditionDeploymentReady,
+				Status:             metav1.ConditionTrue,
+				Reason:             scale.Reason,
+				Message:            fmt.Sprintf("No replicas wanted (%s)", scale.Message),
+				LastTransitionTime: metav1.Now(),
+			})
+		} else if deploy.Status.ReadyReplicas >= desired {
 			apimeta.SetStatusCondition(&agent.Status.Conditions, metav1.Condition{
 				Type:               ainselv1alpha1.AgentConditionDeploymentReady,
 				Status:             metav1.ConditionTrue,
@@ -1276,7 +1324,28 @@ func (r *AgentReconciler) updateStatus(ctx context.Context, agent *ainselv1alpha
 
 	agent.Status.ObservedGeneration = agent.Generation
 
-	return r.Status().Update(ctx, agent)
+	return r.patchStatus(ctx, agent)
+}
+
+// patchStatus writes only the status fields this controller owns.
+//
+// The hub writes the queue measurements on the same subresource, so a whole-object
+// update here would roll back whatever the hub published between the read and the
+// write — including the drain count an agent must not be scaled away without.
+// A merge patch naming exactly these keys leaves the hub's fields alone.
+func (r *AgentReconciler) patchStatus(ctx context.Context, agent *ainselv1alpha1.Agent) error {
+	body, err := json.Marshal(map[string]any{
+		"status": map[string]any{
+			"replicas":           agent.Status.Replicas,
+			"conditions":         agent.Status.Conditions,
+			"scaling":            agent.Status.Scaling,
+			"observedGeneration": agent.Status.ObservedGeneration,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("marshal agent status: %w", err)
+	}
+	return r.Status().Patch(ctx, agent, client.RawPatch(types.MergePatchType, body))
 }
 
 // reconcileServiceMonitor manages a prometheus-operator ServiceMonitor for the

@@ -1,0 +1,133 @@
+name: Dependabot auto-merge
+
+# Dependabot PRs merge themselves: this gate watches every other check on the
+# PR and squash-merges it once they are all green. If any check is red, the
+# gate fails with it and the PR waits for a human - exactly like any red PR.
+#
+# Why not GitHub's auto-merge flag (the pattern in GitHub's docs)? Because
+# develop's ruleset has no required status checks, so arming auto-merge means
+# "merge immediately": the flag would merge on PR open before the ci-* runs
+# even start, it would merge PRs whose checks are failing right now, and it
+# stays armed across Dependabot force-pushes, merging every rebased head
+# unchecked. This gate instead re-runs on every head, waits for the checks it
+# can actually see, and merges with --match-head-commit so a concurrent
+# force-push fails the merge instead of sneaking an unchecked sha through.
+#
+# Scope: the job-level `if` (pull_request events) plus the author assertion in
+# the script (dispatch events) restrict this to dependabot[bot] PRs. No other
+# PR is ever merged, and nothing here bypasses a red check.
+#
+# The dispatch trigger exists so already-open Dependabot PRs (opened before
+# this workflow existed) and gates that hit the timeout can be re-run by hand:
+# `gh workflow run dependabot-auto-merge.yml -f pr=<number>`.
+#
+# No checkout and no third-party actions: gh + jq on the runner, same posture
+# as pr-title.yml. Pattern reference:
+# https://docs.github.com/en/code-security/dependabot/working-with-dependabot/automating-dependabot-with-github-actions
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "PR number to gate and merge (must be authored by dependabot[bot])"
+        required: true
+
+permissions:
+  contents: write # squash-merge the PR, delete the merged branch
+  pull-requests: write # read PR metadata
+
+concurrency:
+  # One gate per PR; a Dependabot force-push cancels the stale gate and the
+  # new synchronize run starts a fresh one for the new head.
+  group: dependabot-auto-merge-${{ github.event.pull_request.number || inputs.pr }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: Auto-merge gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    if: >-
+      github.repository == 'DominikPinsel/ainsel' &&
+      (github.event_name == 'workflow_dispatch' ||
+       github.event.pull_request.user.login == 'dependabot[bot]')
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr }}
+      # This run's own check run is excluded from the rollup by matching this
+      # path fragment in its detailsUrl (.../actions/runs/<run-id>/job/...).
+      OWN_RUN_PATH: /runs/${{ github.run_id }}/
+    steps:
+      - name: Wait for green checks, then squash-merge
+        run: |
+          set -euo pipefail
+
+          # Belt and braces: the job-level `if` guards pull_request events,
+          # this guards dispatch (and any trigger added later).
+          author="$(gh pr view "$PR_NUMBER" --json author -q '.author.login')"
+          if [ "$author" != "dependabot[bot]" ]; then
+            echo "::error::PR #$PR_NUMBER is authored by '$author'; this workflow only merges dependabot[bot] PRs."
+            exit 1
+          fi
+
+          echo "Gating PR #$PR_NUMBER; excluding this run's own check via '$OWN_RUN_PATH'."
+          # Grace period: the sibling workflows (gitleaks, pr-title, the
+          # path-filtered ci-* / dev-image-* set) are triggered by the same
+          # event but register their check runs moments later. Without this,
+          # an early poll could see an empty rollup and merge ungated.
+          sleep 30
+
+          deadline=$(( $(date +%s) + 5100 )) # 85 min; the job timeout is 90
+          while true; do
+            pr_json="$(gh pr view "$PR_NUMBER" --json state,headRefOid,statusCheckRollup)"
+
+            state="$(jq -r '.state' <<<"$pr_json")"
+            if [ "$state" != "OPEN" ]; then
+              echo "PR #$PR_NUMBER is $state - nothing to do."
+              exit 0
+            fi
+            head="$(jq -r '.headRefOid' <<<"$pr_json")"
+
+            # Normalise both rollup shapes (Actions check runs and classic
+            # commit statuses) to {name, complete, ok}.
+            checks="$(jq --arg own "$OWN_RUN_PATH" '
+              [ .statusCheckRollup[]?
+                | select(((.detailsUrl // "") | contains($own)) | not)
+                | {
+                    name: (.name // .context // "?"),
+                    complete: (
+                      (.status == "COMPLETED") or
+                      ((.state // "") | IN("SUCCESS","FAILURE","ERROR","NEUTRAL","CANCELLED","TIMED_OUT","ACTION_REQUIRED","SKIPPED","STALE"))
+                    ),
+                    ok: ((.conclusion // .state // "") | IN("SUCCESS","SKIPPED","NEUTRAL"))
+                  }
+              ]' <<<"$pr_json")"
+
+            total="$(jq 'length' <<<"$checks")"
+            pending="$(jq '[.[] | select(.complete | not)] | length' <<<"$checks")"
+            failed="$(jq '[.[] | select(.complete and (.ok | not))] | length' <<<"$checks")"
+            echo "$(date -u +%H:%M:%S)Z head=${head:0:7} checks=$total pending=$pending failed=$failed"
+
+            if [ "$failed" -gt 0 ]; then
+              echo "Red checks - not merging:"
+              jq -r '.[] | select(.complete and (.ok | not)) | "  - \(.name)"' <<<"$checks"
+              exit 1
+            fi
+            if [ "$total" -gt 0 ] && [ "$pending" -eq 0 ]; then
+              break
+            fi
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "Timed out with $pending pending check(s) - not merging."
+              exit 1
+            fi
+            sleep 30
+          done
+
+          echo "All checks green on ${head:0:7}; merging."
+          # No --delete-branch: the repo auto-deletes head branches on merge,
+          # and there is no local checkout here to clean up.
+          gh pr merge "$PR_NUMBER" --squash --match-head-commit "$head"
+          echo "PR #$PR_NUMBER merged."

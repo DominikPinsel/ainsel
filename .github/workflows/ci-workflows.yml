@@ -1,0 +1,34 @@
+name: CI - workflows
+
+# The dev-image workflows decide, in shell, whether a build becomes a permanent
+# registry tag. Nothing else checks that decision until a build runs against the
+# real registry, so this does: scripts/test-dev-image-workflows.py executes each
+# workflow's metadata step the way the runner would and asserts the outcome for
+# every event/branch combination. The tag policy itself is in CONTRIBUTING.md.
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - '.github/workflows/dev-image-*.yml'
+      - '.github/workflows/ci-workflows.yml'
+      - 'scripts/test-dev-image-workflows.py'
+  pull_request:
+    branches: [main, develop]
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/dev-image-*.yml'
+      - '.github/workflows/ci-workflows.yml'
+      - 'scripts/test-dev-image-workflows.py'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  ci:
+    name: Publish gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Assert the publish decision for every dev-image workflow
+        run: python3 scripts/test-dev-image-workflows.py

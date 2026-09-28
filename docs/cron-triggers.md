@@ -26,7 +26,7 @@ Cron triggers are managed on the **agent detail page** (`/agents/:id`), under th
 
 When a cron trigger fires:
 
-1. The hub publishes an event to the agent's NATS subject with the configured prompt.
+1. The hub inserts a synthetic event (connector `cron`, containing the configured prompt) into the `events` table and enqueues the task for the trigger's agent directly.
 2. The agent runtime picks up the event, processes it using its persona, model, and tools.
 3. The result is recorded as an invocation — visible in `/activity` with the trigger name as the source.
 

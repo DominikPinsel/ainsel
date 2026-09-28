@@ -28,12 +28,16 @@ up-to-date reference — including args, read/write mode, and example
 usage — is [`docs/mcp.md`](../../docs/mcp.md). Summary of what's
 registered in [`internal/mcp/server.go`](internal/mcp/server.go):
 
-- **Agents:** `list_agents`, `get_agent`, `update_agent` (LLM config).
+- **Agents:** `list_agents`, `get_agent`, `update_agent` (display name,
+  description, LLM config).
 - **Triggers:** `list_triggers`, `get_trigger`, `create_trigger`,
   `update_trigger`, `delete_trigger`.
 - **Cron triggers:** `list_cron_triggers`, `get_cron_trigger`,
   `create_cron_trigger`, `update_cron_trigger`, `delete_cron_trigger`.
-- **Connectors:** `list_connectors`, `get_connector`.
+- **Connectors:** `list_connectors`, `get_connector`, `update_connector`.
+- **Channels:** `list_channels`, `get_channel`, `list_channel_subscriptions`,
+  `get_channel_events`, `create_channel`, `update_channel`,
+  `delete_channel`, `attach_channel_bridge`, `detach_channel_bridge`.
 - **Workflows / activity:** `summarize_workflows`, `list_invocations`,
   `get_invocation`, `summarize_agent_activity`.
 - **Agent images:** `list_agent_images`, `get_agent_image`,

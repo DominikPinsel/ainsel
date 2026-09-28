@@ -1,8 +1,14 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { useAgent, useDeleteAgent } from '../../api/agents'
+import {
+  isAsleep,
+  useAgent,
+  useDeleteAgent
+} from '../../api/agents'
 import { ApiError } from '../../api/client'
 import { useAgentPersona } from '../../api/personas'
+import { recordAgentView, recentsScope } from '../../agentRecents'
+import { useAuth } from '../../auth/AuthProvider'
 import { Button } from '../../primitives/Button'
 import { ConfirmModal } from '../../primitives/ConfirmModal'
 import { Dot } from '../../primitives/Dot'
@@ -11,8 +17,7 @@ import { Panel } from '../../primitives/Panel'
 import { Tabs } from '../../primitives/Tabs'
 import { Tag } from '../../primitives/Tag'
 import { Titleblock } from '../../layout/Titleblock'
-import { AgentTriggers } from './AgentTriggers'
-import { AgentSchedules } from './AgentSchedules'
+import { AgentChannelTab } from '../channels/AgentChannelTab'
 import { AgentPersonaSection } from './AgentPersonaSection'
 import {
   AgentImageSection,
@@ -24,12 +29,11 @@ import { AgentEnvSection } from './AgentEnvSection'
 
 const TABS = [
   { value: 'overview', label: 'Overview' },
+  { value: 'channel', label: 'Channel' },
   { value: 'persona', label: 'Persona' },
   { value: 'runtime', label: 'Runtime' },
   { value: 'tools', label: 'Tools' },
   { value: 'skills', label: 'Skills' },
-  { value: 'triggers', label: 'Triggers' },
-  { value: 'schedule', label: 'Schedule' },
 ] as const
 
 const TAB_VALUES: string[] = TABS.map((t) => t.value)
@@ -47,6 +51,15 @@ export function AgentDetail() {
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const { data, isLoading, error } = useAgent(id)
   const remove = useDeleteAgent()
+  const { user } = useAuth()
+
+  // Feed the nav's recent-agents list. Keyed on the loaded agent's id, not the
+  // raw route param, so an unresolvable URL cannot be remembered as "viewed".
+  // (The nav also filters these against what the hub returns you, so the
+  // worst case for a stale id is an unused entry that the cap ages out.)
+  useEffect(() => {
+    if (data?.id) recordAgentView(recentsScope(user), data.id)
+  }, [data?.id, user])
 
   const onConfirmDelete = async () => {
     if (!id) return
@@ -61,6 +74,12 @@ export function AgentDetail() {
     }
   }
 
+  // Zero pods means different things: an opted-in agent that drained its queue
+  // is asleep by design, while the same count on any other agent is a pod that
+  // cannot be scheduled. Only the operator's own verdict tells them apart, so the
+  // UI must not infer it from the count.
+  const queueScaled = data?.status?.mode === 'queue'
+  const asleep = isAsleep(data?.status)
   return (
     <>
       <Titleblock
@@ -132,18 +151,31 @@ export function AgentDetail() {
                   <div>
                     <div className="k">Ready</div>
                     <div className="v">
-                      <Dot state={data.status?.ready ? 'ok' : 'warn'} />{' '}
-                      {data.status?.ready ? 'Ready' : 'Pending'}
+                      <Dot state={asleep ? 'stale' : data.status?.ready ? 'ok' : 'warn'} />{' '}
+                      {asleep ? 'Asleep' : data.status?.ready ? 'Ready' : 'Pending'}
                     </div>
                   </div>
                   <div>
-                    <div className="k">Replicas</div>
-                    <div className="v">{data.status?.replicas ?? '—'}</div>
+                    <div className="k">Containers</div>
+                    <div className="v">
+                      {asleep ? (
+                        <>
+                          0 of up to {data.replicas ?? '—'} · wakes on event
+                        </>
+                      ) : (
+                        <>
+                          {data.status?.replicas ?? '—'}
+                          {queueScaled ? ` of up to ${data.replicas ?? '—'}` : ''}
+                        </>
+                      )}
+                    </div>
                   </div>
-                  <div>
-                    <div className="k">Configured Replicas</div>
-                    <div className="v">{data.replicas ?? '—'}</div>
-                  </div>
+                  {!queueScaled ? (
+                    <div>
+                      <div className="k">Configured Replicas</div>
+                      <div className="v">{data.replicas ?? '—'}</div>
+                    </div>
+                  ) : null}
                 </div>
               </Panel>
 
@@ -182,12 +214,8 @@ export function AgentDetail() {
 
           {data && tab === 'skills' ? <AgentSkillsSection agent={data} /> : null}
 
-          {data && tab === 'triggers' ? (
-            <AgentTriggers agentId={data.id} agentName={data.name} />
-          ) : null}
-
-          {data && tab === 'schedule' ? (
-            <AgentSchedules agentId={data.id} />
+          {data && tab === 'channel' ? (
+            <AgentChannelTab agentId={data.id} agentName={data.name} />
           ) : null}
         </div>
       </div>
@@ -197,8 +225,8 @@ export function AgentDetail() {
         title="Delete agent?"
         body={
           <>
-            <b>{data?.name ?? id}</b> will be permanently removed. Triggers
-            referencing this agent will become invalid.
+            <b>{data?.name ?? id}</b> will be permanently removed. Its inbox
+            channel — subscriptions and schedules — goes with it.
           </>
         }
         confirmLabel={remove.isPending ? 'Deleting…' : 'Delete'}

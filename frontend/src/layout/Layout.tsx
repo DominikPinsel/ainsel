@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
 import { Spine } from './Spine'
+import { recentsScope } from '../agentRecents'
 import { useAuth } from '../auth/AuthProvider'
-import { ReportButton } from '../components/ReportButton'
 import './Layout.css'
 
 export function Layout() {
   const { user, mode } = useAuth()
   const location = useLocation()
   const [menuOpen, setMenuOpen] = useState(false)
+  const agentRecentsScope = recentsScope(user)
 
   // Close the drawer whenever the route changes (mobile nav selection).
   useEffect(() => {
@@ -51,11 +52,15 @@ export function Layout() {
         </span>
       </header>
 
-      <Spine operator={mode === 'none' ? 'no auth' : user?.username ?? 'anon'} open={menuOpen} onClose={() => setMenuOpen(false)} />
+      <Spine
+        operator={mode === 'none' ? 'no auth' : user?.username ?? 'anon'}
+        recentsScope={agentRecentsScope}
+        open={menuOpen}
+        onClose={() => setMenuOpen(false)}
+      />
       <main id="content" className="canvas">
         <Outlet />
       </main>
-      <ReportButton />
     </div>
   )
 }

@@ -12,6 +12,7 @@
 - [CRD Reference](crd-reference)
 - [Event Schema](event-schema)
 - [MCP Server](mcp)
+- [Naming Convention](naming)
 - [Observability](observability)
 - [Network Policies](network-policies)
 - [Security Hardening](security-hardening)
@@ -24,6 +25,7 @@
 - [Cron Triggers](cron-triggers)
 - [Writing a Connector](writing-a-connector)
 - [Troubleshooting](troubleshooting)
+- [Registry Maintenance](maintenance)
 - [Upgrade Guide](upgrade-guide)
 
 ## Contributing

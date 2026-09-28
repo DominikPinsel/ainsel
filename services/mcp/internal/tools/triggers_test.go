@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -316,5 +317,98 @@ func TestUpdateTrigger_MissingName(t *testing.T) {
 	}
 	if !result.IsError {
 		t.Fatal("expected error for missing name")
+	}
+}
+
+// The MCP tools hand filter JSON straight to the trigger REST API, so the
+// `values` operand list of the set operators has to survive the decode/re-encode
+// round trip here too. An `in` or `not-in` filter that loses its values is stored
+// with an empty list and can never match — the trigger silently stops firing.
+func TestCreateTrigger_FilterValuesForwarded(t *testing.T) {
+	var captured struct {
+		Filters []struct {
+			Field  string   `json:"field"`
+			Op     string   `json:"op"`
+			Value  string   `json:"value"`
+			Values []string `json:"values"`
+		} `json:"filters"`
+	}
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&captured)
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "t-new"})
+	}))
+	defer hub.Close()
+
+	tt := &TriggerTools{HubURL: hub.URL, HTTPClient: hub.Client()}
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"name":         "my-trigger",
+		"agentRef":     "agent-1",
+		"connectorRef": "connector-1",
+		"filters":      `[{"field":"action","op":"in","values":["opened","synchronized"]},{"field":"sender.login","op":"eq","value":"bot"}]`,
+	}
+	result, err := tt.CreateTrigger(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("tool returned error: %s", result.Content[0].(mcp.TextContent).Text)
+	}
+	if len(captured.Filters) != 2 {
+		t.Fatalf("expected 2 forwarded filters, got %d", len(captured.Filters))
+	}
+	if got := captured.Filters[0].Values; !reflect.DeepEqual(got, []string{"opened", "synchronized"}) {
+		t.Errorf("in-filter lost its values on the way to the hub: got %v", got)
+	}
+	if captured.Filters[1].Value != "bot" {
+		t.Errorf("eq filter value: expected bot, got %q", captured.Filters[1].Value)
+	}
+}
+
+func TestUpdateTrigger_FilterValuesForwarded(t *testing.T) {
+	var captured struct {
+		Filters []struct {
+			Field  string   `json:"field"`
+			Op     string   `json:"op"`
+			Value  string   `json:"value"`
+			Values []string `json:"values"`
+		} `json:"filters"`
+	}
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&captured)
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "t-1"})
+	}))
+	defer hub.Close()
+
+	tt := &TriggerTools{HubURL: hub.URL, HTTPClient: hub.Client()}
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"name":    "t-1",
+		"filters": `[{"field":"issue.labels","op":"not-in","values":["wontfix","needs-discussion"]}]`,
+	}
+	result, err := tt.UpdateTrigger(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("tool returned error: %s", result.Content[0].(mcp.TextContent).Text)
+	}
+	if len(captured.Filters) != 1 {
+		t.Fatalf("expected 1 forwarded filter, got %d", len(captured.Filters))
+	}
+	if got := captured.Filters[0].Values; !reflect.DeepEqual(got, []string{"wontfix", "needs-discussion"}) {
+		t.Errorf("not-in filter lost its values on the way to the hub: got %v", got)
+	}
+
+	// An empty array must still clear the filters rather than be dropped.
+	captured.Filters = nil
+	req.Params.Arguments = map[string]any{"name": "t-1", "filters": "[]"}
+	if _, err := tt.UpdateTrigger(context.Background(), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if captured.Filters == nil || len(captured.Filters) != 0 {
+		t.Errorf("expected an empty filters array to clear filters, got %+v", captured.Filters)
 	}
 }

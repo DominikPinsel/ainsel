@@ -73,6 +73,7 @@ export function AgentForm() {
         providerApiKey: '',
         persona: { id: existing.data.persona?.id ?? '' },
         replicas: existing.data.replicas ?? 1,
+        wakeOnDemand: existing.data.minReplicas != null && existing.data.minReplicas <= 0,
       })
     }
   }, [existing.data, reset])
@@ -314,13 +315,43 @@ export function AgentForm() {
             <h3>Scaling</h3>
           </header>
           <div className="form-grid">
-            <Field label="Replicas" htmlFor="replicas">
+            <Field
+              label={watch('wakeOnDemand') ? 'Max containers' : 'Replicas'}
+              htmlFor="replicas"
+              hint={
+                watch('wakeOnDemand')
+                  ? 'Upper bound. Containers start one per waiting invocation and scale back down as the queue drains.'
+                  : undefined
+              }
+            >
               <Input
                 id="replicas"
                 type="number"
                 min={0}
                 {...register('replicas')}
               />
+            </Field>
+            <Field
+              label="Wake on demand"
+              htmlFor="scaling.wakeOnDemand"
+              hint={
+                watch('wakeOnDemand')
+                  ? 'Containers scale to zero once the queue drains. The next event pays the cold start.'
+                  : 'Keeps containers running all the time. Turn this on to let an idle agent sleep.'
+              }
+            >
+              <div
+                style={{ display: 'flex', alignItems: 'center', gap: 8, height: '100%', paddingTop: 6 }}
+              >
+                <Check
+                  checked={watch('wakeOnDemand') ?? false}
+                  onChange={(v) => setValue('wakeOnDemand', v, { shouldDirty: true })}
+                  aria-label="Wake on demand"
+                />
+                <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)' }}>
+                  {watch('wakeOnDemand') ? 'Sleeps when the queue is empty' : 'Always running'}
+                </span>
+              </div>
             </Field>
           </div>
         </section>

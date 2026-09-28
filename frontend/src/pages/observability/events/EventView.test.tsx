@@ -107,7 +107,8 @@ describe('EventView', () => {
 
   it('renders event metadata', async () => {
     renderEventView('/observability/events/evt-1234567890000000000')
-    await waitFor(() => expect(screen.getByText('c-111')).toBeInTheDocument())
+    // connector appears in the KPI figure and again as the journey's home channel
+    await waitFor(() => expect(screen.getAllByText('c-111').length).toBeGreaterThanOrEqual(2))
     expect(screen.getByText('MATCH')).toBeInTheDocument()
   })
 
@@ -120,7 +121,8 @@ describe('EventView', () => {
 
   it('renders matches', async () => {
     renderEventView('/observability/events/evt-1234567890000000000')
-    await waitFor(() => expect(screen.getByText('doc-writer')).toBeInTheDocument())
+    // agent appears in the matches list, the journey fan-out, and the invocation summary
+    await waitFor(() => expect(screen.getAllByText('doc-writer').length).toBeGreaterThanOrEqual(2))
     // review-bot appears in the matches list and in the invocation summary
     expect(screen.getAllByText('review-bot').length).toBeGreaterThanOrEqual(2)
   })
@@ -207,6 +209,54 @@ describe('EventView', () => {
     )
   })
 
+  it('explains an empty transcript for a task that is still queued (#195)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.includes('/invocations') && url.includes('event=')) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                invocations: [
+                  {
+                    id: 'inv-2',
+                    agent: 'dev-bot',
+                    agentName: 'dev-bot',
+                    trigger: 't2',
+                    triggerName: 't2',
+                    status: 'running',
+                    timestamp: '2026-06-10T08:35:25Z',
+                    task: { status: 'pending', attempts: 2, error: 'Turn timed out after 600000ms' },
+                  },
+                ],
+                total: 1,
+                capacity: 1000,
+                page: 1,
+                pageSize: 50,
+                totalPages: 1,
+              }),
+              { status: 200 },
+            ),
+          )
+        }
+        if (url.includes('/observability/conversations') && url.includes('invocation=inv-2')) {
+          return Promise.resolve(new Response(JSON.stringify({ messages: [], total: 0 }), { status: 200 }))
+        }
+        if (url.includes('/events/evt-')) {
+          return Promise.resolve(new Response(JSON.stringify(sampleEvent), { status: 200 }))
+        }
+        return Promise.resolve(new Response('{}', { status: 200 }))
+      }),
+    )
+    renderEventView('/observability/events/evt-1234567890000000001')
+    await waitFor(() =>
+      expect(screen.getByText(/Waiting in queue/)).toBeInTheDocument(),
+    )
+    expect(screen.getByText(/attempt 2 failed, retrying/)).toBeInTheDocument()
+    expect(screen.getByText('queued · attempt 2')).toBeInTheDocument()
+    expect(screen.queryByText(/No conversation recorded/)).not.toBeInTheDocument()
+  })
+
   it('polls a running invocation until the transcript arrives', async () => {
     vi.useFakeTimers()
     const runningInvocations = {
@@ -250,7 +300,9 @@ describe('EventView', () => {
           await vi.advanceTimersByTimeAsync(10)
         })
       }
-      expect(screen.getByText('No conversation recorded for this invocation.')).toBeInTheDocument()
+      expect(
+        screen.getByText('No conversation recorded for this invocation.'),
+      ).toBeInTheDocument()
 
       // The run produces its transcript messages; without polling the page
       // would keep showing the empty state until a manual refresh. Advance one
@@ -315,53 +367,5 @@ describe('EventView', () => {
     const button = await screen.findByRole('button', { name: /back to top/i })
     fireEvent.click(button)
     expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' })
-  })
-
-  it('explains an empty transcript for a task that is still queued (#195)', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn((url: string) => {
-        if (url.includes('/invocations') && url.includes('event=')) {
-          return Promise.resolve(
-            new Response(
-              JSON.stringify({
-                invocations: [
-                  {
-                    id: 'inv-2',
-                    agent: 'dev-bot',
-                    agentName: 'dev-bot',
-                    trigger: 't2',
-                    triggerName: 't2',
-                    status: 'running',
-                    timestamp: '2026-06-10T08:35:25Z',
-                    task: { status: 'pending', attempts: 2, error: 'Turn timed out after 600000ms' },
-                  },
-                ],
-                total: 1,
-                capacity: 1000,
-                page: 1,
-                pageSize: 50,
-                totalPages: 1,
-              }),
-              { status: 200 },
-            ),
-          )
-        }
-        if (url.includes('/observability/conversations') && url.includes('invocation=inv-2')) {
-          return Promise.resolve(new Response(JSON.stringify({ messages: [], total: 0 }), { status: 200 }))
-        }
-        if (url.includes('/events/evt-')) {
-          return Promise.resolve(new Response(JSON.stringify(sampleEvent), { status: 200 }))
-        }
-        return Promise.resolve(new Response('{}', { status: 200 }))
-      }),
-    )
-    renderEventView('/observability/events/evt-1234567890000000001')
-    await waitFor(() =>
-      expect(screen.getByText(/Waiting in queue/)).toBeInTheDocument(),
-    )
-    expect(screen.getByText(/attempt 2 failed, retrying/)).toBeInTheDocument()
-    expect(screen.getByText('queued · attempt 2')).toBeInTheDocument()
-    expect(screen.queryByText(/No conversation recorded/)).not.toBeInTheDocument()
   })
 })

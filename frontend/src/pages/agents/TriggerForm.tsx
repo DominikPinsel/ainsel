@@ -162,7 +162,7 @@ export function TriggerForm({ agentId, trigger, onClose, onSaved }: TriggerFormP
             color: 'var(--ink-3)',
           }}
         >
-          {isEdit ? 'Edit trigger' : 'New trigger'}
+          {isEdit ? 'Edit subscription' : 'New subscription'}
         </h4>
       </header>
 
@@ -190,7 +190,7 @@ export function TriggerForm({ agentId, trigger, onClose, onSaved }: TriggerFormP
         <Field label="Agent" htmlFor="tf-agentRef">
           <Input id="tf-agentRef" value={agentId} disabled readOnly />
         </Field>
-        <Field label="Connector" htmlFor="tf-connectorRef" error={errors.connectorRef?.message}>
+        <Field label="Source channel" htmlFor="tf-connectorRef" error={errors.connectorRef?.message}>
           <Autocomplete
             id="tf-connectorRef"
             value={connectorRefValue}

@@ -241,6 +241,17 @@
   font-size: 12px;
   transition: background 0.12s, color 0.12s;
 }
+/* Agents this browser actually opened sit one step brighter than the
+   recently-updated filler that pads the list out to the limit. Declared here,
+   before :hover and .active, so those keep winning at equal specificity. No new
+   token: the ink ramp already runs 1 / ink-2 / ink-3, and filler keeps the
+   colour it shipped with. */
+.nav-recent .nav-sublink {
+  color: var(--spine-ink-2);
+}
+.nav-recent .nav-sublink.padded {
+  color: var(--spine-ink-3);
+}
 .nav-sublink:hover {
   background: var(--spine-hover);
   color: var(--spine-ink);

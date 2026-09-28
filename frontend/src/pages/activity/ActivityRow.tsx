@@ -46,9 +46,10 @@ function agentPath(agentRef: string) {
   return `/agents/${encodeURIComponent(agentRef)}`
 }
 
-// Triggers have no standalone page; they live in the owning agent's Triggers tab.
+// Subscriptions are owned by the agent's inbox channel; the channel tab
+// links to it. Trigger rules have no standalone page.
 function triggerPath(agentRef: string) {
-  return `/agents/${encodeURIComponent(agentRef)}?tab=triggers`
+  return `/agents/${encodeURIComponent(agentRef)}?tab=channel`
 }
 
 const stopPropagation = (e: MouseEvent) => e.stopPropagation()
@@ -70,7 +71,7 @@ function TriggerLinks({
             <Link
               to={triggerPath(m.agent)}
               onClick={stopPropagation}
-              aria-label={`Open trigger ${label}`}
+              aria-label={`Open subscription ${label}`}
             >
               {label}
             </Link>
@@ -202,7 +203,7 @@ export function ActivityRow({
                         <Link
                           to={triggerPath(m.agent)}
                           onClick={stopPropagation}
-                          aria-label={`Open trigger ${triggerLabel}`}
+                          aria-label={`Open subscription ${triggerLabel}`}
                         >
                           {triggerLabel}
                         </Link>

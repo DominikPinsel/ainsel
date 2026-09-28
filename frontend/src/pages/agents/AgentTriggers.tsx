@@ -42,7 +42,7 @@ export function AgentTriggers({ agentId, agentName: _agentName }: Props) {
     { key: 'name', header: 'Name', cell: (t) => <b>{t.name}</b> },
     {
       key: 'connector',
-      header: 'Connector',
+      header: 'From channel',
       width: 170,
       cell: (t) =>
         t.connectorRef
@@ -109,7 +109,7 @@ export function AgentTriggers({ agentId, agentName: _agentName }: Props) {
 
   return (
     <Panel
-      title="Triggers"
+      title="Subscriptions"
       right={
         <Button
           variant="primary"
@@ -119,16 +119,16 @@ export function AgentTriggers({ agentId, agentName: _agentName }: Props) {
             setCreating(true)
           }}
         >
-          ＋ New trigger
+          ＋ New subscription
         </Button>
       }
       className="cropped"
     >
       {isLoading ? (
-        <p className="label">Loading triggers…</p>
+        <p className="label">Loading subscriptions…</p>
       ) : error ? (
         <p className="label" style={{ color: 'var(--signal)' }}>
-          Failed to load triggers.
+          Failed to load subscriptions.
         </p>
       ) : (
         <RegisterTable
@@ -140,7 +140,7 @@ export function AgentTriggers({ agentId, agentName: _agentName }: Props) {
               ? 'row-err'
               : undefined
           }
-          emptyLabel="No triggers for this agent yet."
+          emptyLabel="Nothing flows into this inbox yet — add a subscription."
         />
       )}
 
@@ -163,7 +163,7 @@ export function AgentTriggers({ agentId, agentName: _agentName }: Props) {
 
       <ConfirmModal
         open={deleteTarget !== undefined}
-        title="Delete trigger?"
+        title="Delete subscription?"
         body={
           <>
             <b>{deleteTarget?.name}</b> will be permanently removed.

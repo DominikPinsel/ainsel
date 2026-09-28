@@ -55,7 +55,27 @@ Replace `<namespace>` with the Kubernetes namespace where ainsel is deployed.
 
 Activity events (see [`GET /api/v1/events`](api-reference.md)) are the entry point for tracing what happened for a given event. From the **Activity** page or **Observability → Events**, every event row shows an always-visible `open →` link (and a **View full event** link when the row is expanded). Either opens the event detail view at `/observability/events/<id>`.
 
+![The Activity stream listing 16,921 events, with filters for free-text search,
+status, outcome, connector and agent above a table of when, connector, trigger,
+agent and status — each row resolving to either MATCH, where the event routed
+to an agent, or SKIP, where no trigger matched](images/activity-stream.webp)
+
+*Every event the platform has seen, and the routing decision made for it.
+`SKIP` rows are as useful as `MATCH` ones: they are how you find a trigger
+filter that is quietly too narrow.*
+
 The event detail view lists each invocation matched to that event with its agent, trigger, status, duration, and total token usage. Below that it renders the full agent conversation transcript for the invocation: the user prompt, assistant thinking and text, tool calls, and tool results. These messages are served by [`GET /api/v1/observability/conversations`](api-reference.md).
+
+![The event detail view for a matched pull_request.opened event: event id,
+connector and MATCH status across the top, the agents whose triggers matched,
+the channel journey from connector to agent delivery, the invocation table
+with agent, trigger, status, duration and token total, and beneath it the
+recorded conversation opening with the event envelope rendered verbatim as
+the agent's prompt](images/event-detail.webp)
+
+*One event, end to end: routing decision, channel journey, invocation
+outcome, and the exact prompt the agent received. (Source-identifying
+fields redacted.)*
 
 Transcripts are populated by the agent runtime, which reports its messages back to the hub when a task completes. If an invocation has no reported messages, the event detail view says so explicitly rather than rendering an empty transcript.
 
@@ -73,7 +93,7 @@ The following counters are exported by the hub. No other ainsel components expor
 
 | Metric | Type | Description |
 |--------|------|-------------|
-| `hub_events_consumed_total` | counter | Events received from the NATS EVENTS stream |
+| `hub_events_consumed_total` | counter | Events fetched by the router from the `events` table |
 | `hub_triggers_matched_total` | counter | Events that matched at least one trigger rule |
 | `hub_events_routed_total` | counter | Events successfully dispatched to an agent |
 | `hub_routing_errors_total` | counter | Events that failed to route to an agent |
@@ -82,7 +102,14 @@ The following counters are exported by the hub. No other ainsel components expor
 
 ### Enabling Prometheus scraping
 
-Set `observability.prometheus.url` in `values.yaml` to the URL of your Prometheus instance. The hub uses this URL to proxy metric queries through the `/api/v1/observability/metrics/*` endpoints.
+The hub UI labels metric-backed panels **telemetry**: when the hub has no Prometheus
+client, every `/api/v1/observability/metrics/*` call returns `503` and the panels
+replace their content with **"Telemetry not configured"**. That message means exactly
+one thing — `observability.prometheus.url` is unset — and
+[Troubleshooting → "Dashboard says Telemetry not configured"](troubleshooting)
+walks through confirming and fixing it.
+
+Set `observability.prometheus.url` in `values.yaml` to the URL of your Prometheus instance. The hub uses this URL to proxy metric queries through the `/api/v1/observability/metrics/*` endpoints. Configure it and restart the hub; the client is built once at startup.
 
 To have Prometheus scrape the hub's own `/metrics` endpoint, enable the ServiceMonitor or PodMonitor resources in `values.yaml`:
 
@@ -106,15 +133,19 @@ Both Loki and Prometheus are **optional**. The platform continues to function fu
 | Backend | Effect when absent |
 |---------|--------------------|
 | **Loki** | `GET /api/v1/observability/logs` returns an error. All other platform functionality works normally. |
-| **Prometheus** | `GET /api/v1/observability/metrics/*` returns an error. All other platform functionality works normally. |
+| **Prometheus** | `GET /api/v1/observability/metrics/*` returns `503`, and the dashboard and Observability panels show **"Telemetry not configured"** in place of their charts. All other platform functionality works normally. |
 
-The platform health endpoint reports the status of all configured backends:
+The platform health endpoint reports the status of every pod in the hub's namespace:
 
 ```
 GET /api/v1/platform/health
 ```
 
-Check this endpoint to confirm whether Loki and Prometheus are reachable before troubleshooting missing log or metric data.
+It returns an array of pod summaries (`name`, `phase`, `ready`, `restarts`, per-container
+state) — useful for spotting a crash-looping component, but it does **not** probe
+Prometheus or the log backend, so it cannot tell you whether telemetry is configured.
+For that, check the env var and the hub's startup log as described in
+[Troubleshooting](troubleshooting).
 
 ## Operator metrics
 

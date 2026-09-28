@@ -52,9 +52,10 @@ List all Agents in the configured namespace, sorted by resource name.
       "llm": {"model": "glm-5.1:cloud", "maxTurns": 25, "vision": false},
       "persona": {"inline": "..."},
       "enabledTools": ["read", "edit"],
-      "scaling": {"minReplicas": 0, "maxReplicas": 3},
+      "replicas": 2,
+      "minReplicas": 0,
       "memory": {"enabled": true, "provider": "example"},
-      "status": {"ready": true, "replicas": 1},
+      "status": {"ready": true, "replicas": 2, "desired": 2, "mode": "queue"},
       "skills": {"items": ["git-review"]},
       "mcp": {"servers": [{"name": "github", "url": "https://mcp.github.com/sse", "tokenFromEnv": "GITHUB_TOKEN"}]},
       "env": [{"name": "LOG_LEVEL", "value": "debug"}, {"name": "API_TOKEN", "value": "", "secret": true}],
@@ -70,6 +71,21 @@ Agents carry an `updatedAt` timestamp (RFC3339) in both list and detail response
 Agents also carry an agent-scoped skill selection in `skills`: **present = explicit override** (`{"items": []}` means no skills at all), **absent = inherit** the referenced image's `enabledSkills` (legacy behavior). Every id must exist in the skill library (`/skills`); unknown ids are rejected with `400`. Once set, the selection is explicit — the API does not currently offer a reset-to-inherit.
 
 The same wrapper semantics apply to the agent-scoped MCP selection in `mcp`, with one asymmetry: **requests carry registry names** (`{"servers": ["github"]}`), and the hub resolves each name to its full definition from the MCP registry (`/mcp-servers`, unknown names → `400`) when writing — **responses return the resolved definitions** (`name`, `url`, `tokenFromEnv`). The agent CR holds a snapshot: later registry edits do not rewrite existing agents. Absent `mcp` inherits the referenced image's `mcpServers` (legacy); `{"servers": []}` explicitly connects to none.
+
+Agents scale on `replicas` and an optional `minReplicas` floor. Unset, `replicas` is a
+standing container count and the agent keeps exactly that many containers running. Set
+`minReplicas` (0 up to `replicas`) and the agent instead scales with its own queue:
+`replicas` becomes the ceiling it may burst to under load and `minReplicas` the floor it
+falls back to when idle, so `minReplicas: 0` parks the agent at zero containers until the
+hub sees work for it. A new event then pays the cold start — pod scheduling plus the
+runtime's own boot. The hub reports per-agent queue depth on the agent and the operator
+acts on it; if that report goes stale the operator keeps the containers it already has
+rather than scaling down, because a hub that stopped publishing is indistinguishable from
+a queue that drained. Scale-down waits until in-flight tasks have finished, so a busy
+agent never loses work to it. Both fields appear flat in responses and requests; the
+detail `status` object reports what is running (`replicas`) and what the operator wants
+(`desired`, `mode`, `reason`, `message`) — `mode: "queue"` alongside `desired: 0` is an
+agent that is asleep by request, not a pod that failed to schedule.
 
 Agents may also carry their own environment variables in `env`: a list of `{"name", "value", "secret"}` layered **on top of** the referenced image's `env`. Entries whose name matches an image variable override its value (and its `secret` flag); new names are added. Absent `env` means the agent runs on the image's variables alone. Names must be valid environment variable names and unique within the list (`400` otherwise). Values of entries with `secret: true` are never returned — they read back as `""`, matching the image `env` contract — and submitting a secret entry with an empty value on update keeps the stored value.
 
@@ -252,11 +268,15 @@ Trigger a tool sync for an `AgentImage`. The hub schedules a one-off Job that ru
 
 ## Connectors
 
-Connectors are the resources that bridge Ainsel to upstream code-hosting platforms. The list/get endpoints return `WebhookConnector` resources in a simplified response.
+A connector is a `WebhookConnector` CR declaring a webhook source (see
+[writing-a-connector.md](writing-a-connector.md) for the full lifecycle). The
+hub generates its **id** (`c-…`), which is also the CR name and the value that
+routes events (`Event.connector`, trigger `connectorRef`); the `name` in
+requests and responses is a display-only label.
 
 ### GET /api/v1/connectors
 
-List all connectors across both kinds, sorted by ID. Supports `page`/`pageSize`.
+List all connectors, sorted by ID. Supports `page`/`pageSize`.
 
 **Response:** `200 OK`
 ```json
@@ -264,13 +284,11 @@ List all connectors across both kinds, sorted by ID. Supports `page`/`pageSize`.
   "items": [
     {
       "id": "c-1a2b3c",
-      "name": "Forgejo Self-Hosted",
-      "type": "forgejo",
-      "url": "https://forgejo.example.com",
-      "organization": "AInsel",
-      "botIdentity": {"username": "ainsel-bot"},
-      "webhookEndpoint": "https://.../webhook/c-1a2b3c",
-      "status": {"ready": true, "installed": false, "webhookRegistered": true}
+      "name": "connector-forgejo-ainsel",
+      "signatureHeader": "X-Forgejo-Signature",
+      "webhookEndpoint": "https://ainsel.example.com/webhooks/c-1a2b3c",
+      "disabled": false,
+      "status": {"ready": true}
     }
   ],
   "total": 1, "page": 1, "pageSize": 50, "totalPages": 1
@@ -279,40 +297,64 @@ List all connectors across both kinds, sorted by ID. Supports `page`/`pageSize`.
 
 ### POST /api/v1/connectors
 
-Create a connector. `name` and `type` are always required; the remaining required fields depend on `type`.
+Create a connector.
 
-**Request body (forgejo):**
+**Request body:**
 ```json
 {
-  "name": "Forgejo Self-Hosted",
-  "type": "forgejo",
-  "url": "https://forgejo.example.com",
-  "token": "<webhook bootstrap token>",
-  "organization": "AInsel",
-  "botIdentity": {"username": "ainsel-bot"},
-  "botPassword": "<consumed-once>"
+  "name": "connector-sentry",
+  "signatureHeader": "X-Sentry-Auth-Signature",
+  "groupId": "my-group"
 }
 ```
 
-`botToken` (pre-minted) and `botPassword` (basic-auth mint) are mutually exclusive. The webhook HMAC is generated by the hub and returned exactly once on this response as `webhookSecretValue`.
+`name` (display label) is required; `signatureHeader` defaults to
+`X-Hub-Signature-256`; `groupId` is required when access control is enabled.
 
-**Response:** `201 Created` with the connector (forgejo create additionally includes `webhookSecretValue`), `400` on validation errors, `502` if minting the bot token via Forgejo basic auth fails, `500` on K8s failures.
+The hub generates an HMAC webhook secret, stores it in a Kubernetes Secret,
+and returns it **once** in this response as `webhookSecretValue` — put it into
+the source's webhook signing config now. The gateway operator then rolls out
+the per-connector receiver Deployment, Service and ingress path.
 
-### GET /api/v1/connectors/{name}
+**Response:** `201 Created`
+```json
+{
+  "id": "c-1a2b3c",
+  "name": "connector-sentry",
+  "signatureHeader": "X-Sentry-Auth-Signature",
+  "webhookEndpoint": "https://ainsel.example.com/webhooks/c-1a2b3c",
+  "webhookSecretValue": "<hex secret, shown once>",
+  "disabled": false
+}
+```
+`400` on validation errors, `500` on K8s failures.
 
-Fetch one connector by name.
+### GET /api/v1/connectors/{id}
+
+Fetch one connector. The path parameter is the connector's **id** (`c-…`, the
+CR name) — not the display name.
 
 **Response:** `200 OK` or `404 Not Found`.
 
-### PUT /api/v1/connectors/{name}
+### PUT /api/v1/connectors/{id}
 
-Update a connector. Body fields are all optional; only present fields are applied. `botToken`/`botPassword` may be used to rotate the bot access token.
+Update a connector. Body fields are optional; only present fields are
+applied: `name` (new display label) and `disabled` (the enable/disable
+switch).
 
-**Response:** `200 OK`, `400`, `404`, `502` (Forgejo mint failure), or `500`.
+**Response:** `200 OK`, `400`, `404`, or `500`.
 
-### DELETE /api/v1/connectors/{name}
+### POST /api/v1/connectors/{id}/rotate-secret
 
-Delete a connector. Associated credentials and webhook secrets are deleted as well.
+Rotate the connector's webhook HMAC secret. The new secret is returned once
+as `webhookSecretValue`; update the source's signing config afterwards.
+
+**Response:** `200 OK` with the connector (including `webhookSecretValue`),
+`404 Not Found`, or `500`.
+
+### DELETE /api/v1/connectors/{id}
+
+Delete a connector. The associated webhook secret is deleted as well.
 
 **Response:** `204 No Content` or `404 Not Found`.
 
@@ -322,9 +364,9 @@ Delete a connector. Associated credentials and webhook secrets are deleted as we
 
 ### GET /api/v1/triggers
 
-List all `Trigger` resources, sorted by name. Supports `page`/`pageSize` plus optional filters.
+List all triggers, sorted by id. Supports `page`/`pageSize` plus optional filters.
 
-**Query parameters:** `agent`, `connector`, `eventType` (each is an exact match against the trigger spec; unset filters match everything).
+**Query parameters:** `agent`, `connector` (each is an exact match against the trigger's `agentRef`/`connectorRef`; unset filters match everything).
 
 **Response:** `200 OK`
 ```json
@@ -335,8 +377,6 @@ List all `Trigger` resources, sorted by name. Supports `page`/`pageSize` plus op
       "name": "Review issues",
       "agentRef": "a-3f9a2b",
       "connectorRef": "c-1a2b3c",
-      "eventType": "issue.opened",
-      "ignoreBotEvents": true,
       "filters": [{"field": "repo", "op": "eq", "value": "AInsel/ainsel"}],
       "status": {"agentValid": true, "connectorValid": true}
     }
@@ -347,7 +387,10 @@ List all `Trigger` resources, sorted by name. Supports `page`/`pageSize` plus op
 
 ### POST /api/v1/triggers
 
-Create a Trigger.
+Create a trigger. `agentRef` and `connectorRef` are the agent's and connector's
+**ids** (`a-…` / `c-…`, their CR names) — display names are not valid refs.
+References are validated at write time and reported in `status`; `groupId` is
+required when access control is enabled.
 
 **Request body:**
 ```json
@@ -355,25 +398,24 @@ Create a Trigger.
   "name": "Review issues",
   "agentRef": "a-3f9a2b",
   "connectorRef": "c-1a2b3c",
-  "eventType": "issue.opened",
-  "ignoreBotEvents": true,
+  "groupId": "my-group",
   "filters": [{"field": "repo", "op": "eq", "value": "AInsel/ainsel"}]
 }
 ```
 
-**Response:** `201 Created` with the trigger, `400` on invalid JSON, `500` on K8s failures.
+**Response:** `201 Created` with the trigger, `400` on invalid JSON, `500` on storage failures.
 
-### GET /api/v1/triggers/{name}
+### GET /api/v1/triggers/{id}
 
 **Response:** `200 OK` or `404 Not Found`.
 
-### PUT /api/v1/triggers/{name}
+### PUT /api/v1/triggers/{id}
 
-Update a Trigger. All body fields are optional.
+Update a trigger. All body fields (`name`, `agentRef`, `connectorRef`, `filters`) are optional; references are re-validated after the update.
 
 **Response:** `200 OK`, `400`, `404`, or `500`.
 
-### DELETE /api/v1/triggers/{name}
+### DELETE /api/v1/triggers/{id}
 
 **Response:** `204 No Content` or `404 Not Found`.
 
@@ -403,14 +445,14 @@ Example with `in`:
 
 ## Cron Triggers
 
-Manage `CronTrigger` resources — scheduled prompts delivered to an agent on a
-cron schedule. See the [CRD reference](crd-reference.md#crontrigger) for the
+Manage cron triggers — scheduled prompts delivered to an agent on a cron
+schedule. See the [schema reference](crd-reference.md#crontrigger) for the
 schedule syntax.
 
 ### GET /api/v1/cron-triggers
 
-List all `CronTrigger` resources, sorted by name. Supports `page`/`pageSize`
-plus an optional `agent` filter (exact match against `spec.agentRef`).
+List all cron triggers, sorted by id. Supports `page`/`pageSize`
+plus an optional `agent` filter (exact match against `agentRef`).
 
 **Response:** `200 OK`
 ```json
@@ -419,7 +461,7 @@ plus an optional `agent` filter (exact match against `spec.agentRef`).
     {
       "id": "c-9c1d2e",
       "name": "Daily standup summary",
-      "agentRef": "standup-bot",
+      "agentRef": "a-3f9a2b",
       "schedule": "0 9 * * 1-5",
       "prompt": "Summarize open PRs and stale issues.",
       "enabled": true,
@@ -432,36 +474,112 @@ plus an optional `agent` filter (exact match against `spec.agentRef`).
 
 ### POST /api/v1/cron-triggers
 
-Create a CronTrigger.
+Create a cron trigger.
 
 **Request body:**
 ```json
 {
   "name": "Daily standup summary",
-  "agentRef": "standup-bot",
+  "agentRef": "a-3f9a2b",
   "schedule": "0 9 * * 1-5",
   "prompt": "Summarize open PRs and stale issues.",
   "enabled": true
 }
 ```
 
-`agentRef`, `schedule`, and `prompt` are required; `enabled` defaults to `true`.
+`agentRef` (the agent's **id**, `a-…`), `schedule`, and `prompt` are required;
+`enabled` defaults to `true`; `groupId` is required when access control is
+enabled.
 
-**Response:** `201 Created`, `400` on invalid JSON or missing fields, `500` on K8s failures.
+**Response:** `201 Created`, `400` on invalid JSON or missing fields, `500` on storage failures.
 
-### GET /api/v1/cron-triggers/{name}
+### GET /api/v1/cron-triggers/{id}
 
 **Response:** `200 OK` or `404 Not Found`.
 
-### PUT /api/v1/cron-triggers/{name}
+### PUT /api/v1/cron-triggers/{id}
 
-Update a CronTrigger. All body fields are optional; omitted fields are unchanged.
+Update a cron trigger. All body fields are optional; omitted fields are unchanged.
 
 **Response:** `200 OK`, `400`, `404`, or `500`.
 
-### DELETE /api/v1/cron-triggers/{name}
+### DELETE /api/v1/cron-triggers/{id}
 
 **Response:** `204 No Content` or `404 Not Found`.
+
+---
+
+## Channels
+
+A channel is a named stream events live in. Channels live in the hub's Postgres (`channel_id` on every stored event), not in CRDs: one **connector** channel per `WebhookConnector` (where its events are born), one **agent** channel per `Agent` (its inbox), plus **custom** grouping channels. Identity is the channel id, never the name — a connector and an agent can both be labelled `forgejo`.
+
+Subscriptions are read from two registries and reported together: `trigger` edges (connector → agent inbox, still owned by the trigger registry) and `bridge` edges (channel → channel, owned by the channel graph; at least one end must be custom and the graph must stay acyclic).
+
+### GET /api/v1/channels
+
+List channels with their traffic counts, sorted by activity then id. Supports `page`/`pageSize`. Query parameters: `kind` (`connector`|`agent`|`custom`), `since` (RFC 3339 start of the count window, default 24h ago).
+
+**Response:** `{ items, total, page, pageSize, totalPages, window }`, each item:
+
+```json
+{
+  "id": "ch-9f3c1a02",
+  "kind": "connector",
+  "name": "connector-forgejo-ainsel",
+  "description": "Where connector-forgejo-ainsel events arrive",
+  "entityRef": "c-1a2b3c",
+  "orphaned": false,
+  "createdAt": "2026-07-08T09:00:00Z",
+  "updatedAt": "2026-07-08T09:00:00Z",
+  "counts": { "events": 12, "unmatched": 3, "failed": 1 },
+  "bridges": 1,
+  "subscriptions": 2
+}
+```
+
+`counts.events` counts births in the window (for an inbox, everything that reached it, born there or transferred in); `unmatched` those that no subscription transferred onward; `failed` those whose run ended in failure.
+
+### POST /api/v1/channels
+
+Create a custom grouping channel. Body: `{ "name", "description?", "groupId?" }` — `groupId` is required when access control is enabled. Provisioned kinds are not creatable here.
+
+**Response:** `201 Created` with the channel.
+
+### GET /api/v1/channels/{id}
+
+One channel plus its `incoming` / `outgoing` subscription arrays.
+
+### PUT /api/v1/channels/{id}
+
+Rename a custom channel or change its description. Body: `{ "name?", "description?" }`. Provisioned channels carry their entity's name.
+
+### DELETE /api/v1/channels/{id}
+
+Delete a custom channel.
+
+**Response:** `204 No Content`; `409 Conflict` while any subscription is attached.
+
+### GET /api/v1/channels/{id}/events
+
+The channel's timeline — events born in it plus events transferred into it. Query parameters: `limit` (default 100, max 500), `offset`, `since`, `agent`, `subject`, `status`. Same envelope as [`GET /api/v1/events`](#get-apiv1events).
+
+### POST /api/v1/channels/{id}/bridges
+
+Transfer the channel's events into another. Body: `{ "to", "name?" }`.
+
+**Response:** `201 Created` with the bridge; `400` on a self-edge, when neither end is custom, on a cycle, or when joining two provisioned channels (that pairing is a trigger); `409` when the edge already exists.
+
+### DELETE /api/v1/channels/{id}/bridges/{bridgeId}
+
+Remove a bridge. `{id}` must be the bridge's source channel.
+
+**Response:** `204 No Content`; `404` when the bridge is not attached to that channel.
+
+### GET /api/v1/channel-subscriptions
+
+Every edge in the graph in one call, both registries merged. **Response:** `{ items, total }`. An edge is reported only when the caller may see both endpoints.
+
+**Authorization:** a connector channel is authorized as its **connector**, an agent channel as its **agent**, a custom channel as a **channel** resource — existing grants cover provisioned streams without a new permission step.
 
 ---
 
@@ -484,8 +602,6 @@ List recent invocations, newest first. Supports `page`/`pageSize`.
       "agentName": "a-3f9a2b",
       "triggerName": "t-9c1d2e",
       "eventId": "evt-abc123",
-      "eventType": "issue.opened",
-      "eventSource": "forgejo",
       "connector": "c-1a2b3c",
       "startTime": "2026-05-20T10:00:00Z",
       "endTime": "2026-05-20T10:00:14Z",
@@ -891,51 +1007,62 @@ When Loki or Prometheus is not configured, the affected fields are silently left
 
 ## Activity & Errors
 
-These endpoints stream log-derived activity off Loki. They return `503 Service Unavailable` when the log backend is not configured.
+The activity list is served from the hub's Postgres event queue; errors come
+from the hub's own `task_logs` table. Both return `503 Service Unavailable`
+when their backend is not configured.
 
 ### GET /api/v1/events
 
-List recent activity events (log_type=`activity_event`).
+List recent events (the console's Activity page), newest first.
 
-**Query parameters:** `limit` (default `50`), `status`, `eventType`, `connector`, `since` (RFC3339).
+**Query parameters:** `limit` (default `100`, max `500`), `offset`, `connector`, `agent`, `status` (`matched` | `unmatched` | `error`), `since` (RFC3339).
 
 **Response:** `200 OK`
 ```json
 {
   "events": [
     {
-      "id": "evt-1716198000000000000",
+      "id": "evt_c-1a2b3c_1716198000000000000",
       "timestamp": "2026-05-20T10:00:00Z",
-      "eventType": "issue.opened",
       "connector": "c-1a2b3c",
-      "actor": "alice",
-      "subject": "AInsel/ainsel#42",
-      "action": "opened",
+      "channelId": "ch-9f3c1a02",
       "status": "matched",
-      "matches": [{"triggerName": "t-9c1d2e", "agentName": "a-3f9a2b"}]
+      "matches": [{"trigger": "t-9c1d2e", "agent": "a-3f9a2b", "runStatus": "success", "durationMs": 14000}],
+      "payload": {"action": "opened", "issue": {"number": 42}}
     }
   ],
   "total": 1
 }
 ```
 
-**Status codes:** `200`, `502` (Loki query failed), `503` (log backend not configured).
+`status` is derived from the event's tasks: no tasks → `unmatched`, any failed
+task → `error`, otherwise `matched`. `matches` entries are enriched with
+invocation run state when still within the invocation store's retention.
+
+**Status codes:** `200`, `400` (invalid parameters), `500`, `503` (event queue not configured).
+
+### GET /api/v1/events/{id}
+
+One event with the same shape as a list entry.
+
+**Response:** `200 OK`, `404 Not Found`, or `503`.
 
 ### GET /api/v1/errors
 
-List recent error events (log_type=`error_event`).
+List recent error-level agent log entries (from the hub's `task_logs` table).
 
-**Query parameters:** `limit` (default `50`), `severity`, `source`, `since` (RFC3339).
+**Query parameters:** `limit` (default `50`), `agent`, `since` (RFC3339, default 24h ago).
 
 **Response:** `200 OK`
 ```json
 {
   "errors": [
     {
-      "id": "err-1716198000000000000",
+      "id": "err-123",
       "timestamp": "2026-05-20T10:00:00Z",
       "severity": "error",
-      "source": "hub",
+      "source": "agent",
+      "agent": "a-3f9a2b",
       "message": "...",
       "details": {"...": "..."}
     }
@@ -944,7 +1071,7 @@ List recent error events (log_type=`error_event`).
 }
 ```
 
-**Status codes:** `200`, `502`, `503`.
+**Status codes:** `200`, `502` (query failed), `503` (log backend not configured).
 
 ---
 

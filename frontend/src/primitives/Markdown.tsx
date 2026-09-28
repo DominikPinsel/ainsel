@@ -1,24 +1,11 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
+import { loadMermaid } from './mermaid'
 
 type MarkdownProps = {
   source: string
   className?: string
-}
-
-// Lazy-load mermaid only when a doc actually contains a diagram.
-let mermaidPromise: Promise<typeof import('mermaid')['default']> | null = null
-
-function loadMermaid() {
-  if (!mermaidPromise) {
-    mermaidPromise = import('mermaid').then((mod) => {
-      const mermaid = mod.default
-      mermaid.initialize({ startOnLoad: false, theme: 'dark' })
-      return mermaid
-    })
-  }
-  return mermaidPromise
 }
 
 export function Markdown({ source, className }: MarkdownProps) {

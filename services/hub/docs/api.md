@@ -380,6 +380,129 @@ Delete a Trigger.
 
 ---
 
+## Channels
+
+A channel is a named stream events live in. The hub owns them in Postgres —
+they are not CRDs — and provisions them from the registries that already
+exist: one **connector** channel per `WebhookConnector` (where its events
+are born), one **agent** channel per `Agent` (its inbox), plus **custom**
+grouping channels users create. Identity is the channel id, never the name:
+a connector and an agent may both be called `forgejo`.
+
+Subscriptions come from two registries and are read together:
+
+| Source | Owned by | Meaning |
+|--------|----------|---------|
+| `trigger` | the trigger registry | a connector's events are routed to an agent inbox — still the single source of truth for that routing, never copied into a bridge |
+| `bridge` | the channel graph | events arriving in one channel are transferred into another; at least one end must be custom, and the graph must stay acyclic |
+
+### GET /api/v1/channels
+
+List channels with their traffic counts. Supports
+[pagination](#pagination). Sorted by event count in the window, then id.
+
+Query parameters: `kind` (`connector` | `agent` | `custom`), `since`
+(RFC 3339 lower bound of the count window; defaults to 24 hours ago).
+
+**Response:** `{ items, total, page, pageSize, totalPages, window }` where
+each item is:
+
+```json
+{
+  "id": "ch-9f3c1a02",
+  "kind": "connector",
+  "name": "forgejo",
+  "description": "Events published by connector \"forgejo\"",
+  "entityRef": "forgejo",
+  "orphaned": false,
+  "createdAt": "2026-07-08T09:00:00Z",
+  "updatedAt": "2026-07-08T09:00:00Z",
+  "counts": { "events": 12, "unmatched": 3, "failed": 1 },
+  "bridges": 1,
+  "subscriptions": 2
+}
+```
+
+`counts` are over the window: events **born** in the channel, of those the
+ones no subscription transferred onward, and the ones whose run failed.
+An agent inbox counts what **reached** it, born there or transferred in.
+
+### POST /api/v1/channels
+
+Create a custom grouping channel. Provisioned kinds are not creatable here —
+they exist because their connector or agent does.
+
+**Body:** `{ "name": "team-inbox", "description": "optional", "groupId": "optional" }`.
+`groupId` is required when access control is enabled.
+
+**Response:** `201 Created` with the channel, or `400` (blank name, missing
+group) / `403`.
+
+### GET /api/v1/channels/:id
+
+One channel plus its edges: the list item's fields with
+`incoming` and `outgoing` arrays of subscriptions.
+
+```json
+{
+  "id": "ch-9f3c1a02",
+  "kind": "custom",
+  "name": "team-inbox",
+  "incoming": [{ "source": "bridge", "refId": "br-4d2e8b11", "name": "all-issues",
+                 "fromChannel": "ch-9f3c1a02", "toChannel": "ch-9f3c1a02",
+                 "fromName": "forgejo", "fromKind": "connector" }],
+  "outgoing": []
+}
+```
+
+### PUT /api/v1/channels/:id
+
+Rename a custom channel or change its description. Provisioned channels carry
+their entity's name and are not renamed here.
+
+### DELETE /api/v1/channels/:id
+
+Delete a custom channel. `409 Conflict` while any subscription is attached to
+it — a stream cannot disappear underneath the subscriptions that use it.
+
+### GET /api/v1/channels/:id/events
+
+The channel's timeline: events born in it, plus events transferred into it.
+Query parameters: `limit` (default 50, max 200), `offset`, `since`, `agent`,
+`subject` (`<connector>.<eventType>`), `status`. Same envelope as
+`GET /api/v1/events`.
+
+### POST /api/v1/channels/:id/bridges
+
+Transfer the channel's events into another. **Body:**
+`{ "to": "ch-9f3c1a02", "name": "optional" }`. Rejected with `400` on a
+self-edge, when neither end is a custom channel, when the edge would create a
+cycle, or when it joins two provisioned channels directly (that pairing is a
+trigger); `409` if the same edge already exists.
+
+### DELETE /api/v1/channels/:id/bridges/:bridgeId
+
+Remove one bridge. The `:id` must be the bridge's **source** channel; the
+callers' write permission on both endpoints is required.
+
+### GET /api/v1/channel-subscriptions
+
+Every edge in the graph in one call, both registries merged, so a client can
+draw the subscriptions without walking each channel. An edge is reported only
+when the caller can see both of its endpoints.
+
+**Response:** `{ items, total }`.
+
+### Authorization
+
+A provisioned channel is authorized as its entity: reading a connector's
+channel needs read access to that **connector**, an agent's inbox needs the
+**agent**. Custom channels are authorized as `channel` resources. Grants on
+existing connectors and agents therefore cover their channels without a new
+permission step.
+
+---
+
 ## Invocations
 
 The hub records every event dispatch to an agent in the `invocations`

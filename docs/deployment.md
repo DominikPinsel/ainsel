@@ -8,7 +8,7 @@
 - Forgejo instance
 - kubectl with cluster access
 
-**NATS:** The chart bundles a NATS instance by default (`nats.enabled: true` in `values.yaml`). You do **not** need to deploy NATS separately unless you want to use an external NATS server. To use an external server, set `nats.enabled: false` in your `values.yaml` and point `hub.nats.url` at your existing NATS endpoint.
+**PostgreSQL:** The chart bundles a PostgreSQL instance by default (`postgres.enabled: true` in `values.yaml`) — it backs the event queue, triggers, chat sessions, and all other hub state. The hub connects using the `HUB_DB_URL` secret (`ainsel-hub-db`). You do **not** need to deploy PostgreSQL separately; to use an external server, set `postgres.enabled: false` and provide your own secret with a `dsn` key (`postgres.auth.existingSecret`).
 
 ## Step 1: Building Images
 
@@ -100,20 +100,18 @@ namespace: ainsel
 
 agentOperator:
   image:
-    repository: <registry>/ainsel/ainsel-k8s-ai-agent-operator
+    repository: dpinsel/ainsel-k8s-ai-agent-operator
     tag: latest
 
 connectorOperator:
   image:
-    repository: <registry>/ainsel/ainsel-k8s-event-source-gateway-operator
+    repository: dpinsel/ainsel-k8s-event-source-gateway-operator
     tag: latest
 
 hub:
   image:
-    repository: <registry>/ainsel/ainsel-hub-backend
+    repository: dpinsel/ainsel-hub-backend
     tag: latest
-  nats:
-    url: nats://nats.platform.svc.cluster.local:4222
   ingress:
     enabled: true
     host: your-domain.com
@@ -122,13 +120,20 @@ hub:
 ui:
   enabled: true
   image:
-    repository: <registry>/ainsel/ainsel-hub-frontend
+    repository: dpinsel/ainsel-hub-frontend
     tag: latest
   ingress:
     enabled: true
     host: your-domain.com
     path: /ainsel
 ```
+
+> **The database:** the hub stores everything in PostgreSQL — events, task
+> deliveries, triggers, cron triggers, channels. `postgres.enabled` (default
+> `true`) brings up the bundled single-pod StatefulSet; point the hub at your
+> own server through its database secret instead (`host`, `port`, `user`,
+> `password`, `dbname`, or a single `dsn`). The platform has no NATS
+> dependency — the event queue lives in that same Postgres instance.
 
 > **Note:** Connectors, agents, triggers, and personas are created at runtime via the hub UI or REST API (`/api/v1/connectors`, `/api/v1/agents`, `/api/v1/triggers`, `/api/v1/personas`). The chart does not bootstrap them.
 

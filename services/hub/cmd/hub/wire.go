@@ -123,6 +123,7 @@ func wireAPIServer(c *container, cfg containerConfig) *api.Server {
 	srv.SetEventQueue(c.eventQueue)
 	srv.SetChatStore(c.chatStore)
 	srv.SetTriggerStore(c.triggerStore)
+	srv.SetChannelService(c.channels, c.transfer)
 	srv.SetUserTokenStore(c.userTokenStore)
 	srv.SetTaskLogStore(c.taskLogStore)
 
