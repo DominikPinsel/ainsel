@@ -134,6 +134,20 @@ func wireAPIServer(c *container, cfg containerConfig) *api.Server {
 		slog.Warn("HUB_INTERNAL_VALIDATE_SECRET not set, user token validate endpoint disabled")
 	}
 
+	// Extra Origins allowed to open /api/v1/ws. Same-origin is always
+	// permitted, so this is only needed when the UI is served from a different
+	// host or port than the hub API (local development).
+	if v := os.Getenv("HUB_WS_ALLOWED_ORIGINS"); v != "" {
+		var origins []string
+		for _, o := range strings.Split(v, ",") {
+			if o = strings.TrimSpace(o); o != "" {
+				origins = append(origins, o)
+			}
+		}
+		srv.SetWSAllowedOrigins(origins)
+		slog.Info("websocket cross-origin allowlist configured", "origins", origins)
+	}
+
 	return srv
 }
 

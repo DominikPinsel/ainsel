@@ -18,6 +18,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+// anonymousChatUser owns sessions created while the hub runs without
+// authentication. A stable placeholder keeps such sessions listable instead of
+// leaving them with an empty owner.
+const anonymousChatUser = "anonymous"
+
 // resolveAgentNameForRouting returns the Kubernetes CR name for an agent.
 // If the stored name already looks like a CR name (starts with "a-"), it
 // is returned as-is. Otherwise we look up agents by display name so legacy
@@ -55,13 +60,24 @@ func (s *Server) handleChatSessions(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		s.createChatSession(w, r)
 	case http.MethodGet:
-		s.listChatSessions(w, r)
+		owner, ok := s.chatListOwnerFilter(r)
+		if !ok {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		s.listChatSessions(w, r, owner)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
 // handleChatSession handles /api/v1/chat/sessions/{id} (single session).
+//
+// Ownership is enforced here, before dispatch, so that no verb — including
+// future ones — can reach a session belonging to another user. The
+// /api/internal/chat/ counterparts deliberately do not go through this check:
+// the agent sidecar authenticates with X-Internal-Token and serves every
+// user's conversations.
 func (s *Server) handleChatSession(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/api/v1/chat/sessions/")
 	// Strip any trailing path segments (e.g. /messages).
@@ -71,6 +87,10 @@ func (s *Server) handleChatSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if id == "" {
 		writeError(w, http.StatusBadRequest, "missing session id")
+		return
+	}
+
+	if _, ok := s.requireChatSessionAccess(w, r, id); !ok {
 		return
 	}
 
@@ -97,6 +117,65 @@ func (s *Server) handleChatSession(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// requireChatSessionAccess authorises a /api/v1/ caller against a single
+// session and returns it. It writes the error response and reports false when
+// access is denied, the session is missing, or the chat store is unwired.
+func (s *Server) requireChatSessionAccess(w http.ResponseWriter, r *http.Request, id string) (*chat.Session, bool) {
+	if s.chat == nil {
+		writeError(w, http.StatusServiceUnavailable, "chat not configured")
+		return nil, false
+	}
+	sess, err := s.chat.GetSession(r.Context(), id)
+	if errors.Is(err, chat.ErrSessionNotFound) {
+		writeError(w, http.StatusNotFound, "session not found")
+		return nil, false
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get session: "+err.Error())
+		return nil, false
+	}
+	if !s.chatCallerMayAccess(r, sess.UserID) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return nil, false
+	}
+	return sess, true
+}
+
+// chatCallerMayAccess reports whether the caller may act on a session owned by
+// owner: ownership, or admin.
+//
+// With no caller identity there is nothing to compare against. That is only
+// legitimate when the hub runs without authentication, where every session is
+// shared — the same assumption requireRead makes when no authz checker is
+// configured. If authentication *is* configured, a missing identity fails
+// closed instead of falling through to "allow".
+func (s *Server) chatCallerMayAccess(r *http.Request, owner string) bool {
+	u, ok := oidc.FromContext(r.Context())
+	if !ok {
+		return !s.AuthMiddlewareConfigured()
+	}
+	if u.Sub == owner {
+		return true
+	}
+	return s.callerIsAdmin(r)
+}
+
+// chatListOwnerFilter decides whose sessions a /api/v1/ list request may see.
+// It returns the owner to restrict to ("" for unrestricted, i.e. admins and
+// unauthenticated deployments) and whether the request may proceed at all.
+func (s *Server) chatListOwnerFilter(r *http.Request) (string, bool) {
+	u, ok := oidc.FromContext(r.Context())
+	if !ok {
+		// Unreachable while authentication is configured — the middleware
+		// rejects first. Fail closed rather than returning every session.
+		return "", !s.AuthMiddlewareConfigured()
+	}
+	if s.callerIsAdmin(r) {
+		return "", true
+	}
+	return u.Sub, true
+}
+
 func (s *Server) createChatSession(w http.ResponseWriter, r *http.Request) {
 	if s.chat == nil {
 		writeError(w, http.StatusServiceUnavailable, "chat not configured")
@@ -117,7 +196,15 @@ func (s *Server) createChatSession(w http.ResponseWriter, r *http.Request) {
 		userID = u.Sub
 	}
 	if userID == "" {
-		userID = "anonymous"
+		if s.AuthMiddlewareConfigured() {
+			// Recording an unowned session here would make it invisible to its
+			// creator and readable by nobody in particular, so refuse instead.
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		// No authentication configured: sessions are shared, so keep the stable
+		// placeholder rather than an empty owner.
+		userID = anonymousChatUser
 	}
 
 	sess, err := s.chat.CreateSession(r.Context(), req.AgentName, userID)
@@ -128,7 +215,13 @@ func (s *Server) createChatSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, sess)
 }
 
-func (s *Server) listChatSessions(w http.ResponseWriter, r *http.Request) {
+// listChatSessions lists chat sessions.
+//
+// ownerFilter restricts the result to one user; "" means unrestricted and is
+// only correct for callers that are already trusted with every session — the
+// agent sidecar on /api/internal/chat/sessions, and admins. The /api/v1/
+// entry point computes it via chatListOwnerFilter.
+func (s *Server) listChatSessions(w http.ResponseWriter, r *http.Request, ownerFilter string) {
 	if s.chat == nil {
 		writeError(w, http.StatusServiceUnavailable, "chat not configured")
 		return
@@ -139,9 +232,15 @@ func (s *Server) listChatSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
+	userID := q.Get("user")
+	if ownerFilter != "" {
+		// A restricted caller sees only their own sessions; an explicit ?user=
+		// cannot widen that.
+		userID = ownerFilter
+	}
 	opts := chat.ListSessionsOptions{
 		AgentName: q.Get("agent"),
-		UserID:    q.Get("user"),
+		UserID:    userID,
 		Limit:     page.PageSize * page.Page, // fetch enough rows for the requested page
 	}
 
@@ -271,9 +370,19 @@ func (s *Server) addChatMessage(w http.ResponseWriter, r *http.Request, sessionI
 	}
 
 	// Broadcast the new message to connected WebSocket clients so the
-	// frontend can update in real-time.
-	if s.wsHub != nil {
-		s.wsHub.broadcast(wsMessage{
+	// frontend can update in real-time. Scoped to the session owner: a chat
+	// message is private to its conversation, and broadcasting it to every
+	// connection streamed every tenant's chat to every browser.
+	sess, sessErr := s.chat.GetSession(r.Context(), sessionID)
+	owner := ""
+	if sessErr == nil {
+		owner = sess.UserID
+	} else {
+		slog.Warn("chat broadcast: could not resolve session owner, skipping scoped delivery",
+			"session_id", sessionID, "error", sessErr)
+	}
+	if s.wsHub != nil && sessErr == nil {
+		s.wsHub.broadcastToUser(owner, wsMessage{
 			Type: "chat.message",
 			Data: map[string]any{
 				"sessionId": sessionID,
@@ -285,61 +394,58 @@ func (s *Server) addChatMessage(w http.ResponseWriter, r *http.Request, sessionI
 	// When a user sends a message, enqueue a chat.message event for the
 	// agent via the event queue. The agent responds via the
 	// mcp__chat__send_reply MCP tool.
-	if req.Role == chat.RoleUser && s.eventQueue != nil {
-		sess, err := s.chat.GetSession(r.Context(), sessionID)
-		if err == nil {
-			agentName, resolveErr := s.resolveAgentNameForRouting(r.Context(), sess.AgentName)
-			if resolveErr != nil {
-				slog.Warn("chat publish: could not resolve agent name, falling back to stored value", "agentName", sess.AgentName, "error", resolveErr)
-				agentName = sess.AgentName
-			}
-			eventID := fmt.Sprintf("chat-%s-%d", sessionID, msg.ID)
-			dataJSON, _ := json.Marshal(map[string]any{
-				"session_id": sessionID,
-				"message":    req.Content,
-			})
-			headers := map[string]string{"type": "chat.message"}
-			headersJSON, _ := json.Marshal(headers)
-
-			// A chat message is born directly in the agent's inbox: no connector
-			// published it, the user typed it into that conversation.
-			var birthChannel string
-			if s.channelSvc != nil {
-				id, err := s.channelSvc.InboxChannelFor(r.Context(), agentName)
-				if err != nil {
-					slog.Warn("chat publish: could not resolve inbox channel", "agent", agentName, "error", err)
-				} else {
-					birthChannel = id
-				}
-			}
-
-			if err := s.eventQueue.InsertEvent(r.Context(), eventqueue.Event{
-				ID:        eventID,
-				Connector: ainselapishared.SourceChat,
-				ChannelID: birthChannel,
-				Headers:   headersJSON,
-				Data:      dataJSON,
-				Raw:       string(dataJSON),
-			}); err != nil {
-				writeError(w, http.StatusBadGateway, "failed to store chat event: "+err.Error())
-				return
-			}
-			_ = s.eventQueue.MarkRouted(r.Context(), eventID)
-			taskHeaders := map[string]string{"type": "chat.message", "X-Trigger-Name": ainselapishared.SourceChat}
-			taskHeadersJSON, _ := json.Marshal(taskHeaders)
-			if err := s.eventQueue.EnqueueTask(r.Context(), eventqueue.Task{
-				EventID:     eventID,
-				AgentName:   agentName,
-				TriggerName: ainselapishared.SourceChat,
-				Headers:     taskHeadersJSON,
-				Payload:     dataJSON,
-			}); err != nil {
-				writeError(w, http.StatusBadGateway, "failed to enqueue chat event for agent: "+err.Error())
-				return
-			}
-			// Anything attached to that inbox now sees the message too.
-			s.transferChatMessage(r.Context(), eventID, birthChannel, agentName, headers, dataJSON)
+	if req.Role == chat.RoleUser && s.eventQueue != nil && sessErr == nil {
+		agentName, resolveErr := s.resolveAgentNameForRouting(r.Context(), sess.AgentName)
+		if resolveErr != nil {
+			slog.Warn("chat publish: could not resolve agent name, falling back to stored value", "agentName", sess.AgentName, "error", resolveErr)
+			agentName = sess.AgentName
 		}
+		eventID := fmt.Sprintf("chat-%s-%d", sessionID, msg.ID)
+		dataJSON, _ := json.Marshal(map[string]any{
+			"session_id": sessionID,
+			"message":    req.Content,
+		})
+		headers := map[string]string{"type": "chat.message"}
+		headersJSON, _ := json.Marshal(headers)
+
+		// A chat message is born directly in the agent's inbox: no connector
+		// published it, the user typed it into that conversation.
+		var birthChannel string
+		if s.channelSvc != nil {
+			id, err := s.channelSvc.InboxChannelFor(r.Context(), agentName)
+			if err != nil {
+				slog.Warn("chat publish: could not resolve inbox channel", "agent", agentName, "error", err)
+			} else {
+				birthChannel = id
+			}
+		}
+
+		if err := s.eventQueue.InsertEvent(r.Context(), eventqueue.Event{
+			ID:        eventID,
+			Connector: ainselapishared.SourceChat,
+			ChannelID: birthChannel,
+			Headers:   headersJSON,
+			Data:      dataJSON,
+			Raw:       string(dataJSON),
+		}); err != nil {
+			writeError(w, http.StatusBadGateway, "failed to store chat event: "+err.Error())
+			return
+		}
+		_ = s.eventQueue.MarkRouted(r.Context(), eventID)
+		taskHeaders := map[string]string{"type": "chat.message", "X-Trigger-Name": ainselapishared.SourceChat}
+		taskHeadersJSON, _ := json.Marshal(taskHeaders)
+		if err := s.eventQueue.EnqueueTask(r.Context(), eventqueue.Task{
+			EventID:     eventID,
+			AgentName:   agentName,
+			TriggerName: ainselapishared.SourceChat,
+			Headers:     taskHeadersJSON,
+			Payload:     dataJSON,
+		}); err != nil {
+			writeError(w, http.StatusBadGateway, "failed to enqueue chat event for agent: "+err.Error())
+			return
+		}
+		// Anything attached to that inbox now sees the message too.
+		s.transferChatMessage(r.Context(), eventID, birthChannel, agentName, headers, dataJSON)
 	}
 
 	writeJSON(w, http.StatusCreated, msg)
@@ -386,7 +492,9 @@ func (s *Server) handleInternalChatSessions(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	s.listChatSessions(w, r)
+	// Unrestricted: the sidecar is authenticated by X-Internal-Token and
+	// serves every user's conversations.
+	s.listChatSessions(w, r, "")
 }
 
 // handleInternalChatSession handles /api/internal/chat/sessions/{id} and
