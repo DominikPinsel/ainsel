@@ -93,6 +93,88 @@ export function useDeletePersona() {
 }
 
 // ---------------------------------------------------------------------------
+// Version history
+//
+// Every text edit appends a `persona_versions` row, so a persona carries its
+// full edit history. The listing is metadata only — fetch a single version for
+// its text. Rollback copies an old text into a *new* current version rather
+// than rewinding, so history is never rewritten.
+//
+// These endpoints require read/write access to the persona, so they can 403
+// for a caller who can see the persona in a listing but not read it.
+// ---------------------------------------------------------------------------
+
+export type PersonaVersionSummary = {
+  personaId: string
+  versionNumber: number
+  createdAt: string
+}
+
+export type PersonaVersion = PersonaVersionSummary & {
+  text: string
+}
+
+export type ListPersonaVersionsParams = {
+  page?: number
+  pageSize?: number
+}
+
+export function listPersonaVersions(
+  id: string,
+  params: ListPersonaVersionsParams = {},
+) {
+  return request<Paginated<PersonaVersionSummary>>(
+    `/personas/${encodeURIComponent(id)}/versions`,
+    { query: params },
+  )
+}
+
+export function getPersonaVersion(id: string, versionNumber: number) {
+  return request<PersonaVersion>(
+    `/personas/${encodeURIComponent(id)}/versions/${versionNumber}`,
+  )
+}
+
+export function rollbackPersona(id: string, toVersion: number) {
+  return request<PersonaResponse>(`/personas/${encodeURIComponent(id)}/rollback`, {
+    method: 'POST',
+    body: { toVersion },
+  })
+}
+
+export function usePersonaVersions(
+  id: string | undefined,
+  params: ListPersonaVersionsParams = {},
+) {
+  return useQuery({
+    queryKey: ['personas', 'versions', id, params],
+    queryFn: () => listPersonaVersions(id!, params),
+    enabled: id !== undefined && id !== '',
+    placeholderData: keepPreviousData,
+  })
+}
+
+/** Fetches one version's text. Pass `null` to keep the query disabled. */
+export function usePersonaVersion(id: string | undefined, versionNumber: number | null) {
+  return useQuery({
+    queryKey: ['personas', 'version', id, versionNumber],
+    queryFn: () => getPersonaVersion(id!, versionNumber!),
+    enabled: id !== undefined && id !== '' && versionNumber !== null,
+  })
+}
+
+export function useRollbackPersona() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, toVersion }: { id: string; toVersion: number }) =>
+      rollbackPersona(id, toVersion),
+    // A rollback bumps currentVersion and appends a history row, so the
+    // listing, the detail view and the version list all go stale at once.
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['personas'] }),
+  })
+}
+
+// ---------------------------------------------------------------------------
 // Agent-scoped personas
 //
 // Editing an agent's persona inline must not rewrite a shared template that
