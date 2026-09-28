@@ -882,6 +882,10 @@ List every stored version, newest first. Metadata only — no `text`.
 Supports the standard `?page=` / `?pageSize=` query params, same defaults and
 bounds as `GET /api/v1/personas`.
 
+Requires read access to the persona, same as `GET /api/v1/personas/{id}`: `401`
+when the caller has no identity, `403` when the persona is neither public nor
+readable by one of the caller's groups.
+
 **Response:** `200 OK`
 ```json
 {
@@ -901,6 +905,9 @@ bounds as `GET /api/v1/personas`.
 
 Fetch one specific historical version with its `text`.
 
+Requires read access to the persona (`401` / `403` as above) — a version body is
+persona content and is not exposed to callers who cannot read the persona.
+
 **Response:** `200 OK` (full Version) or `404 Not Found`.
 
 ### POST /api/v1/personas/{id}/rollback
@@ -913,6 +920,11 @@ Copy the text of an older version into a new current version (incrementing `curr
 ```
 
 **Response:** `200 OK` with the updated persona, `400` if `toVersion` is missing / non-positive, `404` if the persona or target version doesn't exist, `500` on backend failure.
+
+Requires write access to the persona, same as `PUT /api/v1/personas/{id}`: `401`
+when the caller has no identity, `403` when the caller is not a writer or owner
+of the persona's group (and not an admin). A public persona is readable by
+everyone but still only rollback-able by its writers.
 
 ---
 
