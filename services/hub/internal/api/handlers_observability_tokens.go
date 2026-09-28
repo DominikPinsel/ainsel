@@ -1,12 +1,14 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"sort"
 	"time"
 
 	"github.com/DominikPinsel/ainsel/services/hub/internal/invocations"
+	"github.com/DominikPinsel/ainsel/services/hub/internal/prometheus"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/tasklogs"
 )
 
@@ -28,10 +30,49 @@ const (
 	timeseriesStep = 30 * time.Minute
 )
 
+// Values of the token_type label the agent runtime publishes. Pi reports
+// prompt-cache traffic separately from billable input: usage.input excludes
+// cacheRead/cacheWrite, and usage.totalTokens is the sum of all four. An agent
+// loop with prompt caching enabled sends the large majority of its prompt as
+// cache reads, so counting only input + output under-reports consumption by
+// roughly an order of magnitude.
+const (
+	tokenTypeInput      = "input"
+	tokenTypeOutput     = "output"
+	tokenTypeCacheRead  = "cache_read"
+	tokenTypeCacheWrite = "cache_write"
+)
+
+// tokenTotal sums every token component the runtime publishes. This is the one
+// place the accounting rule lives — callers must not re-derive it, because
+// omitting the cache components is exactly the bug this guards against.
+func tokenTotal(input, output, cacheRead, cacheWrite float64) float64 {
+	return input + output + cacheRead + cacheWrite
+}
+
+// tokenTotalsByType returns per-token_type totals for a window in a single
+// grouped query. A component the runtime never published is absent from the
+// map and reads as zero, which keeps "no data yet" and "zero so far"
+// indistinguishable — the desired UX for a freshly-started hub.
+func tokenTotalsByType(ctx context.Context, p *prometheus.Client, rangeKey string) (map[string]float64, error) {
+	result, err := p.Query(ctx,
+		fmt.Sprintf(`sum by (token_type) (increase(%s[%s]))`, metricTokensUsed, rangeKey))
+	if err != nil {
+		return nil, err
+	}
+	totals := make(map[string]float64, len(result.Data))
+	for _, m := range result.Data {
+		totals[m.Labels["token_type"]] += m.Value
+	}
+	return totals, nil
+}
+
 // TokensSummary powers the "Tokens last 24h" tile.
 type TokensSummary struct {
 	InputTokens         float64   `json:"inputTokens"`
 	OutputTokens        float64   `json:"outputTokens"`
+	CacheReadTokens     float64   `json:"cacheReadTokens"`
+	CacheWriteTokens    float64   `json:"cacheWriteTokens"`
 	TotalTokens         float64   `json:"totalTokens"`
 	PreviousTotalTokens float64   `json:"previousTotalTokens"`
 	UpdatedAt           time.Time `json:"updatedAt"`
@@ -47,14 +88,16 @@ type TokensTimeseries struct {
 // TokenSubjectRow is one row in the Agent activity table — a unique
 // (agent, repo, eventType, model) tuple with its tokens.
 type TokenSubjectRow struct {
-	Agent        string  `json:"agent"`
-	AgentName    string  `json:"agentName"`
-	Repo         string  `json:"repo"`
-	EventType    string  `json:"eventType"`
-	Model        string  `json:"model"`
-	InputTokens  float64 `json:"inputTokens"`
-	OutputTokens float64 `json:"outputTokens"`
-	TotalTokens  float64 `json:"totalTokens"`
+	Agent            string  `json:"agent"`
+	AgentName        string  `json:"agentName"`
+	Repo             string  `json:"repo"`
+	EventType        string  `json:"eventType"`
+	Model            string  `json:"model"`
+	InputTokens      float64 `json:"inputTokens"`
+	OutputTokens     float64 `json:"outputTokens"`
+	CacheReadTokens  float64 `json:"cacheReadTokens"`
+	CacheWriteTokens float64 `json:"cacheWriteTokens"`
+	TotalTokens      float64 `json:"totalTokens"`
 }
 
 // TokensBySubject is the response for the /metrics/tokens/by-subject endpoint.
@@ -85,18 +128,12 @@ func (s *Server) getTokensSummary(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	input, err := singleScalar(ctx, s.prom,
-		fmt.Sprintf(`sum(increase(%s{token_type="input"}[%s]))`, metricTokensUsed, rangeKey))
+	totals, err := tokenTotalsByType(ctx, s.prom, rangeKey)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "failed to query token metrics: "+err.Error())
 		return
 	}
-	output, err := singleScalar(ctx, s.prom,
-		fmt.Sprintf(`sum(increase(%s{token_type="output"}[%s]))`, metricTokensUsed, rangeKey))
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to query token metrics: "+err.Error())
-		return
-	}
+	// The prior window is compared as a single total, so it needs no breakdown.
 	prior, err := singleScalar(ctx, s.prom,
 		fmt.Sprintf(`sum(increase(%s[%s] offset %s))`, metricTokensUsed, rangeKey, rangeKey))
 	if err != nil {
@@ -104,10 +141,17 @@ func (s *Server) getTokensSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	input := totals[tokenTypeInput]
+	output := totals[tokenTypeOutput]
+	cacheRead := totals[tokenTypeCacheRead]
+	cacheWrite := totals[tokenTypeCacheWrite]
+
 	resp := TokensSummary{
 		InputTokens:         input,
 		OutputTokens:        output,
-		TotalTokens:         input + output,
+		CacheReadTokens:     cacheRead,
+		CacheWriteTokens:    cacheWrite,
+		TotalTokens:         tokenTotal(input, output, cacheRead, cacheWrite),
 		PreviousTotalTokens: prior,
 		UpdatedAt:           time.Now().UTC(),
 	}
@@ -210,17 +254,21 @@ func (s *Server) getTokensBySubject(w http.ResponseWriter, r *http.Request) {
 			rows[key] = row
 		}
 		switch m.Labels["token_type"] {
-		case "input":
+		case tokenTypeInput:
 			row.InputTokens += m.Value
-		case "output":
+		case tokenTypeOutput:
 			row.OutputTokens += m.Value
+		case tokenTypeCacheRead:
+			row.CacheReadTokens += m.Value
+		case tokenTypeCacheWrite:
+			row.CacheWriteTokens += m.Value
 		}
 	}
 
 	nameMap := s.agentNameMap(ctx)
 	out := make([]TokenSubjectRow, 0, len(rows))
 	for _, row := range rows {
-		row.TotalTokens = row.InputTokens + row.OutputTokens
+		row.TotalTokens = tokenTotal(row.InputTokens, row.OutputTokens, row.CacheReadTokens, row.CacheWriteTokens)
 		if name, ok := nameMap[row.Agent]; ok && name != "" {
 			row.AgentName = name
 		} else {
@@ -258,6 +306,12 @@ type subjectKey struct {
 
 // TokenEventRow is one row in the tokens-by-event response — a unique event
 // with its aggregated token totals.
+//
+// Unlike the summary and by-subject rows, this view is backed by the
+// task_conversations table rather than Prometheus, and that table only persists
+// input/output. Its TotalTokens therefore still excludes prompt-cache traffic
+// until cache columns are added by migration; see the token cost-tracking
+// issue. Do not compare it against the summary tile.
 type TokenEventRow struct {
 	Event        string  `json:"event"`
 	InputTokens  float64 `json:"inputTokens"`

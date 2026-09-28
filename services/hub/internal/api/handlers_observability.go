@@ -90,12 +90,14 @@ type MetricsTimeseries struct {
 
 // AgentMetric is per-agent token consumption + invocation counts.
 type AgentMetric struct {
-	Agent        string  `json:"agent"`
-	AgentName    string  `json:"agentName"`
-	InputTokens  float64 `json:"inputTokens"`
-	OutputTokens float64 `json:"outputTokens"`
-	TotalTokens  float64 `json:"totalTokens"`
-	Invocations  float64 `json:"invocations"`
+	Agent            string  `json:"agent"`
+	AgentName        string  `json:"agentName"`
+	InputTokens      float64 `json:"inputTokens"`
+	OutputTokens     float64 `json:"outputTokens"`
+	CacheReadTokens  float64 `json:"cacheReadTokens"`
+	CacheWriteTokens float64 `json:"cacheWriteTokens"`
+	TotalTokens      float64 `json:"totalTokens"`
+	Invocations      float64 `json:"invocations"`
 }
 
 // AgentsMetricsResponse wraps the per-agent metrics.
@@ -427,7 +429,8 @@ func (s *Server) getAgentsMetrics(w http.ResponseWriter, r *http.Request) {
 
 	agents := map[string]*AgentMetric{}
 
-	// Token consumption (input + output)
+	// Token consumption, broken down by component. Cache reads/writes are
+	// counted separately by the runtime and must be included in the total.
 	tokenResult, err := s.prom.Query(r.Context(), `sum by (agent, token_type) (agent_tokens_used_total)`)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "failed to query token metrics: "+err.Error())
@@ -440,10 +443,14 @@ func (s *Server) getAgentsMetrics(w http.ResponseWriter, r *http.Request) {
 		}
 		entry := getOrCreateAgent(agents, agent)
 		switch m.Labels["token_type"] {
-		case "input":
-			entry.InputTokens = m.Value
-		case "output":
-			entry.OutputTokens = m.Value
+		case tokenTypeInput:
+			entry.InputTokens += m.Value
+		case tokenTypeOutput:
+			entry.OutputTokens += m.Value
+		case tokenTypeCacheRead:
+			entry.CacheReadTokens += m.Value
+		case tokenTypeCacheWrite:
+			entry.CacheWriteTokens += m.Value
 		}
 	}
 
@@ -463,7 +470,7 @@ func (s *Server) getAgentsMetrics(w http.ResponseWriter, r *http.Request) {
 	nameMap := s.agentNameMap(r.Context())
 	out := make([]AgentMetric, 0, len(agents))
 	for _, a := range agents {
-		a.TotalTokens = a.InputTokens + a.OutputTokens
+		a.TotalTokens = tokenTotal(a.InputTokens, a.OutputTokens, a.CacheReadTokens, a.CacheWriteTokens)
 		if name, ok := nameMap[a.Agent]; ok && name != "" {
 			a.AgentName = name
 		} else {

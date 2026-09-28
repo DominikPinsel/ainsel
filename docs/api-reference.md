@@ -997,9 +997,11 @@ Aggregate dashboard tile. Returns resource counts (total + healthy) for agents, 
   "connectors": {"total": 2, "healthy": 2},
   "triggers":   {"total": 12, "healthy": 11},
   "errors":     {"lastHour": 3},
-  "tokens":     {"inputTokens": 120000, "outputTokens": 45000}
+  "tokens":     {"inputTokens": 120000, "outputTokens": 45000, "cacheReadTokens": 1800000, "cacheWriteTokens": 60000, "totalTokens": 2025000}
 }
 ```
+
+Token counts only — the platform has no pricing data configured, so nothing here is a currency amount. See [token components](#token-components).
 
 When Loki or Prometheus is not configured, the affected fields are silently left at zero rather than failing the request.
 
@@ -1122,7 +1124,7 @@ Per-agent token consumption and invocation count.
 ```json
 {
   "agents": [
-    {"agent": "a-3f9a2b", "inputTokens": 12000, "outputTokens": 4500, "totalTokens": 16500, "invocations": 42}
+    {"agent": "a-3f9a2b", "agentName": "Reviewer", "inputTokens": 12000, "outputTokens": 4500, "cacheReadTokens": 180000, "cacheWriteTokens": 9000, "totalTokens": 205500, "invocations": 42}
   ],
   "updatedAt": "2026-05-20T10:00:00Z"
 }
@@ -1137,15 +1139,31 @@ Per-agent token consumption and invocation count.
 {
   "inputTokens": 8400,
   "outputTokens": 3200,
-  "totalTokens": 11600,
+  "cacheReadTokens": 142000,
+  "cacheWriteTokens": 6100,
+  "totalTokens": 159700,
   "previousTotalTokens": 9100,
   "updatedAt": "2026-05-20T10:00:00Z"
 }
 ```
 
+#### Token components
+
+`totalTokens` is the sum of all four components. Agents publish them as separate
+`token_type` series on `agent_tokens_used_total` because the upstream provider reports
+prompt-cache traffic apart from billable input: `inputTokens` **excludes**
+`cacheReadTokens` and `cacheWriteTokens`. A total built from input and output alone
+under-reports real consumption by the whole cached volume, which in an agent loop is
+usually the large majority of the prompt.
+
+`cacheReadTokens / (inputTokens + cacheReadTokens + cacheWriteTokens)` is the cache hit
+rate. Providers without prompt caching publish no cache series, so those fields read as
+zero.
+
 ### GET /api/v1/observability/metrics/tokens/timeseries
 
-24-hour token-usage sparkline stepped at 30-minute intervals.
+24-hour token-usage sparkline stepped at 30-minute intervals. Points sum every
+token component, cache traffic included.
 
 **Query parameters:** `range` — `24h` only (other values return `400`).
 
@@ -1169,7 +1187,7 @@ One row per `(agent, repo, eventType, model)` tuple over the requested range.
 {
   "range": "24h",
   "rows": [
-    {"agent": "a-3f9a2b", "repo": "AInsel/ainsel", "eventType": "issue.opened", "model": "gpt-4", "inputTokens": 2400, "outputTokens": 900, "totalTokens": 3300}
+    {"agent": "a-3f9a2b", "repo": "AInsel/ainsel", "eventType": "issue.opened", "model": "gpt-4", "inputTokens": 2400, "outputTokens": 900, "cacheReadTokens": 38000, "cacheWriteTokens": 1500, "totalTokens": 42800}
   ],
   "updatedAt": "2026-05-20T10:00:00Z"
 }
@@ -1270,11 +1288,14 @@ Per-`(agent, repository, issueNumber, model)` token consumption from Prometheus.
 ```json
 {
   "tokens": [
-    {"agent": "a-3f9a2b", "repository": "AInsel/ainsel", "issueNumber": "42", "model": "glm-5.1:cloud", "inputTokens": 2400, "outputTokens": 900}
+    {"agent": "a-3f9a2b", "repository": "AInsel/ainsel", "issueNumber": "42", "model": "glm-5.1:cloud", "inputTokens": 2400, "outputTokens": 900, "cacheReadTokens": 38000, "cacheWriteTokens": 1500, "totalTokens": 42800}
   ],
-  "total": {"inputTokens": 2400, "outputTokens": 900}
+  "total": {"inputTokens": 2400, "outputTokens": 900, "cacheReadTokens": 38000, "cacheWriteTokens": 1500, "totalTokens": 42800}
 }
 ```
+
+Token counts only — no cost or pricing data. Component semantics are described under
+[token components](#token-components).
 
 **Status codes:** `200`, `502` on Prometheus query failure, `503` when no metrics backend is configured.
 

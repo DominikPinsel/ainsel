@@ -213,11 +213,41 @@ export function capToolResultContent(content: unknown, maxChars?: number): unkno
 }
 
 // Prometheus metrics — exported by the agent runtime on :9090/metrics.
+//
+// token_type is one of: input, output, cache_read, cache_write. Pi reports
+// prompt-cache traffic separately from billable input (usage.totalTokens is
+// input + output + cacheRead + cacheWrite), so each component needs its own
+// series — summing only input + output under-reports what the model actually
+// processed by the whole cached volume.
 const tokenCounter = new prom.Counter({
 	name: "agent_tokens_used_total",
-	help: "Total tokens consumed by the agent",
+	help: "Total tokens consumed by the agent, by token_type (input, output, cache_read, cache_write)",
 	labelNames: ["agent", "repo", "org", "event_type", "token_type", "model"],
 });
+
+/** Maps a pi usage object onto the [token_type, value] pairs to publish.
+ *
+ *  Pi's usage.input excludes prompt-cache traffic and usage.totalTokens is
+ *  input + output + cacheRead + cacheWrite, so each component needs its own
+ *  series — publishing only input + output under-reports what the model
+ *  processed by the whole cached volume, which dominates an agent loop.
+ *
+ *  Components that are absent, non-numeric or zero are dropped: providers
+ *  without prompt caching never report cacheRead/cacheWrite, and skipping them
+ *  keeps two dead series per label combination out of Prometheus.
+ *
+ *  Pure and exported for unit testing. */
+export function tokenComponents(usage: any): Array<[string, number]> {
+	const candidates: Array<[string, number]> = [
+		["input", usage?.input],
+		["output", usage?.output],
+		["cache_read", usage?.cacheRead],
+		["cache_write", usage?.cacheWrite],
+	];
+	return candidates.filter(
+		([, value]) => typeof value === "number" && Number.isFinite(value) && value > 0,
+	);
+}
 
 // EventContext is the normalized view of an event.
 export interface EventContext {
@@ -1232,19 +1262,20 @@ export default function ainselRunnerExtension(pi: ExtensionAPI) {
 			const org = process.env.AINSEL_EVENT_ORG ?? "";
 			const eventType = process.env.AINSEL_EVENT_TYPE ?? "";
 			const model = msg.model ?? "";
-			tokenCounter.inc(
-				{ agent, repo, org, event_type: eventType, token_type: "input", model },
-				msg.usage.input,
-			);
-			tokenCounter.inc(
-				{ agent, repo, org, event_type: eventType, token_type: "output", model },
-				msg.usage.output,
-			);
+			const usage = msg.usage;
+			for (const [tokenType, value] of tokenComponents(usage)) {
+				tokenCounter.inc(
+					{ agent, repo, org, event_type: eventType, token_type: tokenType, model },
+					value,
+				);
+			}
 			logInfo("token usage recorded", {
 				agent,
 				event_type: eventType,
-				input: msg.usage.input,
-				output: msg.usage.output,
+				input: usage.input,
+				output: usage.output,
+				cache_read: usage.cacheRead,
+				cache_write: usage.cacheWrite,
 				model,
 			});
 		}

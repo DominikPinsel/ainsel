@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { extractEventContext, buildUserMessage, createTurnTracker, beginTurn, endTurn, recordAssistantEnd, captureMessage, markSettled, waitForSettle, toConversationPayloads, postTaskMessages, reportConversation, flushTurnMessages, queueConversationFlush, redactSecrets, resetRedactionCache, capToolResultContent, truncateWithMarker, resolveToolResultMaxChars, resolveEventDataMaxChars, resolveInternalToken } from "./index.ts";
+import { extractEventContext, buildUserMessage, createTurnTracker, beginTurn, endTurn, recordAssistantEnd, captureMessage, markSettled, waitForSettle, toConversationPayloads, postTaskMessages, reportConversation, flushTurnMessages, queueConversationFlush, redactSecrets, resetRedactionCache, capToolResultContent, truncateWithMarker, resolveToolResultMaxChars, resolveEventDataMaxChars, resolveInternalToken, tokenComponents } from "./index.ts";
 import type { HubEvent, TurnTracker, ConversationPayload } from "./index.ts";
 
 describe("extractEventContext", () => {
@@ -1502,5 +1502,54 @@ describe("resolveInternalToken", () => {
 	it("throws when the platform secret is missing or empty", () => {
 		assert.throws(() => resolveInternalToken({}), /HUB_INTERNAL_VALIDATE_SECRET is not set/);
 		assert.throws(() => resolveInternalToken({ HUB_INTERNAL_VALIDATE_SECRET: "" }), /HUB_INTERNAL_VALIDATE_SECRET is not set/);
+	});
+});
+
+describe("tokenComponents", () => {
+	it("publishes all four components when the provider reports cache traffic", () => {
+		// Pi's usage.input excludes cache traffic and totalTokens is the sum of
+		// all four, so dropping the cache components would under-report the
+		// 91% of this prompt that came from cache.
+		const out = tokenComponents({
+			input: 500,
+			output: 200,
+			cacheRead: 6000,
+			cacheWrite: 300,
+			totalTokens: 7000,
+		});
+		assert.deepEqual(out, [
+			["input", 500],
+			["output", 200],
+			["cache_read", 6000],
+			["cache_write", 300],
+		]);
+	});
+
+	it("omits cache components for providers that never report them", () => {
+		// No dead series for providers without prompt caching.
+		const out = tokenComponents({ input: 10, output: 20, totalTokens: 30 });
+		assert.deepEqual(out, [
+			["input", 10],
+			["output", 20],
+		]);
+	});
+
+	it("keeps a pure cache hit, which has no billable input", () => {
+		// Regression guard: this message has totalTokens > 0 but input 0, so it
+		// must still contribute its cache read rather than vanish.
+		const out = tokenComponents({ input: 0, output: 0, cacheRead: 4096, cacheWrite: 0, totalTokens: 4096 });
+		assert.deepEqual(out, [["cache_read", 4096]]);
+	});
+
+	it("drops zero, negative, non-numeric and non-finite values", () => {
+		assert.deepEqual(tokenComponents({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }), []);
+		assert.deepEqual(tokenComponents({ input: -5, output: 10 }), [["output", 10]]);
+		assert.deepEqual(tokenComponents({ input: "10", output: 10 }), [["output", 10]]);
+		assert.deepEqual(tokenComponents({ input: Number.NaN, output: Number.POSITIVE_INFINITY }), []);
+	});
+
+	it("tolerates a missing usage object", () => {
+		assert.deepEqual(tokenComponents(undefined), []);
+		assert.deepEqual(tokenComponents(null), []);
 	});
 });

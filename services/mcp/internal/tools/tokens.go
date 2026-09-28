@@ -10,9 +10,12 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-// UsageTools wraps the hub's cost (/api/v1/tokens) and dashboard summary
+// UsageTools wraps the hub's token usage (/api/v1/tokens) and dashboard summary
 // (/api/v1/stats) endpoints. Both are backed by live Prometheus / Loki
 // queries on the hub side; neither is a stub at the time of writing.
+//
+// These report token counts only. There is no cost or pricing data anywhere in
+// the pipeline yet — see the token cost-tracking issue.
 //
 // /api/v1/tokens supports agent, repository, issueNumber filters (no
 // since/until); we accept those plus pass-through since/until for forward
@@ -31,7 +34,7 @@ func NewUsageTools(hubURL string) *UsageTools {
 
 func (t *UsageTools) GetTokenUsageTool() mcp.Tool {
 	return mcp.NewTool("get_token_usage",
-		mcp.WithDescription("Hub-aggregated cost view: token counts (input/output) per agent, repository, issue, and model. Results capped at 50 rows."),
+		mcp.WithDescription("Hub-aggregated token usage: counts per agent, repository, issue, and model, split into input, output, cacheRead and cacheWrite with a total. Token counts only — no cost or pricing data. Results capped at 50 rows."),
 		mcp.WithString("agent", mcp.Description("Filter by agent name")),
 		mcp.WithString("repository", mcp.Description("Filter by repository")),
 		mcp.WithString("issueNumber", mcp.Description("Filter by issue number")),

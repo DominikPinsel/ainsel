@@ -615,6 +615,16 @@ summary, a sparkline, and a per-agent / per-repo / per-model breakdown
 that the frontend renders as the "Tokens last 24h" tile. So you can *see*
 what's being consumed today.
 
+`token_type` splits consumption into `input`, `output`, `cache_read` and
+`cache_write`. The split matters: prompt-cache reads are billed at a small
+fraction of the input rate, and in an agent loop they are usually the large
+majority of the prompt. Reported totals include all four components, so a
+total that only added `input` and `output` would under-report real
+consumption by roughly an order of magnitude. Use
+`cache_read / (input + cache_read + cache_write)` as the cache hit rate — a
+sudden drop means something is invalidating the prompt prefix and the same
+work is being re-billed at the full input rate.
+
 ![The Token Detail page: all-time total and 24-hour input/output tiles above
 a by-agent table breaking usage down per repo/event, agent and model, with
 input, output, I/O ratio and total columns and a per-row link to the
@@ -622,10 +632,19 @@ underlying events](images/token-detail.webp)
 
 *The full token view behind the dashboard tile — per-agent, per-model,
 per-event-type spend, with the I/O ratio that spots context-heavy agents
-at a glance. (Private repo names redacted.)*
+at a glance. (Private repo names redacted. The cache columns are not yet
+rendered here; see the note below.)*
+
+The console currently renders only the `input` and `output` columns, while
+the totals behind them include cache traffic — so the visible columns do not
+yet sum to the displayed total. Adding the cache columns and a hit-rate tile
+is tracked with the cost work rather than here.
 
 What is **not yet** wired up:
 
+- **Cost reporting** — no pricing data is configured for agent models, so
+  nothing in the platform converts tokens to currency. The observability and
+  MCP surfaces report token counts only. *Planned.*
 - **Per-agent / per-repo budget enforcement** — no policy pauses an
   agent on budget overrun. *Planned.*
 - **Pre-built Grafana dashboards** — metrics are scrapeable but no

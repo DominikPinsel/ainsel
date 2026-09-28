@@ -321,6 +321,8 @@ func TestObservability_AgentsAggregatesTokensAndInvocations(t *testing.T) {
 			return vectorResponse([]vectorSample{
 				{Labels: map[string]string{"agent": "dev", "token_type": "input"}, Value: "1500"},
 				{Labels: map[string]string{"agent": "dev", "token_type": "output"}, Value: "300"},
+				{Labels: map[string]string{"agent": "dev", "token_type": "cache_read"}, Value: "8000"},
+				{Labels: map[string]string{"agent": "dev", "token_type": "cache_write"}, Value: "200"},
 				{Labels: map[string]string{"agent": "reviewer", "token_type": "input"}, Value: "800"},
 				{Labels: map[string]string{"agent": "reviewer", "token_type": "output"}, Value: "200"},
 			})
@@ -371,8 +373,19 @@ func TestObservability_AgentsAggregatesTokensAndInvocations(t *testing.T) {
 	if rev.AgentName != "Reviewer Bot" {
 		t.Errorf("reviewer agentName wrong: got %q", rev.AgentName)
 	}
-	if dev.InputTokens != 1500 || dev.OutputTokens != 300 || dev.TotalTokens != 1800 {
-		t.Errorf("dev tokens wrong: %+v", dev)
+	if dev.InputTokens != 1500 || dev.OutputTokens != 300 {
+		t.Errorf("dev input/output wrong: %+v", dev)
+	}
+	if dev.CacheReadTokens != 8000 || dev.CacheWriteTokens != 200 {
+		t.Errorf("dev cache components wrong: %+v", dev)
+	}
+	if dev.TotalTokens != 10000 {
+		t.Errorf("dev total must include cache traffic, got %v", dev.TotalTokens)
+	}
+	// reviewer publishes no cache series at all (provider without prompt
+	// caching); its total must still be correct and the fields must be zero.
+	if rev.CacheReadTokens != 0 || rev.CacheWriteTokens != 0 || rev.TotalTokens != 1000 {
+		t.Errorf("reviewer tokens wrong: %+v", rev)
 	}
 	if dev.Invocations != 5 {
 		t.Errorf("dev invocations: expected 5, got %v", dev.Invocations)
