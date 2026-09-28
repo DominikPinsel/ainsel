@@ -17,6 +17,10 @@ export function invocationStatusVariant(s: string): InvocationStatusVariant {
   return 'default'
 }
 
+/**
+ * Queue/dispatch state of the agent_tasks row behind an invocation, when the
+ * hub could resolve one.
+ */
 export type InvocationTaskState = {
   status: 'pending' | 'claimed' | 'completed' | 'failed'
   attempts: number
@@ -81,6 +85,8 @@ export function useInvocations(
       | number
       | false
       | ((query: { state: { data: Paginated<InvocationEntry> | undefined } }) => number | false | undefined)
+    /** False skips the query entirely (e.g. run panels that only apply to consumer channels). */
+    enabled?: boolean
   } = {},
 ) {
   return useQuery({
@@ -88,5 +94,6 @@ export function useInvocations(
     queryFn: () => listInvocations(params),
     placeholderData: keepPreviousData,
     refetchInterval: opts.refetchInterval ?? false,
+    enabled: opts.enabled ?? true,
   })
 }

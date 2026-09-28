@@ -1,6 +1,6 @@
 # AInsel Conventions
 
-Repo-wide conventions for commits, branches, code style, and PRs. Tooling-specific config (CI workflows, lint configs, Dockerfiles) lives next to its tool.
+Repo-wide conventions for commits, branches, entity naming, code style, and PRs. Tooling-specific config (CI workflows, lint configs, Dockerfiles) lives next to its tool.
 
 ---
 
@@ -85,7 +85,7 @@ pins a single image tag per component.
 
 - One topic per PR. Don't bundle unrelated changes — open separate PRs.
 - The PR description should explain *why*, not just *what*.
-- Run lints and tests locally before opening (see [Code style](#3-code-style)).
+- Run lints and tests locally before opening (see [Code style](#4-code-style)).
 
 ### PR Labels
 
@@ -100,7 +100,15 @@ if you want them.
 
 ---
 
-## 2. Documentation Conventions
+## 2. Naming Conventions
+
+Every named entity — agents, connectors, channels, triggers, cron triggers,
+personas, agent images — follows the platform naming scheme: kind prefix,
+kebab-case, role word, fixed scope tokens. See
+[Naming Convention](naming.md) for the rules, the scope vocabulary, and how
+to rename things safely.
+
+## 3. Documentation Conventions
 
 - Every top-level package has a `README.md`. Follow the per-package template
   described in [`CONTRIBUTING.md`](../CONTRIBUTING.md).
@@ -117,7 +125,7 @@ if you want them.
 
 ---
 
-## 3. Code Style
+## 4. Code Style
 
 ### Go
 

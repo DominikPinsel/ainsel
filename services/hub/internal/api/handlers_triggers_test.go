@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"regexp"
+	"strings"
 	"testing"
 
 	pgcontainer "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -379,4 +381,176 @@ func TestTriggers_ListFilters(t *testing.T) {
 			t.Errorf("expected 0 triggers for case-mismatched agent, got %d", len(got))
 		}
 	})
+}
+
+// wireFilter and wireTrigger mirror the JSON contract of the trigger endpoints
+// independently of the server's Go structs, so a field the API layer forgets to
+// carry is caught rather than silently compiled away.
+type wireFilter struct {
+	Field  string   `json:"field"`
+	Op     string   `json:"op"`
+	Value  string   `json:"value"`
+	Values []string `json:"values"`
+}
+
+type wireTrigger struct {
+	ID      string       `json:"id"`
+	Name    string       `json:"name"`
+	Filters []wireFilter `json:"filters"`
+}
+
+func decodeWireTrigger(t *testing.T, body []byte) wireTrigger {
+	t.Helper()
+	var w wireTrigger
+	if err := json.Unmarshal(body, &w); err != nil {
+		t.Fatalf("failed to decode trigger json: %v\n%s", err, body)
+	}
+	return w
+}
+
+// filterValuesByName indexes a wire filter list by field, keeping the list order
+// irrelevant, and records the single-value operators with a nil value list.
+func filterValuesByName(filters []wireFilter) map[string][]string {
+	out := make(map[string][]string, len(filters))
+	for _, f := range filters {
+		out[f.Field] = f.Values
+	}
+	return out
+}
+
+// TestTriggers_FilterValuesArePreserved is a regression test for the REST API
+// silently dropping the `values` field of `in`/`not-in` filters. A dropped
+// `values` leaves the stored filter with an empty list, which never matches —
+// the trigger stops firing without any error surfacing anywhere.
+//
+// The field has to survive POST, GET and LIST on the wire, and must reach the
+// database as a filter whose Match behaves per the documented operator semantics.
+func TestTriggers_FilterValuesArePreserved(t *testing.T) {
+	srv := triggerTestServer(t)
+	ctx := context.Background()
+
+	const createBody = `{
+		"name": "pr-opened-not-wontfix",
+		"agentRef": "dev-agent",
+		"connectorRef": "forgejo-dev",
+		"filters": [
+			{"field": "action", "op": "in", "values": ["opened", "synchronized"]},
+			{"field": "title", "op": "not-in", "values": ["wontfix", "needs-discussion"]},
+			{"field": "sender.login", "op": "eq", "value": "bot"}
+		]
+	}`
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/triggers", strings.NewReader(createBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	created := decodeWireTrigger(t, rec.Body.Bytes())
+	if created.ID == "" {
+		t.Fatal("create: empty id in response")
+	}
+
+	want := map[string][]string{
+		"action":       {"opened", "synchronized"},
+		"title":        {"wontfix", "needs-discussion"},
+		"sender.login": nil,
+	}
+
+	// 1. The create response must echo the values back; the console re-reads a
+	//    trigger to repopulate the edit form.
+	if got := filterValuesByName(created.Filters); !reflect.DeepEqual(want, got) {
+		t.Errorf("create response dropped values:\n want %v\n  got %v", want, got)
+	}
+
+	// 2. The values must actually reach the store.
+	stored, err := srv.triggerStore.GetTrigger(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("get from store: %v", err)
+	}
+	if len(stored.Filters) != 3 {
+		t.Fatalf("expected 3 stored filters, got %d", len(stored.Filters))
+	}
+	for _, f := range stored.Filters {
+		switch f.Field {
+		case "action":
+			if !reflect.DeepEqual(f.Values, []string{"opened", "synchronized"}) {
+				t.Errorf("stored filter %q: expected values [opened synchronized], got %v", f.Field, f.Values)
+			}
+		case "title":
+			if !reflect.DeepEqual(f.Values, []string{"wontfix", "needs-discussion"}) {
+				t.Errorf("stored filter %q: expected values [wontfix needs-discussion], got %v", f.Field, f.Values)
+			}
+		}
+	}
+
+	// 3. The stored filters must match the way the operator table documents it —
+	//    this is what breaks when values are dropped.
+	payload := map[string]any{"action": "opened", "title": "add login", "sender": map[string]any{"login": "bot"}}
+	for i := range stored.Filters {
+		if !stored.Filters[i].Match(payload) {
+			t.Errorf("stored filter %+v does not match %+v — values were lost", stored.Filters[i], payload)
+		}
+	}
+	nonMatch := map[string]any{"action": "closed", "title": "add login", "sender": map[string]any{"login": "bot"}}
+	for i := range stored.Filters {
+		if stored.Filters[i].Field == "action" && stored.Filters[i].Match(nonMatch) {
+			t.Errorf("in-filter matched action=closed; operator is not enforcing values")
+		}
+	}
+
+	// 4. GET and LIST must expose the values too.
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/triggers/"+created.ID, nil)
+	getRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("get: expected 200, got %d: %s", getRec.Code, getRec.Body.String())
+	}
+	if got := filterValuesByName(decodeWireTrigger(t, getRec.Body.Bytes()).Filters); !reflect.DeepEqual(want, got) {
+		t.Errorf("GET dropped values:\n want %v\n  got %v", want, got)
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/triggers", nil)
+	listRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(listRec, listReq)
+	var page struct {
+		Items []json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal(listRec.Body.Bytes(), &page); err != nil {
+		t.Fatalf("list: failed to decode: %v", err)
+	}
+	if len(page.Items) != 1 {
+		t.Fatalf("list: expected 1 item, got %d", len(page.Items))
+	}
+	if got := filterValuesByName(decodeWireTrigger(t, page.Items[0]).Filters); !reflect.DeepEqual(want, got) {
+		t.Errorf("LIST dropped values:\n want %v\n  got %v", want, got)
+	}
+
+	// 5. PUT must replace the values, not discard them.
+	const updateBody = `{"filters": [{"field": "action", "op": "in", "values": ["reopened"]}]}`
+	putReq := httptest.NewRequest(http.MethodPut, "/api/v1/triggers/"+created.ID, strings.NewReader(updateBody))
+	putReq.Header.Set("Content-Type", "application/json")
+	putRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(putRec, putReq)
+	if putRec.Code != http.StatusOK {
+		t.Fatalf("update: expected 200, got %d: %s", putRec.Code, putRec.Body.String())
+	}
+	updated := decodeWireTrigger(t, putRec.Body.Bytes())
+	if got := filterValuesByName(updated.Filters); !reflect.DeepEqual(got["action"], []string{"reopened"}) {
+		t.Errorf("update response dropped values: got %v", got["action"])
+	}
+	restored, err := srv.triggerStore.GetTrigger(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("get after update: %v", err)
+	}
+	if len(restored.Filters) != 1 || !reflect.DeepEqual(restored.Filters[0].Values, []string{"reopened"}) {
+		t.Errorf("stored filters after update: expected one in-filter with [reopened], got %+v", restored.Filters)
+	}
+	if !restored.Filters[0].Match(map[string]any{"action": "reopened"}) {
+		t.Error("updated in-filter does not match action=reopened")
+	}
+	if restored.Filters[0].Match(map[string]any{"action": "opened"}) {
+		t.Error("updated in-filter still matches the replaced value action=opened")
+	}
 }

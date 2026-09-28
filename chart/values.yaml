@@ -79,7 +79,17 @@ agentOperator:
     pullPolicy: IfNotPresent
   forgejoUrl: ""
   forgejoTokenSecret: {}
-  agentGracePeriod: 0 # e.g. 1800
+  # Terminating signal sent to agent pods. pflag parses this as a Go duration,
+  # so it needs a unit: "30m", not "1800".
+  agentGracePeriod: 0 # e.g. 30m
+  # How long an agent's queue must stay empty and drained before its pods drop to
+  # spec.scaling.minReplicas. Only agents that set a floor use this; every other
+  # agent keeps the standing count it was configured with.
+  agentScaleDownWindow: 0 # e.g. 2m (default 120s when unset)
+  # How long an un-refreshed queue measurement from the hub stays trusted. Beyond
+  # it the operator holds the pods it has rather than scaling down, because a
+  # hub that stopped publishing looks exactly like a queue that drained.
+  queueSignalTTL: 0 # e.g. 5m (default 10m when unset)
   resources:
     requests:
       cpu: 50m

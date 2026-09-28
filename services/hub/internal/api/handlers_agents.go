@@ -148,8 +148,10 @@ type SimpleAgentResponse struct {
 	MCP          *AgentMCPInfo     `json:"mcp,omitempty"`
 	// Env lists this agent's environment overrides on top of the referenced
 	// image's env. Values of entries marked Secret are never returned.
-	Env            []AgentImageEnvVarInfo   `json:"env,omitempty"`
-	Replicas       *int32                   `json:"replicas,omitempty"`
+	Env      []AgentImageEnvVarInfo `json:"env,omitempty"`
+	Replicas *int32                 `json:"replicas,omitempty"`
+	// MinReplicas is the pod floor; nil means the agent keeps a fixed count.
+	MinReplicas    *int32                   `json:"minReplicas,omitempty"`
 	Memory         *AgentMemoryInfo         `json:"memory,omitempty"`
 	OllamaCloud    *AgentOllamaCloudInfo    `json:"ollamaCloud,omitempty"`
 	OpenCode       *AgentOpenCodeInfo       `json:"openCode,omitempty"`
@@ -210,6 +212,45 @@ type AgentCustomProviderInfo struct {
 type SimpleAgentStatus struct {
 	Ready    bool  `json:"ready"`
 	Replicas int32 `json:"replicas"`
+	// Desired is the pod count the operator is converging on. Comparing it to
+	// Replicas distinguishes an agent that is still booting from one that is
+	// finished, and one that is deliberately asleep from one that cannot schedule.
+	Desired int32 `json:"desired,omitempty"`
+	// Mode is "static" (fixed count) or "queue" (pods follow queue depth).
+	Mode string `json:"mode,omitempty"`
+	// Reason is a stable code for the scaling decision, such as Dormant,
+	// ScaledToZero, QueueDepth or QueueSignalStale.
+	Reason string `json:"reason,omitempty"`
+	// Message is a short explanation safe to show a user.
+	Message string `json:"message,omitempty"`
+}
+
+// scalingProblem explains a replica floor the ceiling cannot satisfy, or returns
+// "" when the pair is workable. The ceiling is resolved the way the operator
+// resolves it — an unset replicas means one pod — so asking for two warm pods on
+// a single-replica agent is rejected with an explanation instead of being
+// quietly clamped and confusing whoever set it.
+func scalingProblem(scaling *agentv1alpha1.AgentScaling) string {
+	if scaling == nil {
+		return ""
+	}
+	if scaling.Replicas != nil && *scaling.Replicas < 0 {
+		return "replicas must not be negative"
+	}
+	if scaling.MinReplicas == nil {
+		return ""
+	}
+	if *scaling.MinReplicas < 0 {
+		return "minReplicas must not be negative"
+	}
+	max := int32(1)
+	if scaling.Replicas != nil {
+		max = *scaling.Replicas
+	}
+	if *scaling.MinReplicas > max {
+		return fmt.Sprintf("minReplicas %d cannot exceed replicas %d", *scaling.MinReplicas, max)
+	}
+	return ""
 }
 
 // SimpleAgentCreateRequest is used to create a new Agent.
@@ -225,8 +266,12 @@ type SimpleAgentCreateRequest struct {
 	MCP          *AgentMCPRequest  `json:"mcp,omitempty"`
 	// Env sets this agent's environment overrides. For an entry marked
 	// Secret, an empty Value means "keep the existing value".
-	Env            []AgentImageEnvVarInfo   `json:"env,omitempty"`
-	Replicas       *int32                   `json:"replicas,omitempty"`
+	Env      []AgentImageEnvVarInfo `json:"env,omitempty"`
+	Replicas *int32                 `json:"replicas,omitempty"`
+	// MinReplicas sets the pod floor and opts the agent into queue-driven
+	// scaling. 0 lets it go dormant between tasks; omitting it keeps the fixed
+	// count. Must not exceed replicas.
+	MinReplicas    *int32                   `json:"minReplicas,omitempty"`
 	Memory         *AgentMemoryInfo         `json:"memory,omitempty"`
 	OllamaCloud    *AgentOllamaCloudInfo    `json:"ollamaCloud,omitempty"`
 	OpenCode       *AgentOpenCodeInfo       `json:"openCode,omitempty"`
@@ -247,8 +292,13 @@ type SimpleAgentUpdateRequest struct {
 	// Env replaces this agent's environment overrides; present-but-empty
 	// clears them, so the agent runs on the image defaults again. For an
 	// entry marked Secret, an empty Value means "keep the existing value".
-	Env            *[]AgentImageEnvVarInfo  `json:"env,omitempty"`
-	Replicas       *int32                   `json:"replicas,omitempty"`
+	Env      *[]AgentImageEnvVarInfo `json:"env,omitempty"`
+	Replicas *int32                  `json:"replicas,omitempty"`
+	// MinReplicas sets the pod floor and opts the agent into queue-driven
+	// scaling; nil leaves the current setting alone. Setting it equal to replicas
+	// pins the count again, which is how a caller turns scale-to-zero back off: a
+	// floor at the ceiling behaves exactly like static.
+	MinReplicas    *int32                   `json:"minReplicas,omitempty"`
 	Memory         *AgentMemoryInfo         `json:"memory,omitempty"`
 	OllamaCloud    *AgentOllamaCloudInfo    `json:"ollamaCloud,omitempty"`
 	OpenCode       *AgentOpenCodeInfo       `json:"openCode,omitempty"`
@@ -329,6 +379,7 @@ func toSimpleAgentResponse(a agentv1alpha1.Agent, imageDisplayName string) Simpl
 	// Replicas
 	if a.Spec.Scaling != nil {
 		resp.Replicas = a.Spec.Scaling.Replicas
+		resp.MinReplicas = a.Spec.Scaling.MinReplicas
 	}
 
 	// Memory
@@ -372,6 +423,15 @@ func toSimpleAgentResponse(a agentv1alpha1.Agent, imageDisplayName string) Simpl
 	resp.Status = &SimpleAgentStatus{
 		Ready:    ready,
 		Replicas: a.Status.Replicas,
+	}
+	// What the operator is aiming for, and why. With zero pods this is the only
+	// way a reader can tell a deliberately dormant agent from one that cannot get
+	// scheduled, or one still booting after a wake-up.
+	if sc := a.Status.Scaling; sc != nil {
+		resp.Status.Desired = sc.Desired
+		resp.Status.Mode = sc.Mode
+		resp.Status.Reason = sc.Reason
+		resp.Status.Message = sc.Message
 	}
 
 	return resp
@@ -665,10 +725,15 @@ func (s *Server) createAgent(ctx context.Context, w http.ResponseWriter, r *http
 	if len(agentEnv) > 0 {
 		agent.Spec.Env = agentEnv
 	}
-	if req.Replicas != nil {
+	if req.Replicas != nil || req.MinReplicas != nil {
 		agent.Spec.Scaling = &agentv1alpha1.AgentScaling{
-			Replicas: req.Replicas,
+			Replicas:    req.Replicas,
+			MinReplicas: req.MinReplicas,
 		}
+	}
+	if msg := scalingProblem(agent.Spec.Scaling); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
+		return
 	}
 	if req.Memory != nil {
 		agent.Spec.Memory = &agentv1alpha1.AgentMemory{
@@ -899,11 +964,20 @@ func (s *Server) updateAgent(ctx context.Context, w http.ResponseWriter, r *http
 	if req.Persona != nil && req.Persona.ID != "" {
 		existing.Spec.Persona = agentv1alpha1.AgentPersona{ID: req.Persona.ID}
 	}
-	if req.Replicas != nil {
+	if req.Replicas != nil || req.MinReplicas != nil {
 		if existing.Spec.Scaling == nil {
 			existing.Spec.Scaling = &agentv1alpha1.AgentScaling{}
 		}
-		existing.Spec.Scaling.Replicas = req.Replicas
+		if req.Replicas != nil {
+			existing.Spec.Scaling.Replicas = req.Replicas
+		}
+		if req.MinReplicas != nil {
+			existing.Spec.Scaling.MinReplicas = req.MinReplicas
+		}
+	}
+	if msg := scalingProblem(existing.Spec.Scaling); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
+		return
 	}
 	if req.Memory != nil {
 		existing.Spec.Memory = &agentv1alpha1.AgentMemory{

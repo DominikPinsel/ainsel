@@ -15,7 +15,7 @@ kubectl logs -n <namespace> deploy/ainsel-hub
 Common causes and fixes:
 
 - **Missing Postgres secret** — The hub exits early if the database secret is absent or has the wrong key names. Verify the secret exists and contains the expected keys (`host`, `port`, `user`, `password`, `dbname` or a single `dsn`). Re-create the secret and restart the hub deployment.
-- **Hub not reachable** — If you see `hub: connection refused` or a connection-refused error, confirm the hub URL in `values.yaml` is correct and that the hub pod in the platform namespace is running: `kubectl get pods -n <nats-namespace>`.
+- **Hub not reachable** — If you see `hub: connection refused` or a connection-refused error, confirm the hub URL in `values.yaml` is correct and that the hub pod is running in the release namespace: `kubectl get pods -n <namespace>`.
 - **Bad OIDC config** — An `oidc: failed to fetch provider metadata` error means the issuer URL is unreachable from inside the cluster. Check that the URL is correct, that DNS resolves, and that the cluster can reach the OIDC provider. Verify the client ID matches what is registered.
 - **CRD not installed** — A `no kind "Agent" is registered` error means CRDs were not applied. Run `kubectl apply -f chart/templates/crds/` and restart the hub.
 
@@ -40,16 +40,16 @@ kubectl describe webhookconnector <name> -n <namespace>
 The `Ready` condition must be `True`. If it is not, the operator has not yet provisioned the receiver Deployment and Ingress — check operator logs:
 
 ```bash
-kubectl logs -n <namespace> deploy/ainsel-connector-operator
+kubectl logs -n <namespace> deploy/k8s-event-source-gateway-operator
 ```
 
-Check the webhook-receiver (event-gateway) pod logs for incoming requests:
+Check the webhook-receiver pod logs for incoming requests (the receiver Deployment is named `connector-<id>`, e.g. `connector-c-0c4b01e3`):
 
 ```bash
-kubectl logs -n <namespace> deploy/<connector-name>-event-gateway
+kubectl logs -n <namespace> deploy/connector-<connector-id>
 ```
 
-A `403 Forbidden` or `HMAC mismatch` error means the secret on the Forgejo webhook does not match the secret stored in the Kubernetes secret referenced by the connector. Update the Forgejo webhook secret or recreate the Kubernetes secret to match, then restart the event-gateway pod.
+A `403 Forbidden` or `HMAC mismatch` error means the secret on the Forgejo webhook does not match the secret stored in the Kubernetes secret referenced by the connector (`connector-<id>-webhook-hmac`). Update the Forgejo webhook secret or rotate the connector's secret (`POST /api/v1/connectors/{id}/rotate-secret`), then restart the webhook-receiver pod.
 
 Verify the Ingress is present and routing correctly:
 
@@ -77,7 +77,7 @@ Inspect hub logs for routing decisions. The hub logs each event it receives and 
 kubectl logs -n <namespace> deploy/ainsel-hub | grep -i trigger
 ```
 
-Look for lines indicating an event was received but no trigger matched — this usually means the event type or filter does not align with what is being sent. Adjust the trigger's `eventType` and `filters` fields via the UI or API.
+Look for lines indicating an event was received but no trigger matched — this usually means the event type or filter does not align with what is being sent. Adjust the trigger's `filters` via the UI or API (match on the derived `type`/`action` fields and payload paths — there is no separate `eventType` field).
 
 Verify the connector is publishing events to the event queue by checking the `hub_events_consumed_total` metric:
 
@@ -160,6 +160,98 @@ Remember that MCP servers are reached from **two** clients: hub-backend (tool di
 
 ---
 
+## Dashboard says "Telemetry not configured"
+
+The hub answers `503 Service Unavailable` on an observability endpoint whose backend is
+not wired up, and the UI replaces that panel's body with **Telemetry not configured**.
+Nothing is broken: the hub's own records — agents, events, invocations, activity, chat —
+still render. Only the metric-backed panels go empty.
+
+You will see it on the dashboard **Throughput · 24h** panel, and on any
+**Observability** panel that reads `/api/v1/observability/metrics/*` (summary,
+timeseries, token counters, per-agent tables).
+
+**Cause.** `observability.prometheus.url` is empty in `values.yaml`, which is the chart
+default. When it is empty the chart never sets `HUB_PROMETHEUS_URL` on the hub, the hub
+starts without a Prometheus client, and every metrics query answers 503 with
+`metrics backend not configured`.
+
+Check it from outside the pod — the hub image is distroless and has no shell, so
+`kubectl exec … printenv` cannot work:
+
+```bash
+# Is the variable on the hub deployment at all? No output = not configured.
+kubectl -n <namespace> get deploy hub-backend -o json \
+  | jq -r '.spec.template.spec.containers[].env[]?
+      | select(.name=="HUB_PROMETHEUS_URL") | .value'
+
+# What did the hub record about it at startup?
+kubectl -n <namespace> logs deploy/hub-backend | grep -i prometheus
+```
+
+Logs are JSON, so the unconfigured state reads:
+
+```json
+{"time":"2026-09-23T10:04:12Z","level":"WARN","msg":"HUB_PROMETHEUS_URL not set, token queries will fail"}
+```
+
+A configured hub logs `{"time":"…","level":"INFO","msg":"prometheus client configured","url":"http://prometheus…"}`
+instead.
+
+**Fix.** Point the hub at a Prometheus it can reach:
+
+```yaml
+observability:
+  prometheus:
+    url: "http://prometheus.monitoring.svc.cluster.local:9090"
+```
+
+```bash
+helm upgrade ainsel ./chart -n <namespace> -f values.yaml
+kubectl rollout status -n <namespace> deploy/hub-backend
+```
+
+The hub reads `HUB_PROMETHEUS_URL` once, while wiring itself up, so a pod that started
+before the change keeps logging the warning. Changing this value rewrites the pod
+template, so `helm upgrade` rolls the pods for you — `rollout status` is there to prove
+it finished. If the panels are still empty after that, force fresh pods and re-read the
+log:
+
+```bash
+kubectl rollout restart -n <namespace> deploy/hub-backend
+kubectl -n <namespace> logs deploy/hub-backend | grep -i prometheus
+```
+
+The last command is the ground truth: `prometheus client configured` means the hub has
+a client, `HUB_PROMETHEUS_URL not set` means the pod you are reading did not get the
+value.
+
+**Variable present, message still there?** Two things to separate:
+
+- The pods you are looking at predate the value. A Deployment can carry it while an old
+  ReplicaSet's pods do not, and a mixed fleet is exactly what makes this message
+  intermittent across reloads. Ask each running pod what it actually has:
+
+  ```bash
+  kubectl -n <namespace> get pods -l app.kubernetes.io/component=hub-backend -o json \
+    | jq -r '.items[] | .metadata.name + "  " + ( [.spec.containers[].env[]?
+        | select(.name=="HUB_PROMETHEUS_URL") | .value]
+        | if length == 0 then "(unset)" else join(",") end )'
+  ```
+
+  Any line ending in `(unset)` is a pod started before the change — restart the
+  deployment to replace it.
+- The panel is a **logs** panel, not a metrics one. Those report
+  `log backend not configured`, which means the hub has no database — start from
+  [Hub pod not starting](#hub-pod-not-starting) instead. A wrong or unreachable URL
+  does *not* produce this message; it produces an empty panel or a load error, because
+  the hub only 503s when it has no client at all.
+
+To scrape the hub's own metrics once Prometheus is configured, enable the
+ServiceMonitor or PodMonitor — see [Observability](observability).
+
+---
+
 ## Checking platform health
 
 The hub exposes a health endpoint that checks all internal subsystems (database, operator connectivity):
@@ -190,10 +282,10 @@ kubectl describe trigger <name> -n <namespace>
 # Recent logs from all platform components
 kubectl logs -n <namespace> deploy/ainsel-hub --tail=100
 kubectl logs -n <namespace> deploy/ainsel-agent-operator --tail=100
-kubectl logs -n <namespace> deploy/ainsel-connector-operator --tail=100
+kubectl logs -n <namespace> deploy/k8s-event-source-gateway-operator --tail=100
 
 # Events in the namespace (often the fastest way to find the root cause)
 kubectl get events -n <namespace> --sort-by='.lastTimestamp'
 ```
 
-If Loki is configured in your cluster, use its query interface to aggregate logs across all pods in the namespace by filtering on `namespace=<namespace>`. This is especially useful for correlating a NATS event with the hub routing decision and the agent pod startup that followed it.
+If Loki is configured in your cluster, use its query interface to aggregate logs across all pods in the namespace by filtering on `namespace=<namespace>`. This is especially useful for correlating an ingested event with the hub routing decision and the agent pod startup that followed it.

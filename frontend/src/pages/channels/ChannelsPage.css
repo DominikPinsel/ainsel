@@ -1,0 +1,108 @@
+.channels-page {
+  display: grid;
+  gap: 24px;
+}
+
+/* Relation graph on the channel view (Mermaid SVG + accessible summary) */
+.relation-diagram {
+  display: flex;
+  justify-content: center;
+  overflow-x: auto;
+  padding: 8px 0 4px;
+}
+.relation-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+.relation-diagram g.node:hover {
+  opacity: 0.82;
+}
+.relation-summary {
+  display: grid;
+  gap: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--rule-ghost);
+  font-size: 13px;
+}
+.relation-line {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+.relation-line-label {
+  color: var(--ink-4);
+  font-size: 12px;
+  min-width: 4em;
+}
+.relation-line-item + .relation-line-item::before {
+  content: '·';
+  color: var(--ink-4);
+  margin-right: 8px;
+}
+.relation-line-item a {
+  font-weight: 600;
+}
+.relation-line-item .muted {
+  color: var(--ink-4);
+}
+.relation-line-item em {
+  color: var(--ink-4);
+  font-style: normal;
+  font-size: 12px;
+  margin-left: 6px;
+}
+
+/* Bridges (custom channels) */
+.bridge-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  border-top: 1px solid var(--rule-ghost);
+  padding: 8px 2px;
+  font-size: 13px;
+}
+.bridge-remove {
+  margin-left: auto;
+  color: var(--ink-4);
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 15px;
+}
+.bridge-remove:hover {
+  color: var(--err);
+}
+.bridge-form {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--rule-ghost);
+  padding-top: 10px;
+  margin-top: 6px;
+}
+
+/* "Last 24h" stats — fixed grid tracks + tabular figures so the numbers
+   line up down the table. The unmatched track stays in place (visually
+   empty) on non-connector rows rather than shifting "failed" sideways. */
+.channel-counts {
+  display: grid;
+  grid-template-columns: 10ch 14ch 10ch;
+  justify-content: end;
+  gap: 18px;
+  font-variant-numeric: tabular-nums;
+}
+.channel-counts .ccount {
+  text-align: right;
+  white-space: nowrap;
+}
+.channel-counts .ccount .label {
+  color: var(--ink-4);
+}
+.channel-counts .ccount-off {
+  visibility: hidden;
+}
+.channel-counts .ccount-fail {
+  color: var(--err);
+}

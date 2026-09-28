@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/DominikPinsel/ainsel/services/hub/internal/authz"
+	"github.com/DominikPinsel/ainsel/services/hub/internal/channels"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/chat"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/eventqueue"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/invocations"
@@ -54,18 +55,23 @@ type authzStore interface {
 
 // Server provides a REST API for managing Ainsel CRDs.
 type Server struct {
-	client                 client.Client
-	mux                    *http.ServeMux
-	ns                     string
-	connectorCfg           ConnectorConfig
-	prom                   *prometheus.Client
-	wsHub                  *wsHub
-	observabilityCache     *promCache
-	invocations            invocations.Store
-	mcp                    *mcpservers.Service
-	personas               PersonaService
-	skills                 SkillService
-	triggerStore           *triggers.Store
+	client             client.Client
+	mux                *http.ServeMux
+	ns                 string
+	connectorCfg       ConnectorConfig
+	prom               *prometheus.Client
+	wsHub              *wsHub
+	observabilityCache *promCache
+	invocations        invocations.Store
+	mcp                *mcpservers.Service
+	personas           PersonaService
+	skills             SkillService
+	triggerStore       *triggers.Store
+	// channelSvc is the channel registry: the named streams events live in and
+	// the subscriptions between them. channelTransfer performs the bridge
+	// deliveries the registry describes.
+	channelSvc             *channels.Service
+	channelTransfer        *channels.Transfer
 	chat                   *chat.Store
 	taskLogs               *tasklogs.Store
 	authzStore             authzStore

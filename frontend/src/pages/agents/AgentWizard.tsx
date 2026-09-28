@@ -497,8 +497,34 @@ export function AgentWizard() {
                   </dd>
                 </dl>
                 <div className="form-grid" style={{ maxWidth: 240 }}>
-                  <Field label="Replicas" htmlFor="replicas">
+                  <Field
+                    label={watch('wakeOnDemand') ? 'Max containers' : 'Replicas'}
+                    htmlFor="replicas"
+                    hint={
+                      watch('wakeOnDemand')
+                        ? 'Upper bound. Containers start one per waiting invocation and scale back down as the queue drains.'
+                        : undefined
+                    }
+                  >
                     <Input id="replicas" type="number" min={0} {...register('replicas')} />
+                  </Field>
+                  <Field
+                    label="Wake on demand"
+                    htmlFor="scaling.wakeOnDemand"
+                    hint="Starts the agent with no containers and parks it there once its queue drains. The first event pays the cold start."
+                  >
+                    <div
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, height: '100%', paddingTop: 6 }}
+                    >
+                      <Check
+                        checked={watch('wakeOnDemand') ?? false}
+                        onChange={(v) => setValue('wakeOnDemand', v, { shouldDirty: true })}
+                        aria-label="Wake on demand"
+                      />
+                      <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)' }}>
+                        {watch('wakeOnDemand') ? 'Sleeps when the queue is empty' : 'Always running'}
+                      </span>
+                    </div>
                   </Field>
                 </div>
               </div>

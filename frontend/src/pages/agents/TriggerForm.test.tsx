@@ -98,7 +98,7 @@ describe('TriggerForm', () => {
     // Wait for connector to be selected; Autocomplete shows the connector name
     // as the visible input value, while the hidden input retains the id.
     await waitFor(() =>
-      expect((screen.getByLabelText('Connector') as HTMLInputElement).value).toBe('insel-monorepo'),
+      expect((screen.getByLabelText('Source channel') as HTMLInputElement).value).toBe('insel-monorepo'),
     )
     expect((screen.getByTestId('hidden-connectorRef') as HTMLInputElement).value).toBe('c1')
   })
@@ -107,7 +107,7 @@ describe('TriggerForm', () => {
     const onSaved = vi.fn()
     renderWithProviders(<TriggerForm agentId="doc-writer" onClose={() => {}} onSaved={onSaved} />)
     await userEvent.type(screen.getByLabelText('Name'), 'on-pr')
-    const connectorInput = screen.getByLabelText('Connector')
+    const connectorInput = screen.getByLabelText('Source channel')
     await userEvent.click(connectorInput)
     await waitFor(() =>
       expect(screen.getByRole('option', { name: /insel-monorepo/i })).toBeInTheDocument(),
@@ -185,7 +185,7 @@ describe('TriggerForm', () => {
       <TriggerForm agentId="doc-writer" onClose={() => {}} onSaved={onSaved} />,
     )
     await userEvent.type(screen.getByLabelText('Name'), 'test-trigger')
-    const connectorInput = screen.getByLabelText('Connector')
+    const connectorInput = screen.getByLabelText('Source channel')
     await userEvent.click(connectorInput)
     await waitFor(() =>
       expect(screen.getByRole('option', { name: /insel-monorepo/i })).toBeInTheDocument(),

@@ -45,6 +45,21 @@ func New(log *slog.Logger, b Backends) *server.MCPServer {
 	connectors := tools.NewConnectorTools(b.HubURL)
 	s.AddTool(connectors.ListConnectorsTool(), connectors.ListConnectors)
 	s.AddTool(connectors.GetConnectorTool(), connectors.GetConnector)
+	s.AddTool(connectors.UpdateConnectorTool(), connectors.UpdateConnector)
+
+	// Channels are the streams events live in: one per connector, one per agent
+	// inbox, plus custom grouping channels. The subscription list answers
+	// "who receives what" without re-joining connectors, agents and triggers.
+	channelTools := tools.NewChannelTools(b.HubURL)
+	s.AddTool(channelTools.ListChannelsTool(), channelTools.ListChannels)
+	s.AddTool(channelTools.GetChannelTool(), channelTools.GetChannel)
+	s.AddTool(channelTools.ListChannelSubscriptionsTool(), channelTools.ListChannelSubscriptions)
+	s.AddTool(channelTools.GetChannelEventsTool(), channelTools.GetChannelEvents)
+	s.AddTool(channelTools.CreateChannelTool(), channelTools.CreateChannel)
+	s.AddTool(channelTools.UpdateChannelTool(), channelTools.UpdateChannel)
+	s.AddTool(channelTools.DeleteChannelTool(), channelTools.DeleteChannel)
+	s.AddTool(channelTools.AttachChannelBridgeTool(), channelTools.AttachChannelBridge)
+	s.AddTool(channelTools.DetachChannelBridgeTool(), channelTools.DetachChannelBridge)
 
 	workflows := tools.NewWorkflowTools(b.HubURL)
 	s.AddTool(workflows.SummarizeWorkflowsTool(), workflows.SummarizeWorkflows)

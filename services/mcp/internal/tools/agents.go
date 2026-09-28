@@ -67,8 +67,10 @@ func (a *AgentTools) GetAgent(ctx context.Context, req mcp.CallToolRequest) (*mc
 
 func (a *AgentTools) UpdateAgentTool() mcp.Tool {
 	return mcp.NewTool("update_agent",
-		mcp.WithDescription("Update an agent's LLM runtime configuration. Only provided fields are changed; omitted fields are left unchanged."),
+		mcp.WithDescription("Update an agent's display name, description, or LLM runtime configuration. Only provided fields are changed; omitted fields are left unchanged. The agent ID (name argument) is the immutable identity; renames go through display_name."),
 		mcp.WithString("name", mcp.Required(), mcp.Description("Agent ID (e.g. a-director)")),
+		mcp.WithString("display_name", mcp.Description("New user-facing agent name (e.g. agent-developer). Updates the agent's label and its channel name; does not change the agent ID.")),
+		mcp.WithString("description", mcp.Description("New one-line description shown in the console and on the agent's channel")),
 		mcp.WithString("model", mcp.Description("LLM model to use (e.g. glm-5.1, qwen3.5:cloud)")),
 		mcp.WithNumber("max_turns", mcp.Description("Maximum turns per invocation")),
 		mcp.WithNumber("temperature", mcp.Description("LLM temperature")),
@@ -93,11 +95,19 @@ func (a *AgentTools) UpdateAgent(ctx context.Context, req mcp.CallToolRequest) (
 		llm["temperature"] = v
 	}
 
-	if len(llm) == 0 {
-		return mcp.NewToolResultError("at least one of model, max_turns, or temperature must be provided"), nil
+	payload := map[string]any{}
+	if v, ok := args["display_name"].(string); ok && v != "" {
+		payload["name"] = v
 	}
-
-	payload := map[string]any{"llm": llm}
+	if v, ok := args["description"].(string); ok && v != "" {
+		payload["description"] = v
+	}
+	if len(llm) > 0 {
+		payload["llm"] = llm
+	}
+	if len(payload) == 0 {
+		return mcp.NewToolResultError("at least one of display_name, description, model, max_turns, or temperature must be provided"), nil
+	}
 	bodyData, err := json.Marshal(payload)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to encode request: %v", err)), nil

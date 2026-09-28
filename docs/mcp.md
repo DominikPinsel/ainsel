@@ -148,7 +148,7 @@ and should be used deliberately.
 | `summarize_workflows` | read | Agent-centric joined view: every agent with its triggers, connector, event type, filters, tools, MCPs. Orphaned triggers listed separately. |
 | `list_agents` | read | All agents and their status. |
 | `get_agent` | read | One agent: config, persona, pod state. |
-| `update_agent` | write | Update an agent's LLM config (`model`, `max_turns`, `temperature`). Omitted fields unchanged. |
+| `update_agent` | write | Update an agent's display name (`display_name`), `description`, or LLM config (`model`, `max_turns`, `temperature`). Omitted fields unchanged. The agent ID is immutable; renaming never recreates the agent or its channel. |
 
 ### Triggers
 
@@ -184,6 +184,32 @@ supported. Example: `"0 9 * * 1-5"` fires at 09:00 on weekdays.
 |------|------|-----------------|
 | `list_connectors` | read | All connectors and their status. |
 | `get_connector` | read | One connector: configuration and health. |
+| `update_connector` | write | Update a connector's display name (`display_name`) or pause/resume it (`disabled`). The connector ID and webhook endpoint are immutable; renaming never recreates the connector or its channel. |
+
+### Channels
+
+| Tool | Mode | What it answers |
+|------|------|-----------------|
+| `list_channels` | read | Every event stream with its traffic counts. |
+| `get_channel` | read | One channel plus every subscription touching it. |
+| `list_channel_subscriptions` | read | All edges at once: trigger-owned and bridge-owned. |
+| `get_channel_events` | read | A channel's timeline — births plus what was transferred in. |
+| `create_channel` | write | Create a custom grouping channel. |
+| `update_channel` | write | Rename or re-describe a custom channel. |
+| `delete_channel` | write | Delete a custom channel (refused while subscriptions are attached). |
+| `attach_channel_bridge` | write | Transfer one channel's events into another. |
+| `detach_channel_bridge` | write | Remove a bridge between two channels. |
+
+A channel is the stream events are born in: one per connector, one per
+agent (its inbox), plus custom grouping channels. Connector and agent
+channels are provisioned from their registry and cannot be created or
+renamed through these tools.
+
+`name` accepts a channel id, a display name, an entity ref (the entity's
+CR name — `c-…` for connectors, `a-…` for console-created agents), or the
+qualified `kind:ref` form (`connector:c-1a2b3c`, `agent:a-3f9a2b`). A
+label that names both a connector stream and an agent inbox is reported
+as ambiguous with the candidate ids listed rather than guessed.
 
 ### Agent images (runtimes)
 
@@ -217,14 +243,12 @@ supported. Example: `"0 9 * * 1-5"` fires at 09:00 on weekdays.
 | `update_skill` | write | Update a skill's name/description/body. Omitted fields preserved. |
 | `delete_skill` | write | Delete a skill. Fails with 409 if referenced by any agent image. |
 
-### MCP servers, GitHub apps
+### MCP servers
 
 | Tool | Mode | What it answers |
 |------|------|-----------------|
 | `list_mcp_servers` | read | MCP servers in the registry: URLs and the tools each exposes. |
 | `get_mcp_server` | read | One MCP server entry: URL, transport, tool names, non-secret auth config. |
-| `list_github_apps` | read | GitHub App installations, install state, and which connectors use them. |
-| `get_github_app` | read | One GitHub App: app ID, install state, referencing connectors. Does not expose private keys. |
 
 ### Invocations & activity
 
@@ -242,7 +266,7 @@ supported. Example: `"0 9 * * 1-5"` fires at 09:00 on weekdays.
 | `get_stats` | read | Dashboard summary: agent/trigger/connector counts, healthy subset, last-hour errors, aggregate tokens. |
 | `get_recent_errors` | read | Cross-agent error summary (optional `agent`, `since`, `limit`, `severity`, `source`). |
 
-### Events (NATS)
+### Events (Event Queue)
 
 | Tool | Mode | What it answers |
 |------|------|-----------------|
@@ -272,6 +296,8 @@ limits** when the caller does not pass an explicit parameter:
 | `list_triggers` | `pageSize=50` | `page`, `pageSize` |
 | `list_cron_triggers` | `pageSize=50` | `page`, `pageSize` |
 | `list_connectors` | `pageSize=50` | `page`, `pageSize` |
+| `list_channels` | `pageSize=50` | `page`, `pageSize`, `kind`, `since` |
+| `get_channel_events` | `limit=50` | `limit`, `since`, `status`, `subject` |
 | `list_agent_images` | `pageSize=50` | `page`, `pageSize` |
 | `list_personas` | `pageSize=50` | `page`, `pageSize` |
 | `list_skills` | `pageSize=50` | `page`, `pageSize` |
@@ -318,6 +344,7 @@ language and it will compose the right tool calls:
 - *"What did the last invocation of the triager do?"* → `list_invocations` + `get_invocation`
 - *"Is the platform healthy?"* → `get_platform_health` + `get_stats`
 - *"Update the code-reviewer to use qwen3.5:cloud and lower the temperature to 0.2."* → `update_agent`
+- *"Rename the developer agent to agent-developer and the forgejo connector to connector-forgejo-ainsel."* → `update_agent` (`display_name`) + `update_connector` (`display_name`) — channels follow the new names automatically
 - *"Add a cron trigger that asks the summarizer to write a daily standup at 9am on weekdays."* → `create_cron_trigger`
 - *"Create a new trigger that sends issue comments to the triager."* → `create_trigger`
 - *"Edit the reviewer persona to add a rule about not commenting on imports."* → `update_persona`
@@ -354,6 +381,6 @@ The server only needs `HUB_URL` to reach the hub; everything else
 - [`services/mcp/README.md`](../services/mcp/README.md) — service-level README, env vars, build
 - [`services/chat-mcp/README.md`](../services/chat-mcp/README.md) — the **chat sidecar** MCP (different scope: gives an _agent pod_ chat tools; this doc is about the **platform** MCP for operators)
 - [Hub REST API](api-reference.md) — what the hub-backed tools proxy to
-- [Event schema](event-schema.md) — payload shape returned by the NATS tools
+- [Event schema](event-schema.md) — payload shape returned by the event-queue tools
 - [Administrator guide](administrator-guide.md) — the "Talking to AInsel via MCP" section
 - [Architecture](architecture.md) — where the MCP server sits in the platform

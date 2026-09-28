@@ -8,6 +8,7 @@ import (
 
 	"github.com/DominikPinsel/ainsel/services/hub/internal/api"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/authz"
+	"github.com/DominikPinsel/ainsel/services/hub/internal/channels"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/chat"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/cron"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/eventqueue"
@@ -15,6 +16,7 @@ import (
 	"github.com/DominikPinsel/ainsel/services/hub/internal/mcpservers"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/personas"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/prometheus"
+	"github.com/DominikPinsel/ainsel/services/hub/internal/queuesignal"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/router"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/skills"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/tasklogs"
@@ -39,8 +41,13 @@ type container struct {
 	authzChecker   *authz.Checker
 	idx            *trigger.Index
 	triggerStore   *triggers.Store
+	channelStore   *channels.Store
+	channels       *channels.Service
+	channelRecon   *channels.Reconciler
+	transfer       *channels.Transfer
 	cronEmitter    *cron.Emitter
 	eventQueue     *eventqueue.Store
+	queueSignals   *queuesignal.Publisher
 	invStore       invocations.Store
 	mcpSvc         *mcpservers.Service
 	personaSvc     *personas.Service
@@ -115,6 +122,16 @@ func newContainer(ctx context.Context, cfg containerConfig, deps containerDeps) 
 		c.apiClient = ac
 	}
 
+	// --- Queue signals ---
+	// Publishes per-agent queue depth onto Agent status, which is what lets the
+	// operator scale pods on real work instead of a standing replica count. The
+	// observer is registered on the store rather than at the enqueue call sites
+	// (router, chat, cron, channel transfers) so a new publisher cannot forget to
+	// wake somebody up.
+	c.queueSignals = queuesignal.New(c.eventQueue,
+		queuesignal.NewK8sPatcher(c.apiClient, cfg.namespace))
+	c.eventQueue.SetQueueObserver(c.queueSignals.Observe)
+
 	// --- Triggers ---
 	c.idx = trigger.NewIndex()
 	c.triggerStore = triggers.NewStore(pool)
@@ -130,6 +147,17 @@ func newContainer(ctx context.Context, cfg containerConfig, deps containerDeps) 
 	c.invStore = invocations.NewPgStore(pool)
 	slog.Info("invocation history store ready", "backend", "postgres", "retention", invocations.Retention)
 	c.cronEmitter = cron.New(c.eventQueue, c.invStore)
+
+	// --- Channels ---
+	// The channel registry sits on top of the trigger registry and the event
+	// queue: every connector and every agent owns a stream, and the transfers
+	// recorded on those streams move events into inboxes no trigger matched.
+	c.channelStore = channels.NewStore(pool)
+	c.channels = channels.NewService(c.channelStore, c.eventQueue, c.triggerStore)
+	c.channelRecon = channels.NewReconciler(c.channelStore, c.eventQueue,
+		channels.NewKubeRegistry(c.apiClient, cfg.namespace))
+	c.transfer = channels.NewTransfer(c.channels, c.eventQueue, c.invStore)
+	c.cronEmitter.SetChannels(c.channels, c.transfer)
 
 	// --- Service layer ---
 	c.mcpSvc = wireMCP(pool)
@@ -147,7 +175,7 @@ func newContainer(ctx context.Context, cfg containerConfig, deps containerDeps) 
 	}
 
 	// --- Router ---
-	c.rtr = router.New(c.eventQueue, c.idx, c.apiServer, c.invStore)
+	c.rtr = router.New(c.eventQueue, c.idx, c.apiServer, c.invStore, c.transfer)
 	if err != nil {
 		c.Close()
 		return nil, fmt.Errorf("create router: %w", err)

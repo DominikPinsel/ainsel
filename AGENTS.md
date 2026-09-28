@@ -60,7 +60,8 @@ Folder map (role -> path):
 | Canonical event schema | [`docs/event-schema.md`](docs/event-schema.md) |
 | Hub REST API endpoints | [`docs/api-reference.md`](docs/api-reference.md) |
 | Deploying the platform | [`docs/deployment.md`](docs/deployment.md) |
-| Current and planned work | [`docs/roadmap.md`](docs/roadmap.md) |
+| Docker Hub tag retention, registry cleanup | [`docs/maintenance.md`](docs/maintenance.md) |
+| Current and planned work | [open issues](https://github.com/DominikPinsel/ainsel/issues) — there is no roadmap doc; planned work is tracked as issues |
 | Repo conventions (commits, branching, style) | [`docs/conventions.md`](docs/conventions.md), [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 | Package-specific details (how to run, env vars) | that package's `README.md` |
 

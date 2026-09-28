@@ -398,4 +398,31 @@ describe('AgentWizard', () => {
     expect(await screen.findByText('persona not found')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /create agent/i })).toBeInTheDocument()
   })
+
+  it('creates an always-on agent with its floor pinned to its count', async () => {
+    const user = userEvent.setup()
+    renderWizard()
+    await fillThroughPersona(user)
+
+    await user.click(await screen.findByRole('button', { name: /create agent/i }))
+    await waitFor(() => expect(postBody(fetchMock)).toBeDefined())
+    // An absent minReplicas tells the hub "leave unchanged", so the form always
+    // sends a number: here it equals the standing count, i.e. static scaling.
+    expect(postBody(fetchMock)?.minReplicas).toBe(postBody(fetchMock)?.replicas)
+  })
+
+  it('creates a dormant agent when wake on demand is on', async () => {
+    const user = userEvent.setup()
+    renderWizard()
+    await fillThroughPersona(user)
+
+    const create = await screen.findByRole('button', { name: /create agent/i })
+    expect(screen.getByText('Always running')).toBeInTheDocument()
+    await user.click(screen.getByRole('checkbox', { name: /wake on demand/i }))
+    expect(screen.getByLabelText('Max containers')).toBeInTheDocument()
+
+    await user.click(create)
+    await waitFor(() => expect(postBody(fetchMock)).toBeDefined())
+    expect(postBody(fetchMock)?.minReplicas).toBe(0)
+  })
 })

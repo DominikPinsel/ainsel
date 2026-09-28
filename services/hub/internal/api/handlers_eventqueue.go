@@ -58,6 +58,22 @@ func (s *Server) handleIngestEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Stamp the channel the event is born in. The connector label decides it —
+	// never whatever the publisher put in the body, since a stream you did not
+	// publish to must not be writable by naming it. Provisioning happens here on
+	// first sight, so an event can never be stored without a home even if the
+	// reconciler has not run yet.
+	if s.channelSvc != nil {
+		channelID, err := s.channelSvc.ConnectorChannelFor(r.Context(), evt.Connector)
+		if err != nil {
+			// A missing channel is a broken registry, not a bad event: store it
+			// unstamped rather than rejecting a webhook a connector already
+			// accepted and would otherwise retry forever.
+			slog.Warn("could not resolve birth channel", "event_id", evt.ID, "connector", evt.Connector, "error", err)
+		}
+		evt.ChannelID = channelID
+	}
+
 	if err := s.eventQueue.InsertEvent(r.Context(), evt); err != nil {
 		slog.Error("ingest event failed", "event_id", evt.ID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to store event")

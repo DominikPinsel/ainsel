@@ -62,6 +62,14 @@ func main() {
 		return runSyncLoop(ctx, c.triggerStore, c.idx, c.cronEmitter)
 	}))
 
+	// Channel registry sync: provision a channel per connector and per agent,
+	// mark the orphans, and stamp the birth channel onto history that predates
+	// the entity. Runs once the informer cache is in sync, then on a ticker —
+	// non-fatal, because a missed round only delays a channel appearing.
+	g.Go(runUntilCanceled(ctx, func(ctx context.Context) error {
+		return runChannelSyncLoop(ctx, c.channelRecon, c.mgr)
+	}))
+
 	// API HTTP server.
 	g.Go(func() error {
 		slog.Info("API server starting", "port", cfg.hubPort)
@@ -133,6 +141,12 @@ func main() {
 				}
 			}
 		}
+	}))
+
+	// Agent queue signals: publishes queue depth on Agent status for the operator
+	// to scale on (see internal/queuesignal).
+	g.Go(runUntilCanceled(ctx, func(ctx context.Context) error {
+		return c.queueSignals.Run(ctx)
 	}))
 
 	// Stale claim reaper (every 5m, non-fatal).

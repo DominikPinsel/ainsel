@@ -1,7 +1,9 @@
 package tools
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -38,6 +40,15 @@ func (c *ConnectorTools) GetConnectorTool() mcp.Tool {
 	)
 }
 
+func (c *ConnectorTools) UpdateConnectorTool() mcp.Tool {
+	return mcp.NewTool("update_connector",
+		mcp.WithDescription("Update a connector's display name or enabled state. Only provided fields are changed; omitted fields are left unchanged. The connector ID (name argument) is the immutable identity and webhook endpoint; renames go through display_name."),
+		mcp.WithString("name", mcp.Required(), mcp.Description("Connector ID (e.g. c-0c4b01e3)")),
+		mcp.WithString("display_name", mcp.Description("New user-facing connector name (e.g. connector-forgejo-ainsel). Updates the connector's label and its channel name; webhook endpoints and the connector ID are unaffected.")),
+		mcp.WithBoolean("disabled", mcp.Description("Pause (true) or resume (false) event delivery from this connector")),
+	)
+}
+
 func (c *ConnectorTools) ListConnectors(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args, _ := req.Params.Arguments.(map[string]any)
 	q := url.Values{}
@@ -61,4 +72,33 @@ func (c *ConnectorTools) GetConnector(ctx context.Context, req mcp.CallToolReque
 		return mcp.NewToolResultError(fmt.Sprintf("failed to get connector %s: %v", name, err)), nil
 	}
 	return mcp.NewToolResultText(string(body)), nil
+}
+
+func (c *ConnectorTools) UpdateConnector(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args, _ := req.Params.Arguments.(map[string]any)
+	name, _ := args["name"].(string)
+	if name == "" {
+		return mcp.NewToolResultError("name is required"), nil
+	}
+
+	payload := map[string]any{}
+	if v, ok := args["display_name"].(string); ok && v != "" {
+		payload["name"] = v
+	}
+	if v, ok := args["disabled"].(bool); ok {
+		payload["disabled"] = v
+	}
+	if len(payload) == 0 {
+		return mcp.NewToolResultError("at least one of display_name or disabled must be provided"), nil
+	}
+
+	bodyData, err := json.Marshal(payload)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to encode request: %v", err)), nil
+	}
+	respBody, err := hubPut(ctx, c.HTTPClient, c.HubURL, "/api/v1/connectors/"+name, bytes.NewReader(bodyData))
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to update connector %s: %v", name, err)), nil
+	}
+	return mcp.NewToolResultText(string(respBody)), nil
 }
