@@ -15,11 +15,31 @@ const SIDEBAR = [
   '- [Adding Memory](adding-memory)',
   '- [Dedup Test](dedup-test)',
   '- [Tilde Fence](tilde-fence)',
+  '- [Image Paths](image-paths)',
 ].join('\n')
 
 const DOCS: Record<string, string> = {
   architecture:
     '# Ainsel Platform Architecture\n\nTechnical architecture reference. See the [administrator guide](administrator-guide.md).',
+
+  // Exercises image path rewriting: relative asset paths must be resolved
+  // against DOCS_BASE so they work under any deployed base path, while
+  // external/escaping references and lookalike link text are left alone.
+  'image-paths': [
+    '# Image Paths',
+    '',
+    '![Dashboard](images/dashboard-overview.webp)',
+    '',
+    '![Dotted](./images/activity-stream.webp)',
+    '',
+    '![Prefixed](docs/images/agent-persona.webp)',
+    '',
+    '![External](https://example.com/pic.png)',
+    '',
+    '![Escaping](../frontend/public/favicon.svg)',
+    '',
+    '[Warning!](administrator-guide.md)',
+  ].join('\n'),
   'administrator-guide': '# Administrator Guide\n\nEnd-to-end admin journey.',
   'guides/writing-a-connector': '# Writing a Connector\n\nConnector guide.',
 
@@ -246,6 +266,53 @@ describe('DocsPage', () => {
     // "Administrator Guide" while the in-content link is lowercase.
     const contentLink = await screen.findByRole('link', { name: 'administrator guide' })
     expect(contentLink).toHaveAttribute('href', '/docs/administrator-guide')
+  })
+
+  // --- Image path rewriting -------------------------------------------------
+
+  // NOTE: this covers path *normalisation* only. Because vitest defaults
+  // BASE_URL to '/', the base-prefixing itself is untestable here — the buggy
+  // and fixed output coincide. See DocsPage.basepath.test.tsx for the suite
+  // that actually reproduces the deployed-base 404.
+  it('normalises ./ and docs/ prefixes on relative image paths', async () => {
+    renderAt('/docs/image-paths')
+
+    expect(await screen.findByAltText('Dashboard')).toHaveAttribute(
+      'src',
+      '/docs/images/dashboard-overview.webp',
+    )
+    // './' and 'docs/' prefixes are both normalised, not doubled up.
+    expect(screen.getByAltText('Dotted')).toHaveAttribute(
+      'src',
+      '/docs/images/activity-stream.webp',
+    )
+    expect(screen.getByAltText('Prefixed')).toHaveAttribute(
+      'src',
+      '/docs/images/agent-persona.webp',
+    )
+  })
+
+  it('leaves external and escaping image references untouched', async () => {
+    renderAt('/docs/image-paths')
+
+    expect(await screen.findByAltText('External')).toHaveAttribute(
+      'src',
+      'https://example.com/pic.png',
+    )
+    // '../' points outside docs/, which is never served as a docs asset.
+    expect(screen.getByAltText('Escaping')).toHaveAttribute(
+      'src',
+      '../frontend/public/favicon.svg',
+    )
+  })
+
+  it('does not treat link text ending in "!" as an image', async () => {
+    renderAt('/docs/image-paths')
+
+    // Regression guard: the '!' that marks an image can only sit immediately
+    // before the '[', so this stays a link and still gets route rewriting.
+    const link = await screen.findByRole('link', { name: 'Warning!' })
+    expect(link).toHaveAttribute('href', '/docs/administrator-guide')
   })
 
   it('redirects to /docs when the topic slug is invalid', async () => {

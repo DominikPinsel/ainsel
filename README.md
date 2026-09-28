@@ -18,6 +18,14 @@ AI shows up where it helps: a review comment, an issue label, a draft
 reply. The AI specifics — which model, which prompts, which tools —
 stay with the administrator.
 
+![The AInsel operations console: active agents, platform connectors, routing
+rules and error state across the top; the connector table with its webhook
+endpoints and readiness below that; a 24-hour event throughput chart and a
+live activity feed on the right](docs/images/dashboard-overview.webp)
+
+*The operations console — every agent, connector and routing decision in one
+place, with no separate chatbot UI for end users to learn.*
+
 ## Why this matters
 
 AI is now table stakes for engineering productivity, but operating it
