@@ -52,6 +52,11 @@ func (s *Store) List(ctx context.Context, opts ListOptions) ([]Entry, error) {
 		args = append(args, opts.AgentName)
 		argN++
 	}
+	if len(opts.AgentNames) > 0 {
+		query += fmt.Sprintf(" AND agent_name = ANY($%d)", argN)
+		args = append(args, opts.AgentNames)
+		argN++
+	}
 	if opts.Level != "" {
 		query += fmt.Sprintf(" AND level = $%d", argN)
 		args = append(args, opts.Level)
@@ -140,32 +145,40 @@ func (s *Store) InsertConversation(ctx context.Context, m *ConversationMessage) 
 		m.Model, m.InputTokens, m.OutputTokens, m.StopReason).Scan(&m.ID, &m.CreatedAt)
 }
 
-// ListConversations returns conversation messages for a given agent,
-// newest-first. Filter by invocation or correlation ID when provided.
-func (s *Store) ListConversations(ctx context.Context, agentName, invocationID, correlationID string, limit int) ([]ConversationMessage, error) {
+// ListConversations returns conversation messages matching opts, oldest-first
+// so a caller can replay a conversation in order. Filter by agent, invocation
+// or correlation ID when provided; AgentNames restricts to a set of agents and
+// is how the API scopes results to the agents a caller may read.
+func (s *Store) ListConversations(ctx context.Context, opts ConversationListOptions) ([]ConversationMessage, error) {
 	query := `SELECT id, invocation_id, correlation_id, agent_name, role, content, model, input_tokens, output_tokens, stop_reason, created_at
 		FROM task_conversations WHERE 1=1`
 	args := []any{}
 	argN := 1
 
-	if agentName != "" {
+	if opts.AgentName != "" {
 		query += fmt.Sprintf(" AND agent_name = $%d", argN)
-		args = append(args, agentName)
+		args = append(args, opts.AgentName)
 		argN++
 	}
-	if invocationID != "" {
+	if len(opts.AgentNames) > 0 {
+		query += fmt.Sprintf(" AND agent_name = ANY($%d)", argN)
+		args = append(args, opts.AgentNames)
+		argN++
+	}
+	if opts.InvocationID != "" {
 		query += fmt.Sprintf(" AND invocation_id = $%d", argN)
-		args = append(args, invocationID)
+		args = append(args, opts.InvocationID)
 		argN++
 	}
-	if correlationID != "" {
+	if opts.CorrelationID != "" {
 		query += fmt.Sprintf(" AND correlation_id = $%d", argN)
-		args = append(args, correlationID)
+		args = append(args, opts.CorrelationID)
 		argN++
 	}
 
 	query += " ORDER BY created_at ASC, id ASC"
 
+	limit := opts.Limit
 	if limit <= 0 {
 		limit = 100
 	}

@@ -604,6 +604,8 @@ Invocations record one dispatch of an event to an agent. They are persisted in t
 
 List recent invocations, newest first. Supports `page`/`pageSize`.
 
+**Access:** scoped to the caller — results are limited to invocations whose agent the caller can read, and `agent` naming any other agent returns `403`. The `event`, `trigger` and `status` filters narrow within that scope but cannot widen it, including the queue-state enrichment that synthesizes rows from `agent_tasks`. Admins see everything.
+
 **Query parameters:** `agent`, `status` (one of `running`, `success`, `failure`, `timeout`), `trigger`, `event`, `since` / `until` (RFC3339 timestamp), `limit`.
 
 **Response:** `200 OK`
@@ -632,6 +634,8 @@ List recent invocations, newest first. Supports `page`/`pageSize`.
 ### GET /api/v1/invocations/{id}
 
 Fetch one invocation by ID.
+
+**Access:** requires read access to the invocation's agent; `403` otherwise. An invocation carrying no agent cannot be attributed to a resource and is admin-only.
 
 **Response:** `200 OK`, `400` if the ID is missing, `404 Not Found`, or `503`.
 
@@ -1042,6 +1046,8 @@ when their backend is not configured.
 
 List recent events (the console's Activity page), newest first.
 
+**Access:** scoped to the caller. An event is visible when the caller can read the connector that ingested it *or* any agent it was routed to. `connector` and `agent` filters naming a resource the caller cannot read return an empty page rather than `403`, so the parameters cannot be used to probe which resources exist. Because the scope is applied in SQL, `total` counts only rows the caller may see, so pagination stays truthful. Admins see everything.
+
 **Query parameters:** `limit` (default `100`, max `500`), `offset`, `connector`, `agent`, `status` (`matched` | `unmatched` | `error`), `since` (RFC3339).
 
 **Response:** `200 OK`
@@ -1072,11 +1078,15 @@ invocation run state when still within the invocation store's retention.
 
 One event with the same shape as a list entry.
 
+**Access:** as [`GET /api/v1/events`](#get-apiv1events). An event the caller may not read returns `404` rather than `403`, so an event ID cannot be used to confirm that another tenant's event exists.
+
 **Response:** `200 OK`, `404 Not Found`, or `503`.
 
 ### GET /api/v1/errors
 
 List recent error-level agent log entries (from the hub's `task_logs` table).
+
+**Access:** scoped to the caller, exactly like [`GET /api/v1/observability/logs`](#get-apiv1observabilitylogs) — error messages routinely quote the payload that failed. `agent` naming an agent the caller cannot read returns `403`. Admins see everything.
 
 **Query parameters:** `limit` (default `50`), `agent`, `since` (RFC3339, default 24h ago).
 
@@ -1218,6 +1228,18 @@ One row per `(agent, repo, eventType, model)` tuple over the requested range.
 }
 ```
 
+### GET /api/v1/observability/metrics/query
+
+Thin raw proxy to Prometheus for freeform PromQL, intended for MCP tools and operators. Returns the upstream JSON response unmodified.
+
+**Query parameters:** `query` — a PromQL expression (required); `time` — optional evaluation timestamp (RFC3339 or unix).
+
+**Access:** admin only (`403` otherwise, `401` without an identity). This is an escape hatch rather than a dashboard input — the UI reads the structured `summary`/`timeseries`/`agents`/`tokens/*` endpoints above, which build their own namespace-scoped PromQL. Leaving a raw proxy open to every authenticated user let them read series from outside the AInsel namespace and submit arbitrarily expensive expressions.
+
+The handler also rejects a query that does not mention `namespace="<ns>"` or `namespace=~"<ns>"`. That check is a substring heuristic and not a PromQL parse: an expression such as `up{namespace="<ns>"} or up` satisfies it while still selecting unscoped series. It is a backstop against an operator typo, not an access control — the admin requirement is.
+
+With no authorization backend configured (local development) there is no notion of admin, so the endpoint is open, matching the rest of the API in that mode.
+
 ### Deprecated metric aliases
 
 The following routes are accepted as deprecated aliases of their `/observability/` siblings. Each response includes `Deprecation: true` and a `Link: <successor>; rel="successor-version"` header. They will be removed once all deployed frontends call the canonical paths.
@@ -1234,15 +1256,15 @@ The following routes are accepted as deprecated aliases of their `/observability
 
 ### GET /api/v1/observability/logs
 
-Tail recent log lines from Loki. Also accessible (with the same handler) at `GET /api/observability/logs`.
+Tail recent agent log lines from the hub's own `task_logs` table, populated by agents over NATS — no external log backend is involved. Also accessible (with the same handler) at `GET /api/observability/logs`.
 
 **Query parameters:**
-- `query` — free-form LogQL. Forwarded to Loki untouched.
-- `app` — convenience selector. Builds `{namespace="<loki ns>", app="<app>"}`. Ignored when `query` is set.
+- `app` — agent name to filter by.
 - `range` — one of `1h`, `6h`, `24h` (default `1h`).
+- `since` — Go duration string (e.g. `90m`); overrides `range`.
 - `limit` — positive integer, default `500`, capped at `1000`.
 
-When neither `query` nor `app` is set the handler builds a default selector that scopes to the hub's Loki namespace, requires a non-empty `app` label, and excludes the hub's own app — i.e. "all agent pods".
+**Access:** scoped to the caller — results are limited to agents the caller can read, so omitting `app` returns only those agents' logs rather than every agent's. `app` naming an agent the caller cannot read returns `403`. Admins see every agent's logs.
 
 **Response:** `200 OK`
 ```json
@@ -1264,6 +1286,8 @@ When neither `query` nor `app` is set the handler builds a default selector that
 ### GET /api/v1/observability/conversations
 
 Return agent conversation messages captured from agent turns and stored in the `task_conversations` table. These are the messages the hub's event detail view uses to render the communication for an event/invocation (user prompt, assistant thinking/text, tool calls, and tool results).
+
+**Access:** scoped to the caller — results are limited to agents the caller can read, and `agent` naming any other agent returns `403`. `invocation` and `correlation` narrow within that scope but cannot widen it. Admins see everything.
 
 **Query parameters:**
 - `agent` — filter by agent name.

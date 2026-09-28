@@ -51,6 +51,24 @@ func (s *Server) listErrors(w http.ResponseWriter, r *http.Request) {
 		opts.AgentName = v
 	}
 
+	// Error entries come from the same task_logs table as the log stream and
+	// regularly carry fragments of the payload that failed, so they get the
+	// same scope.
+	if opts.AgentName != "" {
+		if !s.requireRead(w, r, "agent", opts.AgentName) {
+			return
+		}
+	} else if scope := s.telemetryScopeFor(r); !scope.unrestricted {
+		if len(scope.agents) == 0 {
+			writeJSON(w, http.StatusOK, map[string]interface{}{
+				"errors": []map[string]interface{}{},
+				"total":  0,
+			})
+			return
+		}
+		opts.AgentNames = scope.agents
+	}
+
 	entries, err := s.taskLogs.List(r.Context(), opts)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "failed to query errors: "+err.Error())

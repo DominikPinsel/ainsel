@@ -558,6 +558,13 @@ type EventFilter struct {
 	Status string
 	// Agent limits results to events routed to this agent.
 	Agent string
+	// Agents limits results to events routed to any of these agents. Combined
+	// with Connectors as an OR group so an event is visible when the caller
+	// can read either the connector that ingested it or any agent it reached.
+	// Used to scope the activity feed to what a caller may read.
+	Agents []string
+	// Connectors limits results to events ingested by any of these connectors.
+	Connectors []string
 	// Subject is a subject pattern (see ParseSubjectFilter) of the form
 	// "<connector>.<eventType>" with "*"/">" wildcards that filters events
 	// by their derived event type from the webhook event-type header.
@@ -587,6 +594,23 @@ func (f EventFilter) conditions() (conds []string, args []any) {
 		args = append(args, f.Agent)
 		conds = append(conds, fmt.Sprintf(
 			"EXISTS (SELECT 1 FROM agent_tasks t WHERE t.event_id = e.id AND t.agent_name = $%d)", len(args)))
+	}
+	// Access scope: an event is visible when the caller can read the connector
+	// that ingested it, or any agent it was routed to. Keeping this in SQL
+	// rather than filtering the result set means QueryEvents and CountEvents
+	// agree, so pagination totals stay correct.
+	if len(f.Connectors) > 0 || len(f.Agents) > 0 {
+		var or []string
+		if len(f.Connectors) > 0 {
+			args = append(args, f.Connectors)
+			or = append(or, fmt.Sprintf("e.connector = ANY($%d)", len(args)))
+		}
+		if len(f.Agents) > 0 {
+			args = append(args, f.Agents)
+			or = append(or, fmt.Sprintf(
+				"EXISTS (SELECT 1 FROM agent_tasks t WHERE t.event_id = e.id AND t.agent_name = ANY($%d))", len(args)))
+		}
+		conds = append(conds, "("+strings.Join(or, " OR ")+")")
 	}
 	switch f.Status {
 	case "unmatched":

@@ -110,6 +110,26 @@ func (s *Server) getEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Same rule as listEvents: visible when the caller can read the connector
+	// that ingested the event or any agent it reached. Reported as 404 rather
+	// than 403 so an event id cannot be used to confirm that another tenant's
+	// event exists.
+	if scope := s.telemetryScopeFor(r); !scope.unrestricted {
+		allowed := scope.allowsConnector(evt.Connector)
+		if !allowed {
+			for _, t := range tasks {
+				if scope.allowsAgent(t.AgentName) {
+					allowed = true
+					break
+				}
+			}
+		}
+		if !allowed {
+			writeError(w, http.StatusNotFound, "event not found")
+			return
+		}
+	}
+
 	writeJSON(w, http.StatusOK, buildActivityEntry(*evt, tasks, s.invocations))
 }
 
@@ -161,6 +181,23 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		filter.Since = t
+	}
+
+	// An activity entry carries the raw webhook payload, so it is tenant data
+	// like anything else. It is visible when the caller can read the connector
+	// that ingested the event or any agent the event reached. An explicit
+	// ?connector=/?agent= outside that scope yields an empty page rather than
+	// a 403, so the filter cannot be used to probe which resources exist.
+	scope := s.telemetryScopeFor(r)
+	if !scope.unrestricted {
+		if (filter.Connector != "" && !scope.allowsConnector(filter.Connector)) ||
+			(filter.Agent != "" && !scope.allowsAgent(filter.Agent)) ||
+			scope.isEmpty() {
+			writeJSON(w, http.StatusOK, eventsEnvelope{Events: []activityEntry{}, Total: 0})
+			return
+		}
+		filter.Connectors = scope.connectors
+		filter.Agents = scope.agents
 	}
 
 	events, err := s.eventQueue.QueryEvents(r.Context(), filter, limit, offset)

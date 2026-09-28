@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -156,6 +157,11 @@ func (s *MemoryStore) Get(id string) (Invocation, bool) {
 type ListOptions struct {
 	// AgentName, if non-empty, restricts results to invocations for this agent.
 	AgentName string
+	// AgentNames, if non-empty, restricts results to invocations for any of
+	// these agents. Used to scope the history to the agents a caller may read;
+	// an empty slice applies no restriction, so a caller that may read no
+	// agents must not query at all.
+	AgentNames []string
 	// Status, if non-empty, restricts results to invocations with this status.
 	Status string
 	// TriggerName, if non-empty, restricts results to invocations dispatched by this trigger.
@@ -193,6 +199,9 @@ func (s *MemoryStore) ListWithTotal(opts ListOptions) ([]Invocation, int) {
 			continue
 		}
 		if opts.AgentName != "" && rec.AgentName != opts.AgentName {
+			continue
+		}
+		if len(opts.AgentNames) > 0 && !slices.Contains(opts.AgentNames, rec.AgentName) {
 			continue
 		}
 		if opts.Status != "" && rec.Status != opts.Status {

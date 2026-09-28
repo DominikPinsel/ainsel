@@ -29,10 +29,27 @@ type Entry struct {
 // ListOptions filters and paginates List results.
 type ListOptions struct {
 	AgentName string
-	Level     string
-	Since     time.Time
-	Until     time.Time
-	Limit     int
+	// AgentNames restricts results to any of these agents. Used to scope the
+	// log view to the agents a caller may read; an empty slice applies no
+	// restriction, so callers that mean "no agents at all" must not query.
+	AgentNames []string
+	Level      string
+	Since      time.Time
+	Until      time.Time
+	Limit      int
+}
+
+// ConversationListOptions filters conversation message queries.
+type ConversationListOptions struct {
+	// AgentName restricts results to a single agent.
+	AgentName string
+	// AgentNames restricts results to any of these agents, for scoping to the
+	// agents a caller may read. Empty applies no restriction.
+	AgentNames    []string
+	InvocationID  string
+	CorrelationID string
+	// Limit caps the number of messages returned. <= 0 means the default.
+	Limit int
 }
 
 // ConversationMessage is a single message in an agent conversation,
