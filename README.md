@@ -1,5 +1,14 @@
 # AInsel
 
+[![CI - services/hub](https://github.com/DominikPinsel/ainsel/actions/workflows/ci-services-hub.yml/badge.svg)](https://github.com/DominikPinsel/ainsel/actions/workflows/ci-services-hub.yml)
+[![CI - frontend](https://github.com/DominikPinsel/ainsel/actions/workflows/ci-frontend.yml/badge.svg)](https://github.com/DominikPinsel/ainsel/actions/workflows/ci-frontend.yml)
+[![CI - chart](https://github.com/DominikPinsel/ainsel/actions/workflows/ci-chart.yml/badge.svg)](https://github.com/DominikPinsel/ainsel/actions/workflows/ci-chart.yml)
+[![License](https://img.shields.io/github/license/DominikPinsel/ainsel)](LICENSE)
+![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go&logoColor=white)
+[![Kubernetes-native](https://img.shields.io/badge/Kubernetes-native-326CE5?logo=kubernetes&logoColor=white)](docs/deployment.md)
+[![Docs](https://img.shields.io/badge/docs-online-success)](https://dominikpinsel.github.io/ainsel/)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](CONTRIBUTING.md)
+
 **AInsel adds AI agents to the systems your team already uses.**
 
 Administrators wire AI into existing tools — code forges, ticket systems,
