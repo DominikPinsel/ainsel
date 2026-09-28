@@ -79,6 +79,10 @@ type Server struct {
 	userTokens             *usertokens.Store
 	internalValidateSecret string
 
+	// wsAllowedOrigins lists Origins permitted to open /api/v1/ws in addition
+	// to same-origin requests. See SetWSAllowedOrigins.
+	wsAllowedOrigins []string
+
 	// localAuthSecret is the HS256 signing key for local session JWTs.
 	// Non-empty enables /api/v1/auth/login (auth.mode=local).
 	localAuthSecret []byte

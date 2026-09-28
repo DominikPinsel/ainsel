@@ -87,6 +87,7 @@ via `hub.extraEnv` in your `values.yaml`.
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
 | `TASK_CLAIM_TIMEOUT_SECONDS` | int | `1800` | Duration (in seconds) after which a `claimed` task is considered stale. A background reaper runs every 5m and resets stale claims to `pending` (or `failed` if max attempts reached) with a 30s retry delay. |
+| `HUB_WS_ALLOWED_ORIGINS` | string | _empty_ | Comma-separated list of extra Origins allowed to open `/api/v1/ws`. Same-origin requests are always allowed, so this is only needed when the UI is served from a different host or port than the hub API (local development). Entries may be full origins (`https://app.example.com`) or bare hosts (`localhost:5173`). |
 
 ### UI
 
