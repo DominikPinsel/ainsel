@@ -178,8 +178,17 @@ func (p *Publisher) Run(ctx context.Context) error {
 	}
 }
 
-// markAll measures the queue and marks agents whose published state disagrees,
-// plus every agent with work in flight or waiting.
+// markAll measures the queue and marks every agent the publisher reports on:
+// anything with work waiting or in flight, and anything it has published before.
+//
+// The second half is the heartbeat, and it is the reason the sweep exists. Only
+// agents with rows come back from AllQueueCounts, so marking just the busy set
+// would stop covering an agent the moment its queue drained and the empty signal
+// was written. Its observation timestamp would freeze at that instant, the
+// operator's TTL would expire, and a stale signal means "hold the pods you have"
+// — so the one agent the feature exists for, the idle one, would never scale to
+// zero. A dead hub and a busy hub look identical from a frozen timestamp, which
+// is exactly the distinction this field is there to make.
 func (p *Publisher) markAll(ctx context.Context) {
 	counts, err := p.counters.AllQueueCounts(ctx)
 	if err != nil {
@@ -193,14 +202,11 @@ func (p *Publisher) markAll(ctx context.Context) {
 	for name := range counts {
 		p.dirty[name] = true
 	}
-	// Anything we last said was busy but is absent from the busy set has drained
-	// without telling us, so it needs a correction too.
-	for name, sig := range p.last {
-		if !sig.Empty() {
-			if _, ok := counts[name]; !ok {
-				p.dirty[name] = true
-			}
-		}
+	// Covers the correction case too: an agent last reported busy that is absent
+	// from the busy set has drained without telling us, and needs its counts
+	// fixed as well as its timestamp refreshed.
+	for name := range p.last {
+		p.dirty[name] = true
 	}
 }
 

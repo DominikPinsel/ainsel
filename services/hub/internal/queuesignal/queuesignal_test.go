@@ -544,3 +544,79 @@ func TestK8sPatcherUsesMergePatchBody(t *testing.T) {
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
+
+// A drained agent must keep beating. markAll re-marks only agents it last said
+// were BUSY, so once the empty signal is published the agent drops out of every
+// later sweep: queueObservedAt freezes, the operator's TTL expires, and it holds
+// the pods it has instead of scaling them to zero.
+func TestMarkAllKeepsHeartbeatForIdleAgents(t *testing.T) {
+	counter, patcher := newCounter(), &fakePatcher{}
+	p := New(counter, patcher, WithLogger(discardLogger()))
+
+	// Pretend the agent got work, drained, and we published the empty signal.
+	p.mu.Lock()
+	p.last["a"] = Signal{Pending: 0, Active: 0, ObservedAt: time.Now().Add(-6 * time.Minute)}
+	p.mu.Unlock()
+
+	p.markAll(context.Background())
+
+	p.mu.Lock()
+	dirty := p.dirty["a"]
+	p.mu.Unlock()
+	if !dirty {
+		t.Error("markAll skipped an idle agent; its queue signal goes stale and the operator never scales it to zero")
+	}
+}
+
+// The same defect seen from the publish loop: once the drained queue has been
+// published as empty, the heartbeat must keep repeating rather than fall silent.
+// This is the production symptom: queueObservedAt freezes for hours while the
+// sweep runs every 60s.
+func TestRunKeepsBeatingForAnIdleAgent(t *testing.T) {
+	counter, patcher := newCounter(), &fakePatcher{}
+	p := New(counter, patcher,
+		WithTick(5*time.Millisecond),
+		WithSweep(5*time.Millisecond),
+		WithDebounce(1*time.Millisecond),
+		WithLogger(discardLogger()))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = p.Run(ctx) }()
+
+	// Work arrives, then drains.
+	counter.set("idle", 1, 0)
+	waitFor(t, time.After(2*time.Second), func() bool {
+		sig, ok := p.Published("idle")
+		return ok && sig.Pending == 1
+	}, "the agent with queued work was never published")
+
+	counter.set("idle", 0, 0)
+	waitFor(t, time.After(2*time.Second), func() bool {
+		sig, ok := p.Published("idle")
+		return ok && sig.Empty()
+	}, "the drained agent was never published as empty")
+
+	// From that settled state, several sweep intervals must each republish. An
+	// idle agent's observation timestamp is what keeps the operator trusting the
+	// signal, and a frozen one reads as "the hub stopped looking".
+	before := patcher.count()
+	time.Sleep(80 * time.Millisecond)
+	beat := patcher.count() - before
+	if beat == 0 {
+		t.Error("publisher fell silent once the drained queue had been published: 0 republishes over ~16 sweeps of idle. queueObservedAt freezes, the operator's TTL expires, and the agent can never scale to zero")
+	}
+}
+
+// waitFor spins until ok reports true or the deadline fires.
+func waitFor(t *testing.T, deadline <-chan time.Time, ok func() bool, msg string) {
+	t.Helper()
+	for !ok() {
+		select {
+		case <-deadline:
+			t.Fatal(msg)
+		default:
+			time.Sleep(2 * time.Millisecond)
+		}
+	}
+}
