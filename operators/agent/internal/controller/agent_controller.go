@@ -1334,14 +1334,24 @@ func (r *AgentReconciler) updateStatus(ctx context.Context, agent *ainselv1alpha
 // write — including the drain count an agent must not be scaled away without.
 // A merge patch naming exactly these keys leaves the hub's fields alone.
 func (r *AgentReconciler) patchStatus(ctx context.Context, agent *ainselv1alpha1.Agent) error {
-	body, err := json.Marshal(map[string]any{
-		"status": map[string]any{
-			"replicas":           agent.Status.Replicas,
-			"conditions":         agent.Status.Conditions,
-			"scaling":            agent.Status.Scaling,
-			"observedGeneration": agent.Status.ObservedGeneration,
-		},
-	})
+	status := map[string]any{
+		"replicas":           agent.Status.Replicas,
+		"conditions":         agent.Status.Conditions,
+		"observedGeneration": agent.Status.ObservedGeneration,
+	}
+	// The scaling decision is written key by key instead of marshalling the struct:
+	// every field of it is omitempty in the Go type, so a zero would drop out of the
+	// merge patch and the previous value would survive. That is what a parked agent
+	// looks like — converged on nothing, still reporting the pod it last wanted.
+	if s := agent.Status.Scaling; s != nil {
+		status["scaling"] = map[string]any{
+			"mode":    s.Mode,
+			"desired": s.Desired,
+			"reason":  s.Reason,
+			"message": s.Message,
+		}
+	}
+	body, err := json.Marshal(map[string]any{"status": status})
 	if err != nil {
 		return fmt.Errorf("marshal agent status: %w", err)
 	}
