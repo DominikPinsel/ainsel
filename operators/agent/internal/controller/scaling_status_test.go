@@ -217,3 +217,59 @@ func TestUpdateStatusLeavesHubFieldsAlone(t *testing.T) {
 		t.Errorf("DeploymentReady condition = %+v, want True with 3/3 ready", cond)
 	}
 }
+
+// A parked agent has to report that it wants no pods. Status is written as a JSON
+// merge patch, and Desired carries omitempty in the Go type, so marshalling the
+// struct drops a zero and the last non-zero value survives — the exact trap the
+// hub's mergePatchBody names its keys to avoid. Readers use this field to tell an
+// agent that is deliberately asleep from one that cannot get its pods, so a stuck
+// value makes every dormant agent look broken in the console and in any alert on
+// desired disagreeing with the ready count.
+func TestPatchStatusReportsZeroDesiredForAParkedAgent(t *testing.T) {
+	scheme := scalingFixtures()
+	a := scalingAgent(&ainselv1alpha1.AgentScaling{Replicas: ptr.To(int32(1)), MinReplicas: ptr.To(int32(0))})
+	// The agent ran a pod until its queue drained, so the field starts at one.
+	a.Status.Scaling = &ainselv1alpha1.AgentScalingStatus{
+		Mode:    ainselv1alpha1.ScalingModeQueue,
+		Desired: 1,
+		Reason:  ScaleReasonQueued,
+	}
+	quiet := metav1.NewTime(time.Now().Add(-time.Hour))
+	observed := metav1.NewTime(time.Now().Add(-time.Minute))
+	a.Status.LastInvocation = &quiet
+	a.Status.QueueObservedAt = &observed
+
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(a).
+		WithStatusSubresource(&ainselv1alpha1.Agent{}).
+		Build()
+	ctx := context.Background()
+	key := types.NamespacedName{Namespace: "ns", Name: "worker"}
+
+	agent := &ainselv1alpha1.Agent{}
+	if err := c.Get(ctx, key, agent); err != nil {
+		t.Fatalf("operator read: %v", err)
+	}
+
+	r := &AgentReconciler{Client: c, Scheme: scheme}
+	decision := r.resolveReplicas(agent, 1, time.Now())
+	if decision.Replicas != 0 {
+		t.Fatalf("test setup: the drained agent was not scaled to zero (decision %+v)", decision)
+	}
+	if err := r.updateStatus(ctx, agent, existingDeployment(0), decision); err != nil {
+		t.Fatalf("updateStatus: %v", err)
+	}
+
+	var got ainselv1alpha1.Agent
+	if err := c.Get(ctx, key, &got); err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if got.Status.Scaling == nil {
+		t.Fatal("status.scaling is missing on a parked agent; readers cannot tell it from one that never reconciled")
+	}
+	if got.Status.Scaling.Desired != 0 || got.Status.Scaling.Reason != ScaleReasonScaledDown {
+		t.Errorf("status.scaling = %+v, want the operator to report that it is converging on no pods and why",
+			*got.Status.Scaling)
+	}
+}
