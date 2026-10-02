@@ -1,7 +1,6 @@
 import type { Control, UseFormRegister, UseFormSetValue, UseFormWatch } from 'react-hook-form'
 import { useFieldArray } from 'react-hook-form'
 import type { ImageFormValues } from './ImageDetail.types'
-import { Cropped } from '../../primitives/Cropped'
 import { ToolEditor } from './ToolEditor'
 import { ToolList } from './ToolList'
 import { ToolSourceSidebar, type Source } from './ToolSourceSidebar'
@@ -62,46 +61,46 @@ export function ToolFieldArray({
 
   return (
     <div style={{ marginTop: 24 }}>
-      <Cropped>
-        <div
-          className="md-grid"
-          style={{
-            gridTemplateColumns: '140px 240px 1fr',
-            gridTemplateRows: 'minmax(0, 1fr)',
-            height: '640px',
-            maxHeight: '70vh',
-            minHeight: '480px',
-          }}
-        >
-          <ToolSourceSidebar
-            tools={tools}
-            activeSource={activeSource}
-            onSourceChange={setActiveSource}
-            onRefresh={onRefreshMCP}
-            isRefreshing={isRefreshing}
-            canRefresh={canRefresh}
-          />
-          <ToolList
-            tools={tools}
-            activeSource={activeSource}
-            selectedIndex={selectedIndex}
-            onSelect={setSelectedIndex}
-            onToggle={onToggleTool}
-            onToggleAll={onToggleAllTools}
-            onAdd={onAddTool}
-          />
-          <ToolEditor
-            key={selectedIndex ?? 'none'}
-            toolIndex={selectedIndex}
-            tools={tools}
-            control={control}
-            register={register}
-            setValue={setValue}
-            watch={watch}
-            onRemove={onRemoveSelected}
-          />
-        </div>
-      </Cropped>
+      {/* No <Cropped> wrapper: its corner ticks are square ink brackets and
+          would float outside this card's rounded corners. */}
+      <div
+        className="md-grid"
+        style={{
+          gridTemplateColumns: '140px 240px 1fr',
+          gridTemplateRows: 'minmax(0, 1fr)',
+          height: '640px',
+          maxHeight: '70vh',
+          minHeight: '480px',
+        }}
+      >
+        <ToolSourceSidebar
+          tools={tools}
+          activeSource={activeSource}
+          onSourceChange={setActiveSource}
+          onRefresh={onRefreshMCP}
+          isRefreshing={isRefreshing}
+          canRefresh={canRefresh}
+        />
+        <ToolList
+          tools={tools}
+          activeSource={activeSource}
+          selectedIndex={selectedIndex}
+          onSelect={setSelectedIndex}
+          onToggle={onToggleTool}
+          onToggleAll={onToggleAllTools}
+          onAdd={onAddTool}
+        />
+        <ToolEditor
+          key={selectedIndex ?? 'none'}
+          toolIndex={selectedIndex}
+          tools={tools}
+          control={control}
+          register={register}
+          setValue={setValue}
+          watch={watch}
+          onRemove={onRemoveSelected}
+        />
+      </div>
     </div>
   )
 }

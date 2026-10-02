@@ -794,6 +794,8 @@ pre.code code {
   display: grid;
   grid-template-columns: 320px 1fr;
   border: 1px solid var(--rule-soft); border-radius: var(--radius); overflow: hidden;
+  background: var(--paper-2);
+  box-shadow: var(--shadow-sm);
   min-height: 480px;
 }
 .md-grid > .md-left {
@@ -863,13 +865,12 @@ pre.code code {
 }
 .md-sources-sep {
   height: 1px;
-  background: var(--ink);
-  opacity: .2;
-  margin: 2px 8px;
+  background: var(--rule-soft);
+  margin: 4px 10px;
 }
 .md-sources-footer {
   padding: 8px 10px;
-  border-top: var(--hair) solid var(--ink);
+  border-top: 1px solid var(--rule-soft);
   flex-shrink: 0;
 }
 .src-item {
@@ -886,16 +887,16 @@ pre.code code {
   letter-spacing: .12em;
   font-weight: 600;
   color: var(--ink-3);
-  border-bottom: var(--hair) dashed var(--ink);
+  border-bottom: 1px solid var(--rule-ghost);
   background: transparent;
   width: 100%;
   text-align: left;
+  transition: background 0.12s, color 0.12s, border-left-color 0.12s;
 }
 .src-item:hover { background: var(--hover); color: var(--ink); }
-.src-item.active { background: var(--signal-haze); color: var(--signal-deep); border-left-color: var(--signal); }
-html[data-theme="dark"] .src-item.active { color: var(--signal); }
+.src-item.active { background: var(--signal-haze); color: var(--signal-ink); border-left-color: var(--signal); }
 .src-count { font-size: 9px; opacity: .6; font-weight: 400; }
-.src-item.active .src-count { opacity: .7; }
+.src-item.active .src-count { opacity: .8; }
 
 /* ===== Tool list extras ===== */
 .tool-search {
@@ -912,7 +913,6 @@ html[data-theme="dark"] .src-item.active { color: var(--signal); }
   color: var(--ink-4);
   background: var(--paper-deep);
   border-bottom: 1px solid var(--rule-soft);
-  border-top: var(--hair) solid var(--ink);
   font-weight: 700;
   display: flex;
   justify-content: space-between;
@@ -925,11 +925,12 @@ html[data-theme="dark"] .src-item.active { color: var(--signal); }
   background: var(--signal);
   color: var(--paper);
   font-size: 8px;
-  padding: 1px 4px;
+  padding: 1px 6px;
   font-family: var(--mono);
   font-weight: 700;
   letter-spacing: .06em;
   text-transform: uppercase;
+  border-radius: var(--radius-pill);
   margin-left: 5px;
   vertical-align: middle;
 }
@@ -976,9 +977,8 @@ html[data-theme="dark"] .src-item.active { color: var(--signal); }
 }
 .tool-row.active {
   background: var(--signal-haze);
-  color: var(--signal-deep);
+  color: var(--signal-ink);
 }
-html[data-theme="dark"] .tool-row.active { color: var(--signal); }
 .tool-row.active::before {
   content: '';
   position: absolute;
@@ -1006,9 +1006,15 @@ html[data-theme="dark"] .tool-row.active { color: var(--signal); }
   text-transform: uppercase;
 }
 .tool-row.active .tool-meta {
-  color: var(--signal-deep);
+  color: var(--signal-ink);
 }
-html[data-theme="dark"] .tool-row.active .tool-meta { color: var(--signal); }
+/* The row toggle is the themed Check primitive, not a native checkbox: the
+   editor pane a few pixels away uses Check for the same boolean, and an
+   OS-drawn control is the one shape Fjord has no vocabulary for. */
+.tool-row-check {
+  display: inline-flex;
+  align-items: center;
+}
 
 /* ===== Tool editor (right pane) ===== */
 .tool-detail {
@@ -1030,17 +1036,96 @@ html[data-theme="dark"] .tool-row.active .tool-meta { color: var(--signal); }
   letter-spacing: -0.01em;
   line-height: 1;
 }
-.tool-detail .tool-empty {
+/* Rendered as a direct child of .md-right when nothing is selected, so this
+   must not be scoped under .tool-detail — doing so left it unstyled. */
+.tool-empty {
   font-family: var(--display);
   font-style: italic;
   font-size: 16px;
   color: var(--ink-3);
   padding: 32px 26px;
 }
+/* Enabled/disabled strip at the top of the editor pane. */
+.tool-state {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  margin-bottom: 16px;
+  background: var(--paper-2);
+  border: 1px solid var(--rule-soft);
+  border-radius: var(--radius-sm);
+}
+.tool-state-text {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+.tool-state-spacer {
+  margin-left: auto;
+}
+/* The fully-qualified MCP tool name: a recessed code chip, quiet next to the
+   state strip above it. */
+.tool-fqn {
+  padding: 7px 10px;
+  margin-bottom: 16px;
+  background: var(--paper-deep);
+  border: 1px solid var(--rule-soft);
+  border-radius: var(--radius-sm);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-2);
+  word-break: break-all;
+}
+/* Sub-heading inside the editor pane (e.g. "Examples · 2"). */
+.tool-subhead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  margin: 18px 0 12px;
+  background: var(--paper-2);
+  border: 1px solid var(--rule-soft);
+  border-radius: var(--radius-sm);
+}
+.tool-subhead h4 {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+/* Read-only value rendered where an input would otherwise be. */
+.tool-readonly {
+  padding: 8px 10px;
+  background: var(--paper-2);
+  border: 1px solid var(--rule-soft);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: var(--ink-2);
+}
+/* Explanatory copy inside the editor pane. */
+.tool-hint {
+  margin: 0 0 14px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+.tool-detail .tool-title em {
+  font-style: italic;
+  color: var(--ink-3);
+}
 
 /* ===== Examples editor ===== */
 .example-block {
   border: 1px solid var(--rule-soft);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
   margin-bottom: 12px;
 }
 .example-block-header {
@@ -1053,6 +1138,7 @@ html[data-theme="dark"] .tool-row.active .tool-meta { color: var(--signal); }
 }
 .example-block-header input {
   flex: 1;
+  min-width: 0;
   background: transparent;
   border: 0;
   outline: none;
@@ -1063,15 +1149,30 @@ html[data-theme="dark"] .tool-row.active .tool-meta { color: var(--signal); }
   text-transform: uppercase;
   color: var(--ink);
 }
+.example-block-header input::placeholder {
+  color: var(--ink-4);
+  text-transform: none;
+  letter-spacing: 0;
+}
 .example-block-header .remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
   background: transparent;
   border: 0;
+  border-radius: var(--radius-sm);
   font-family: var(--display);
   font-size: 16px;
+  line-height: 1;
   color: var(--ink-3);
   cursor: pointer;
+  transition: background 0.12s, color 0.12s;
 }
 .example-block-header .remove:hover {
+  background: var(--hover);
   color: var(--signal);
 }
 .example-block textarea {
@@ -1088,67 +1189,45 @@ html[data-theme="dark"] .tool-row.active .tool-meta { color: var(--signal); }
   line-height: 1.55;
 }
 
-/* ===== Sync banner ===== */
-.sync-banner {
+/* ===== Notice (inline form status banner) ===== */
+/* Fjord has no green: `--ok` is ink, warnings are amber, and failures use the
+   signal teal that `.field-error` already uses. The left rule carries the
+   semantics so the body text can stay quiet. */
+.notice {
   display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 14px 18px;
-  border: var(--rule-w) solid var(--signal);
-  background: var(--signal-haze);
-  margin-bottom: 22px;
-}
-.sync-banner .sp {
-  width: 16px;
-  height: 16px;
-  border: 2px solid var(--signal);
-  border-right-color: transparent;
-  border-radius: 50%;
-  animation: ainsel-spin 0.9s linear infinite;
-}
-@keyframes ainsel-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-.sync-banner .sync-txt {
-  font-family: var(--mono);
-  font-size: 12px;
-  font-weight: 600;
-}
-.sync-banner .sync-txt span {
-  display: block;
-  font-size: 10px;
-  font-weight: 400;
-  color: var(--ink-3);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  margin-top: 2px;
-}
-.sync-banner .sync-count {
-  margin-left: auto;
-  font-family: var(--mono);
-  font-size: 14px;
-  font-weight: 600;
-}
-
-/* ===== Orphan tools warning ===== */
-.orphan-banner {
-  border: var(--hair) solid var(--warn);
-  background: rgba(192, 138, 20, 0.08);
-  padding: 12px 16px;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
   margin-bottom: 16px;
+  background: var(--paper-2);
+  border: 1px solid var(--rule-soft);
+  border-left: 3px solid var(--ink-4);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
   font-family: var(--mono);
   font-size: 11px;
-  color: var(--warn);
+  line-height: 1.55;
+  color: var(--ink-2);
 }
-.orphan-banner b {
+.notice-warn {
+  border-left-color: var(--warn);
+  background: var(--warn-haze);
+  color: var(--ink);
+}
+.notice-err {
+  border-left-color: var(--signal);
+  background: var(--signal-haze);
+  color: var(--signal-ink);
+}
+.notice strong {
   font-weight: 700;
 }
-.orphan-banner .orphan-list {
-  color: var(--ink-2);
-  font-weight: 400;
-  margin-top: 4px;
+.notice ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+.notice li {
+  margin-top: 2px;
 }
 
 /* ===== Inline-edit cell (TriggerList event-type) ===== */
@@ -1234,7 +1313,7 @@ html[data-theme="dark"] .tool-row.active .tool-meta { color: var(--signal); }
   vertical-align: middle;
 }
 .activity-row .chev-btn:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--signal);
   outline-offset: 2px;
   border-radius: 2px;
 }
@@ -1444,29 +1523,21 @@ html[data-theme="dark"] .settings-side-item.active { color: var(--signal); }
   background: var(--paper);
 }
 .dual-list-pane + .dual-list-arrows + .dual-list-pane {
-  border-left: var(--hair) solid var(--ink);
+  border-left: 1px solid var(--rule-soft);
 }
 .dual-list-pane-header {
-  padding: 8px 12px;
+  padding: 10px 12px;
   font-family: var(--mono);
   font-weight: 700;
-  font-size: 11px;
+  font-size: 10px;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
   border-bottom: 1px solid var(--rule-soft);
-  color: var(--ink);
+  color: var(--ink-3);
 }
 .dual-list-search {
   padding: 8px 12px;
   border-bottom: 1px solid var(--rule-soft);
-}
-.dual-list-search input {
-  width: 100%;
-  padding: 6px 8px;
-  border: 1.5px solid var(--border, var(--ink));
-  background: var(--surface, var(--paper));
-  color: var(--ink);
-  font-size: 13px;
-  border-radius: 4px;
 }
 .dual-list-rows {
   list-style: none;
@@ -1478,22 +1549,41 @@ html[data-theme="dark"] .settings-side-item.active { color: var(--signal); }
 }
 .dual-list-row {
   display: block;
+  position: relative;
   padding: 6px 12px;
   cursor: pointer;
   font-size: 13px;
-  border-bottom: 1px solid var(--surface-2, transparent);
+  border-bottom: 1px solid var(--rule-ghost);
   outline: none;
+  transition: background 0.1s;
+}
+.dual-list-row:hover {
+  background: var(--hover);
 }
 .dual-list-row:focus-visible {
-  outline: 1.5px solid var(--ink);
-  outline-offset: -1.5px;
+  outline: 2px solid var(--signal);
+  outline-offset: -2px;
 }
 .dual-list-row.selected {
-  background: var(--surface-2, #eef);
+  background: var(--signal-haze);
+}
+.dual-list-row.selected::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--signal);
 }
 .dual-list-row-label {
   font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
   color: var(--ink);
+}
+.dual-list-row.selected .dual-list-row-label {
+  color: var(--signal-ink);
 }
 .dual-list-row-desc {
   font-size: 12px;
@@ -1515,21 +1605,11 @@ html[data-theme="dark"] .settings-side-item.active { color: var(--signal); }
 }
 .dual-list-pane-footer {
   padding: 8px 12px;
-  border-top: var(--hair) solid var(--ink);
+  border-top: 1px solid var(--rule-soft);
 }
-.dual-list-pane-footer button {
+.dual-list-pane-footer .btn {
   width: 100%;
-  padding: 6px 8px;
-  background: var(--paper);
-  border: 1px solid var(--rule-soft); border-radius: var(--radius-sm);
-  font-family: var(--mono);
-  font-size: 11px;
-  text-transform: uppercase;
-  cursor: pointer;
-}
-.dual-list-pane-footer button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+  justify-content: center;
 }
 .dual-list-arrows {
   display: flex;
@@ -1537,18 +1617,16 @@ html[data-theme="dark"] .settings-side-item.active { color: var(--signal); }
   justify-content: center;
   align-items: center;
   gap: 8px;
-  padding: 0 4px;
-  border-left: var(--hair) solid var(--ink);
+  padding: 0 6px;
+  border-left: 1px solid var(--rule-soft);
   background: var(--paper);
 }
-.dual-list-arrows button {
-  width: 32px;
-  height: 32px;
-  background: var(--paper);
-  border: 1.5px solid var(--ink);
-  font-family: var(--mono);
+.dual-list-arrows .btn {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  justify-content: center;
   font-size: 14px;
-  cursor: pointer;
 }
 
 /* ===== Scroll cap + back-to-top ===== */

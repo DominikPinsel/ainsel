@@ -1,4 +1,6 @@
 import { useMemo, useState, type ReactNode } from 'react'
+import { Button } from './Button'
+import { Input } from './Input'
 
 export type DualListPickerProps<T> = {
   items: T[]
@@ -128,7 +130,7 @@ export function DualListPicker<T>(props: DualListPickerProps<T>) {
         </span>
       </header>
       <div className="dual-list-search">
-        <input
+        <Input
           type="search"
           role="searchbox"
           aria-label={`Search ${title}`}
@@ -193,13 +195,13 @@ export function DualListPicker<T>(props: DualListPickerProps<T>) {
         )}
       </ul>
       <div className="dual-list-pane-footer">
-        <button
-          type="button"
+        <Button
+          size="sm"
           onClick={footer.onClick}
           disabled={footer.disabled || isLoading}
         >
           {footer.label}
-        </button>
+        </Button>
       </div>
     </div>
   )
@@ -221,22 +223,22 @@ export function DualListPicker<T>(props: DualListPickerProps<T>) {
         availableAnchor, setAvailableAnchor,
       )}
       <div className="dual-list-arrows">
-        <button
-          type="button"
+        <Button
+          size="sm"
           aria-label={`Add selected to ${enabledTitle}`}
           disabled={availableSel.size === 0 || isLoading}
           onClick={moveToEnabled}
         >
           →
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          size="sm"
           aria-label={`Remove selected from ${enabledTitle}`}
           disabled={enabledSel.size === 0 || isLoading}
           onClick={moveToAvailable}
         >
           ←
-        </button>
+        </Button>
       </div>
       {renderPane(
         enabledTitle, enabled, visibleEnabled, enabledEmpty,
