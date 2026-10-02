@@ -232,14 +232,22 @@ export function surfaceColors(selector: string, theme: string | null) {
   }
 }
 
-// WCAG relative luminance and contrast ratio, on resolved hex values.
-export function luminance(hex: string): number {
-  const [r, g, b] = hex
-    .slice(1)
-    .match(/../g)!
-    .map((h) => parseInt(h, 16) / 255)
-    .map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4))
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b
+// WCAG relative luminance and contrast ratio, on resolved colour values.
+/**
+ * Relative luminance. Alpha is ignored: WCAG defines the ratio for opaque
+ * colours, so callers composite a translucent surface first.
+ *
+ * Goes through parseColor rather than assuming `#rrggbb` — `hex.match(/../g)`
+ * silently yields one channel for a 3-digit shorthand like the `#fff` in
+ * `.tag.solid.err`, and the resulting NaN reads as a passing comparison.
+ */
+export function luminance(color: string): number {
+  const { r, g, b } = parseColor(color)
+  const lin = (v: number) => {
+    const c = v / 255
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+  }
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
 }
 
 export function contrast(a: string, b: string): number {
@@ -276,6 +284,12 @@ export function parseColor(value: string): RGB {
       return { r: parts[0], g: parts[1], b: parts[2], a: parts.length > 3 ? parts[3] : 1 }
     }
   }
+  // `transparent` is a colour, and color-mix() operands use it
+  // (`.tag.warn` mixes --warn with it). Fully transparent black, per spec.
+  const keyword = value.trim().toLowerCase()
+  if (keyword === 'transparent') return { r: 0, g: 0, b: 0, a: 0 }
+  if (keyword === 'white') return { r: 255, g: 255, b: 255, a: 1 }
+  if (keyword === 'black') return { r: 0, g: 0, b: 0, a: 1 }
   throw new Error(`cannot parse colour "${value}"`)
 }
 

@@ -54,6 +54,15 @@ describe('resolveColor', () => {
     )
   })
 
+  it('accepts transparent as a color-mix operand', () => {
+    // .tag.warn mixes --warn with transparent; without keyword support the kit
+    // throws on a rule that is perfectly valid CSS.
+    const pal = new Map([['--warn', '#b07d10']])
+    expect(
+      parseColor(resolveColor('color-mix(in srgb, var(--warn) 12%, transparent)', pal)).a,
+    ).toBeCloseTo(0.12, 5)
+  })
+
   it('passes plain tokens and literals through', () => {
     const pal = new Map([['--signal-haze', 'rgba(12, 138, 143, 0.1)']])
     expect(resolveColor('var(--signal-haze)', pal)).toBe('rgba(12, 138, 143, 0.1)')
@@ -140,6 +149,14 @@ describe('composite and contrast', () => {
 
   it('leaves an opaque colour alone', () => {
     expect(composite('#123456', '#ffffff')).toBe('#123456')
+  })
+
+  it('handles 3-digit shorthand rather than returning NaN', () => {
+    // luminance() used to slice '#fff' into a single channel; NaN then read as
+    // a passing comparison in any >= assertion.
+    expect(contrast('#fff', '#0c8a8f')).toBeCloseTo(contrast('#ffffff', '#0c8a8f'), 10)
+    expect(Number.isNaN(contrast('#fff', '#000'))).toBe(false)
+    expect(contrast('#fff', '#000')).toBeCloseTo(21, 5)
   })
 
   it('is symmetric and peaks at black on white', () => {
