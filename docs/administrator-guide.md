@@ -220,10 +220,8 @@ spec:
     - forgejo
     - code-review
   scaling:
+    replicas: 3
     minReplicas: 0
-    maxReplicas: 3
-    cooldownPeriod: 300
-    lagThreshold: 5
 ```
 
 **Trigger:** created in the console or via `POST /api/v1/triggers` —
@@ -313,10 +311,8 @@ spec:
   enabledTools:
     - forgejo
   scaling:
+    replicas: 2
     minReplicas: 0
-    maxReplicas: 2
-    cooldownPeriod: 300
-    lagThreshold: 5
 ```
 
 **Trigger:** via `POST /api/v1/triggers`:
@@ -405,8 +401,8 @@ spec:
   enabledTools:
     - forgejo
   scaling:
+    replicas: 2
     minReplicas: 0
-    maxReplicas: 2
 ```
 
 **Triggers:** two `POST /api/v1/triggers` calls:
@@ -525,10 +521,8 @@ spec:
     - shell
     - test-runner
   scaling:
+    replicas: 2
     minReplicas: 0
-    maxReplicas: 2
-    cooldownPeriod: 600
-    lagThreshold: 1
 ```
 
 **Trigger:** via `POST /api/v1/triggers`:
@@ -707,11 +701,15 @@ Three escalating options, fastest to most thorough:
    `DELETE /api/v1/triggers/{id}`), or update its filters to something
    that never matches, and/or disable any cron trigger referencing the
    agent (`enabled: false`). Reversible; in-flight invocations finish.
-2. **Scale to zero.** Set `Agent.spec.scaling.maxReplicas: 0`. KEDA
-   scales the Deployment to zero; events queue in the event queue until you
-   scale back up.
+2. **Scale to zero.** Set `Agent.spec.scaling.replicas: 0`. The operator
+   pins the Deployment at zero and queued work waits in the event queue
+   until you raise it again — an explicit zero is treated as the user
+   saying "none", so a growing queue does not overrule it. Events already
+   claimed by a pod finish; that pod's termination honours
+   `--agent-grace-period`.
 3. **Delete the agent.** `kubectl delete agent <name> -n ainsel`.
-   Tears down Deployment consumer, and ScaledObject.
+   Garbage-collects the Deployment, Service, persona ConfigMap and the
+   MCP secret the owner references point at.
 
 For incidents, prefer (1) — reversible, leaves config in place for
 analysis.

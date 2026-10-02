@@ -26,10 +26,8 @@
 | `persona.configMapRef.name` | string | No | ConfigMap containing persona |
 | `persona.configMapRef.key` | string | No | Key in ConfigMap |
 | `skills` | []AgentSkill | No | Additional skill ConfigMaps |
-| `scaling.minReplicas` | int32 | No | Minimum replicas |
-| `scaling.maxReplicas` | int32 | No | Maximum replicas |
-| `scaling.cooldownPeriod` | int32 | No | Cooldown period in seconds |
-| `scaling.lagThreshold` | int32 | No | NATS consumer lag threshold for scaling |
+| `scaling.minReplicas` | int32 | No | Floor for queue-driven scaling, and the opt-in: unset means pin exactly `replicas`. `0` lets the agent go dormant. Must not exceed `replicas`. |
+| `scaling.replicas` | int32 | No | Pod count in static mode, ceiling in queue mode. Default `1`. |
 | `memory.enabled` | bool | No | Enable shared memory |
 | `memory.provider` | string | No | Memory provider |
 
@@ -38,8 +36,12 @@
 | Field | Type | Description |
 |-------|------|-------------|
 | `conditions` | []Condition | Standard Kubernetes conditions |
-| `replicas` | int32 | Current replica count |
-| `lastInvocation` | Time | Last time the agent was invoked |
+| `replicas` | int32 | Current ready replica count |
+| `lastInvocation` | Time | Last time work was handed to the agent; the idle clock scale-down measures against |
+| `pendingTasks` | int32 | Tasks queued for this agent. Written by the hub, not the operator. |
+| `activeTasks` | int32 | Tasks claimed but not finished. Written by the hub. |
+| `queueObservedAt` | Time | When the hub measured those counts. Past `--queue-signal-ttl` the operator holds its pod count instead of scaling down. |
+| `scaling` | AgentScalingStatus | What the operator is doing with the pods: `mode` (`static`/`queue`), `desired`, `reason` and a one-line `message` |
 | `observedGeneration` | int64 | Last observed spec generation |
 
 ### Example
@@ -75,10 +77,8 @@ spec:
       name: code-reviewer-persona
       key: CLAUDE.md
   scaling:
+    replicas: 3
     minReplicas: 0
-    maxReplicas: 3
-    cooldownPeriod: 300
-    lagThreshold: 5
   memory:
     enabled: true
     provider: example
