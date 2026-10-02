@@ -34,8 +34,17 @@
   --ok:           var(--ink);
   --warn:         #b07d10;
   --warn-haze:    rgba(176, 125, 16, 0.1);
+  /* --warn only reaches 2.88:1 on a warn-tinted chip, so the text variant is
+     darkened. Darker themes keep --warn itself, which already clears AA there.
+     Solved to 5.01:1 rather than the bare 4.5 minimum so a small drift in
+     --warn or --paper cannot silently drop it under. See themeContrast.test.ts. */
+  --warn-ink:     #7d580a;
   --err:          #d24545;
-  --stale:        var(--ink-4);
+  /* .tag.stale sets this as a *text* colour. var(--ink-4) measures 2.57:1 here;
+     this is the dimmest point on the ink-3 → ink-4 ramp that still clears AA, so
+     SKIP / orphaned / NO MATCH stay visually recessive but readable. It is also
+     a dot fill (.journey-dot.stale), which only needs to be visible. */
+  --stale:        #606e7d;
 
   /* SCALE */
   --u: 4px;
@@ -91,7 +100,9 @@ html[data-theme="dark"] {
 
   --warn:         #d4a32a;
   --warn-haze:    rgba(212, 163, 42, 0.13);
+  --warn-ink:     var(--warn);
   --err:          #e06565;
+  --stale:        #6d8092;
 }
 
 html[data-theme="peat"] {
@@ -119,7 +130,9 @@ html[data-theme="peat"] {
 
   --warn:         #d4a32a;
   --warn-haze:    rgba(212, 163, 42, 0.15);
+  --warn-ink:     var(--warn);
   --err:          #e06565;
+  --stale:        #a19378;
 }
 
 html[data-theme="tallow"] {
@@ -145,6 +158,8 @@ html[data-theme="tallow"] {
 
   --warn:         #d4a32a;
   --warn-haze:    rgba(212, 163, 42, 0.15);
+  --warn-ink:     var(--warn);
   --err:          #e06565;
+  --stale:        #8a7c66;
 }
 

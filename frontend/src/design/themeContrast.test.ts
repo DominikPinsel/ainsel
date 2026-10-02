@@ -224,3 +224,142 @@ describe('tools-tab and picker text', () => {
     },
   )
 })
+
+/**
+ * Status chips, rendered all over the console: activity rows (MATCH / ERR /
+ * SKIP / FAILURE / TIMEOUT), the event view, channel lists (NO MATCH /
+ * orphaned), connector detail, and the conversation transcript (ERROR).
+ *
+ * `.tag` is 10px uppercase mono at weight 600. WCAG's relaxed 3:1 tier needs
+ * 18.66px bold or 24px, so the 4.5:1 minimum applies — and at 10px it applies
+ * to text that is already hard to read.
+ *
+ * Before this spec: `.tag.warn` 2.83:1 in light, `.tag.err` 3.30–4.51:1, and
+ * `.tag.stale` failed in all four themes (2.57–3.77:1) because `--stale` was
+ * `var(--ink-4)`, the palette's faintest tier.
+ */
+const TAG_SURFACES: TextSurface[] = [
+  { name: 'Tag — default', selector: '.tag', backdrop: '--paper' },
+  { name: 'Tag — ok', selector: '.tag.ok', backdrop: '--paper' },
+  { name: 'Tag — warn', selector: '.tag.warn', backdrop: '--paper' },
+  { name: 'Tag — err', selector: '.tag.err', backdrop: '--paper' },
+  { name: 'Tag — stale', selector: '.tag.stale', backdrop: '--paper' },
+]
+
+describe('status tags', () => {
+  it.each(ALL_THEMES.map((t) => [themeName(t), t] as const))(
+    'clear WCAG AA in the %s theme',
+    (label, theme) => {
+      for (const s of TAG_SURFACES) {
+        const ink = resolve(s.selector, 'color', theme)
+        const bg = paintedBackground(s.selector, s.backdrop, theme)
+        const ratio = contrast(ink, bg)
+        expect(
+          ratio,
+          `${s.name} fails WCAG AA in the ${label} theme: ${ink} on ${bg}`,
+        ).toBeGreaterThanOrEqual(WCAG_AA)
+      }
+    },
+  )
+
+  it('routes the warn and err chips through the dedicated ink tokens', () => {
+    // A guard on the values, not just the ratios: --warn and --signal are the
+    // hue, --warn-ink and --signal-ink are the legible text variant. Reaching
+    // for the hue directly is how .tag.warn got to 2.83:1.
+    const css = readCss('primitives.css')
+    expect(declarationsFor(css, '.tag.warn').color).toBe('var(--warn-ink)')
+    expect(declarationsFor(css, '.tag.err').color).toBe('var(--signal-ink)')
+  })
+
+  it('paints the warn and err chips opaquely, not with a translucent haze', () => {
+    // .tag already paints --paper. Overriding that with --signal-haze would
+    // composite over whatever the tag happens to sit on — a table row, a card,
+    // a hover state — so the same chip's contrast would depend on context.
+    // .tag.err shipped that way, and also declared `background` twice.
+    const css = readCss('primitives.css')
+    for (const sel of ['.tag.warn', '.tag.err']) {
+      const bg = declarationsFor(css, sel).background ?? ''
+      expect(bg, `${sel} should mix against an opaque base`).toContain('var(--paper)')
+      expect(bg, `${sel} should not use a translucent haze`).not.toMatch(/haze|transparent/)
+    }
+  })
+
+  it('keeps --stale dimmer than --ink-3, which is the point of the variant', () => {
+    // Fixing the contrast by promoting --stale to --ink-3 would make SKIP and
+    // "orphaned" as loud as a real status, and .tag.stale would become
+    // indistinguishable from .tag. Dim-but-legible is the requirement.
+    for (const theme of ALL_THEMES) {
+      const stale = tokenColor('--stale', theme)
+      const ink3 = tokenColor('--ink-3', theme)
+      const bg = tokenColor('--paper', theme)
+      expect(
+        contrast(stale, bg),
+        `--stale must stay dimmer than --ink-3 in ${themeName(theme)}`,
+      ).toBeLessThan(contrast(ink3, bg))
+    }
+  })
+})
+
+/**
+ * Surfaces that still fail AA, deliberately left for a separate decision.
+ *
+ * All three paint `#fff` on a saturated fill. In the light theme `--signal`
+ * (#0c8a8f) is mid-luminance, so no foreground has comfortable headroom: pure
+ * black tops out at 5.05:1 and white is 4.16:1. Fixing them means either
+ * near-black text on teal — which repaints every primary button in the console
+ * — or darkening `--signal` itself, which would shift focus rings, dots, links
+ * and KPI alerts with it. Neither belongs in a tag-contrast PR, and `--err` is
+ * worse: no foreground at all reaches 4.5:1 on light-theme `#d24545`.
+ *
+ * The floor is the ratio measured on this branch, so these cannot silently rot
+ * while the decision is pending. The ratchet cuts both ways: once one passes,
+ * this test fails and asks for the entry to be deleted.
+ */
+const KNOWN_FAILING: {
+  name: string
+  selector: string
+  backdrop: string
+  floor: Record<string, number>
+}[] = [
+  {
+    // `solid` is never rendered in the app — only Tag.test.tsx exercises it —
+    // so nothing a user currently sees is affected by this one.
+    name: 'Tag — solid err',
+    selector: '.tag.solid.err',
+    backdrop: '--paper',
+    floor: { light: 4.16, dark: 2.06, peat: 2.67, tallow: 2.62 },
+  },
+  {
+    name: 'Button — primary',
+    selector: '.btn-primary',
+    backdrop: '--paper',
+    floor: { light: 4.16, dark: 2.06, peat: 2.67, tallow: 2.62 },
+  },
+  {
+    name: 'Button — danger hover',
+    selector: '.btn-danger:hover',
+    backdrop: '--paper',
+    floor: { light: 4.49, dark: 3.38, peat: 3.38, tallow: 3.38 },
+  },
+]
+
+describe('known-failing saturated fills', () => {
+  it.each(ALL_THEMES.map((t) => [themeName(t), t] as const))(
+    'do not regress in the %s theme',
+    (label, theme) => {
+      for (const s of KNOWN_FAILING) {
+        const ink = resolve(s.selector, 'color', theme)
+        const bg = paintedBackground(s.selector, s.backdrop, theme)
+        const ratio = contrast(ink, bg)
+        expect(
+          ratio,
+          `${s.name} got worse in the ${label} theme: ${ink} on ${bg}`,
+        ).toBeGreaterThanOrEqual(s.floor[label] - 0.01)
+        expect(
+          ratio,
+          `${s.name} now clears AA in the ${label} theme — delete its KNOWN_FAILING entry`,
+        ).toBeLessThan(WCAG_AA)
+      }
+    },
+  )
+})
