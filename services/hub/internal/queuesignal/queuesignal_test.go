@@ -749,3 +749,47 @@ type errLister struct{}
 func (errLister) QueueScaledAgents(context.Context) ([]string, error) {
 	return nil, errors.New("agents forbidden")
 }
+
+// A hub restart must not hand idle agents a fresh idle clock. The sweep publishes
+// every opted-in agent, including ones that have no queue rows at all, and a first
+// observation of such an agent used to read as "work arrived". That reset every
+// agent's quiet clock on every deploy — delaying parking by one scale-down window
+// per restart — and made status.lastInvocation claim activity that never happened.
+func TestFirstObservationOfAnIdleAgentDoesNotStampLastInvocation(t *testing.T) {
+	counter, patcher := newCounter(), &fakePatcher{}
+	p := New(counter, patcher, WithLogger(discardLogger()))
+
+	counter.set("idle", 0, 0)
+	if _, err := p.publishOne(context.Background(), "idle", false); err != nil {
+		t.Fatalf("publishOne: %v", err)
+	}
+
+	sig, ok := p.Published("idle")
+	if !ok {
+		t.Fatal("an opted-in idle agent was never published")
+	}
+	if !sig.LastInvocation.IsZero() {
+		t.Errorf("an agent with nothing queued was given lastInvocation %s; the idle clock must stay untouched, otherwise every deploy restarts the countdown before it can park", sig.LastInvocation)
+	}
+}
+
+// The companion case: work really has arrived, and this is the publisher's first
+// sight of the agent. The clock must advance, or the operator would park an agent
+// that has tasks waiting.
+func TestFirstObservationWithQueuedWorkStampsLastInvocation(t *testing.T) {
+	counter, patcher := newCounter(), &fakePatcher{}
+	p := New(counter, patcher, WithLogger(discardLogger()))
+
+	counter.set("busy", 3, 0)
+	if _, err := p.publishOne(context.Background(), "busy", false); err != nil {
+		t.Fatalf("publishOne: %v", err)
+	}
+
+	sig, ok := p.Published("busy")
+	if !ok {
+		t.Fatal("the agent with queued work was never published")
+	}
+	if sig.LastInvocation.IsZero() {
+		t.Error("queued work was observed but the idle clock did not advance; the agent could be parked with tasks waiting")
+	}
+}
