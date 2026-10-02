@@ -162,6 +162,30 @@ describe('ToolList', () => {
     expect(onToggle).toHaveBeenCalledTimes(1)
   })
 
+  it('toggles without selecting the row when the checkbox is activated by keyboard', async () => {
+    // The row also binds Space to "select". With a native checkbox the row's
+    // handler ran first and called preventDefault(), so Space selected the row
+    // and never toggled the tool. The themed Check stops the key at the row
+    // boundary, which is what this pins down.
+    const onSelect = vi.fn()
+    const onToggle = vi.fn()
+    render(
+      <ToolList
+        tools={tools}
+        activeSource="all"
+        selectedIndex={null}
+        onSelect={onSelect}
+        onToggle={onToggle}
+        onToggleAll={noop}
+        onAdd={noop}
+      />
+    )
+    screen.getByRole('checkbox', { name: /toggle list/i }).focus()
+    await userEvent.keyboard(' ')
+    expect(onToggle).toHaveBeenCalledWith(1, false)
+    expect(onSelect).not.toHaveBeenCalled()
+  })
+
   it('calls onToggleAll with all source indices when All on is clicked', async () => {
     const onToggleAll = vi.fn()
     const manyTools = Array.from({ length: 16 }, (_, i) => makeMCP('big', `tool${i}`))

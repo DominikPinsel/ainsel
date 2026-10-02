@@ -23,10 +23,17 @@
   --signal-deep:  #0a6f73;
   --signal-haze:  rgba(12, 138, 143, 0.1);
   --signal-glow:  rgba(12, 138, 143, 0.55);
+  /* Text colour for signal-tinted surfaces (selected rows, active items).
+     Not simply --signal-deep: on the sources sidebar the tint composites over
+     --paper-deep, and #0a6f73 only reaches 4.29:1 there. This value clears
+     WCAG AA on every tinted surface in the theme; themeContrast.test.ts
+     asserts it, so do not lighten it without re-running that spec. */
+  --signal-ink:   #0a696d;
 
   /* STATES */
   --ok:           var(--ink);
   --warn:         #b07d10;
+  --warn-haze:    rgba(176, 125, 16, 0.1);
   --err:          #d24545;
   --stale:        var(--ink-4);
 
@@ -80,8 +87,10 @@ html[data-theme="dark"] {
   --signal-deep:  #2aa3a5;
   --signal-haze:  rgba(62, 199, 201, 0.13);
   --signal-glow:  rgba(62, 199, 201, 0.55);
+  --signal-ink:   var(--signal);
 
   --warn:         #d4a32a;
+  --warn-haze:    rgba(212, 163, 42, 0.13);
   --err:          #e06565;
 }
 
@@ -104,8 +113,12 @@ html[data-theme="peat"] {
   --signal-deep:  #c07127;
   --signal-haze:  rgba(224, 138, 52, 0.14);
   --signal-glow:  rgba(224, 138, 52, 0.55);
+  /* --signal (#e08a34) only reaches 3.75:1 on the tinted tool-list row, so the
+     text variant is lifted toward white. See themeContrast.test.ts. */
+  --signal-ink:   #e6a25d;
 
   --warn:         #d4a32a;
+  --warn-haze:    rgba(212, 163, 42, 0.15);
   --err:          #e06565;
 }
 
@@ -128,8 +141,10 @@ html[data-theme="tallow"] {
   --signal-deep:  #b8771f;
   --signal-haze:  rgba(216, 145, 47, 0.14);
   --signal-glow:  rgba(216, 145, 47, 0.55);
+  --signal-ink:   var(--signal);
 
   --warn:         #d4a32a;
+  --warn-haze:    rgba(212, 163, 42, 0.15);
   --err:          #e06565;
 }
 

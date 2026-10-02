@@ -64,35 +64,27 @@ export function ToolEditor({
           <Tag>mcp</Tag>
         </header>
         <div className="tool-detail">
-          {/* Enabled toggle */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--paper-2)', border: 'var(--hair) solid var(--ink)', marginBottom: 16 }}>
+          <div className="tool-state">
             <Check
               aria-label="enabled"
               checked={tool.enabled}
               onChange={(next) => setValue(`tools.${toolIndex}.enabled`, next, { shouldDirty: true })}
             />
-            <span style={{ fontFamily: 'var(--mono)', fontSize: 11, textTransform: 'uppercase', letterSpacing: '.1em', fontWeight: 600 }}>
+            <span className="tool-state-text">
               {tool.enabled ? 'Enabled' : 'Disabled'}
             </span>
-            <span style={{ marginLeft: 'auto', fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink-3)', textTransform: 'uppercase' }}>
-              {tool.mcpSource} MCP
-            </span>
+            <span className="label tool-state-spacer">{tool.mcpSource} MCP</span>
           </div>
 
-          {/* Full MCP tool name */}
-          <div style={{ padding: '7px 10px', background: 'var(--paper-2)', fontFamily: 'var(--mono)', fontSize: 11, wordBreak: 'break-all', marginBottom: 16 }}>
-            {tool.name}
-          </div>
+          <div className="tool-fqn">{tool.name}</div>
 
-          <p style={{ color: 'var(--ink-3)', fontSize: 12, fontFamily: 'var(--mono)', marginBottom: 14 }}>
+          <p className="tool-hint">
             MCP tools are auto-populated by the <b>Refresh MCP Tools</b> button. Edit the MCP
             server configuration to change which tools appear here.
           </p>
           {tool.description ? (
             <Field label="Description" htmlFor="">
-              <div style={{ padding: '8px 10px', background: 'var(--paper-2)', fontSize: 13 }}>
-                {tool.description}
-              </div>
+              <div className="tool-readonly">{tool.description}</div>
             </Field>
           ) : null}
         </div>
@@ -110,18 +102,18 @@ export function ToolEditor({
         </Button>
       </header>
       <div className="tool-detail">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--paper-2)', border: 'var(--hair) solid var(--ink)', marginBottom: 16 }}>
+        <div className="tool-state">
           <Check
             aria-label="enabled"
             checked={tool.enabled}
             onChange={(next) => setValue(`tools.${toolIndex}.enabled`, next, { shouldDirty: true })}
           />
-          <span style={{ fontFamily: 'var(--mono)', fontSize: 11, textTransform: 'uppercase', letterSpacing: '.1em', fontWeight: 600 }}>
+          <span className="tool-state-text">
             {tool.enabled ? 'Enabled' : 'Disabled'}
           </span>
         </div>
         <div className="tool-title">
-          <h2>{tool.name || <em style={{ color: 'var(--ink-3)' }}>unnamed</em>}</h2>
+          <h2>{tool.name || <em>unnamed</em>}</h2>
           <Tag>{tool.kind}</Tag>
         </div>
 
@@ -164,16 +156,7 @@ export function ToolEditor({
           />
         </Field>
 
-        <header
-          className="md-bar"
-          style={{
-            border: 'var(--hair) solid var(--ink)',
-            padding: '8px 12px',
-            background: 'var(--paper-2)',
-            marginTop: 18,
-            marginBottom: 12,
-          }}
-        >
+        <header className="tool-subhead">
           <h4>Examples · {tool.examples?.length ?? 0}</h4>
         </header>
         <ExamplesEditor control={control} register={register} toolIndex={toolIndex} />

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { Check } from '../../primitives/Check'
 import type { ToolFormValue } from './ImageDetail.types'
 import type { Source } from './ToolSourceSidebar'
 
@@ -170,16 +171,19 @@ export function ToolList({ tools, activeSource, selectedIndex, onSelect, onToggl
                     aria-pressed={i === selectedIndex}
                     aria-label={`Select tool ${name}`}
                   >
-                    <input
-                      type="checkbox"
-                      checked={t.enabled}
-                      aria-label={`toggle ${name}`}
-                      onChange={(e) => {
-                        e.stopPropagation()
-                        onToggle(i, e.target.checked)
-                      }}
+                    {/* The wrapper swallows the interaction so toggling a tool
+                        does not also select its row. */}
+                    <span
+                      className="tool-row-check"
                       onClick={(e) => e.stopPropagation()}
-                    />
+                      onKeyDown={(e) => e.stopPropagation()}
+                    >
+                      <Check
+                        aria-label={`toggle ${name}`}
+                        checked={t.enabled}
+                        onChange={(next) => onToggle(i, next)}
+                      />
+                    </span>
                     <div style={{ minWidth: 0 }}>
                       <div className="tool-name">
                         {name}

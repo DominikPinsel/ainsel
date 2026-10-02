@@ -6,6 +6,7 @@ import { Button } from '../../primitives/Button'
 import { ConfirmModal } from '../../primitives/ConfirmModal'
 import { Field } from '../../primitives/Field'
 import { Input } from '../../primitives/Input'
+import { Notice } from '../../primitives/Notice'
 import { Panel } from '../../primitives/Panel'
 import { Titleblock } from '../../layout/Titleblock'
 import { EnvVarFieldArray } from './EnvVarFieldArray'
@@ -139,59 +140,20 @@ export function ImageFormView({
             : { padding: '28px 32px', maxWidth: 1100 }
         }
       >
-        {submitError ? (
-          <div
-            role="alert"
-            style={{
-              padding: '10px 12px',
-              border: '1.5px solid var(--signal)',
-              background: 'var(--signal-haze)',
-              color: 'var(--signal)',
-              fontFamily: 'var(--mono)',
-              fontSize: 11,
-              marginBottom: 20,
-            }}
-          >
-            {submitError}
-          </div>
-        ) : null}
+        {submitError ? <Notice variant="err">{submitError}</Notice> : null}
         {mcpWarnings.length > 0 ? (
-          <div
-            role="alert"
-            style={{
-              padding: '10px 12px',
-              border: '1.5px solid var(--warning, #b45309)',
-              background: 'var(--warning-haze, #fef3c7)',
-              color: 'var(--warning, #b45309)',
-              fontFamily: 'var(--mono)',
-              fontSize: 11,
-              marginBottom: 20,
-            }}
-          >
-            <strong>MCP refresh warnings (some servers may not have been reached):</strong>
-            <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
-              {mcpWarnings.map((w, i) => (
-                <li key={i}>{w}</li>
-              ))}
-            </ul>
-          </div>
+          <Notice variant="warn">
+            <div>
+              <strong>MCP refresh warnings (some servers may not have been reached):</strong>
+              <ul>
+                {mcpWarnings.map((w, i) => (
+                  <li key={i}>{w}</li>
+                ))}
+              </ul>
+            </div>
+          </Notice>
         ) : null}
-        {mcpRefreshResult ? (
-          <div
-            role="status"
-            style={{
-              padding: '10px 12px',
-              border: '1.5px solid var(--success, #15803d)',
-              background: 'var(--success-haze, #dcfce7)',
-              color: 'var(--success, #15803d)',
-              fontFamily: 'var(--mono)',
-              fontSize: 11,
-              marginBottom: 20,
-            }}
-          >
-            {mcpRefreshResult}
-          </div>
-        ) : null}
+        {mcpRefreshResult ? <Notice>{mcpRefreshResult}</Notice> : null}
 
         {sections === 'all' || sections === 'image' ? (
           <Panel title="Image" className="cropped">
