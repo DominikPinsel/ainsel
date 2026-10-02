@@ -128,8 +128,14 @@ func newContainer(ctx context.Context, cfg containerConfig, deps containerDeps) 
 	// observer is registered on the store rather than at the enqueue call sites
 	// (router, chat, cron, channel transfers) so a new publisher cannot forget to
 	// wake somebody up.
+	//
+	// The lister is what makes the sweep survive a hub restart: the publisher's own
+	// record of what it published is in-memory, so without a durable "who opted
+	// into queue scaling" every idle agent would age its signal out and hold a pod
+	// until it was handed work again.
 	c.queueSignals = queuesignal.New(c.eventQueue,
-		queuesignal.NewK8sPatcher(c.apiClient, cfg.namespace))
+		queuesignal.NewK8sPatcher(c.apiClient, cfg.namespace),
+		queuesignal.WithAgentLister(queuesignal.NewK8sAgentLister(c.apiClient, cfg.namespace)))
 	c.eventQueue.SetQueueObserver(c.queueSignals.Observe)
 
 	// --- Triggers ---

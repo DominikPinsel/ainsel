@@ -76,6 +76,20 @@ type Counter interface {
 	AllQueueCounts(ctx context.Context) (map[string]eventqueue.QueueDepth, error)
 }
 
+// AgentLister names the agents that took part in queue-driven scaling. Satisfied
+// by the K8s reader below.
+//
+// The publisher needs this because its own memory of what it published is not a
+// fact about the world. It is a map in one process, and a restarting hub builds an
+// empty one, so an agent with a drained queue would be covered by the sweep again
+// only once somebody handed it new work - which for a truly idle agent is never.
+// The Agent CRs are the durable answer to "who is waiting to be parked", and the
+// operator's hold-on-stale rule means a missed heartbeat is a pod that keeps
+// running until it is handed something.
+type AgentLister interface {
+	QueueScaledAgents(ctx context.Context) ([]string, error)
+}
+
 // Patcher writes a signal to one agent. Split out from the k8s implementation so
 // the publisher's decisions can be tested without a cluster.
 type Patcher interface {
@@ -89,6 +103,7 @@ type Patcher interface {
 type Publisher struct {
 	counters Counter
 	patcher  Patcher
+	lister   AgentLister
 	tick     time.Duration
 	debounce time.Duration
 	sweep    time.Duration
@@ -100,7 +115,9 @@ type Publisher struct {
 	nextPub map[string]time.Time // earliest time a non-edge update may be written
 }
 
-// New builds a Publisher. A nil logger becomes slog.Default().
+// New builds a Publisher. A nil logger becomes slog.Default(). Without
+// WithAgentLister the sweep only covers agents this process has already written
+// for, which is the right shape for tests and too weak for a hub that restarts.
 func New(counters Counter, patcher Patcher, opts ...Option) *Publisher {
 	p := &Publisher{
 		counters: counters,
@@ -135,6 +152,11 @@ func WithSweep(d time.Duration) Option { return func(p *Publisher) { p.sweep = d
 
 // WithLogger directs the publisher's logs.
 func WithLogger(l *slog.Logger) Option { return func(p *Publisher) { p.log = l } }
+
+// WithAgentLister points the sweep at the Agent CRDs, so an agent that opted into
+// queue scaling keeps beating from the first sweep after a hub restart even when
+// it has had no work since.
+func WithAgentLister(l AgentLister) Option { return func(p *Publisher) { p.lister = l } }
 
 // Observe records that an agent's queue may have changed. It never blocks and
 // never performs I/O; it is safe to call inline from a request handler.
@@ -196,6 +218,21 @@ func (p *Publisher) markAll(ctx context.Context) {
 		return
 	}
 
+	// Read the Agent list before taking the lock: Observe runs inline in the hub's
+	// request paths and must never wait on a trip to the API server.
+	var optedIn []string
+	if p.lister != nil {
+		optedIn, err = p.lister.QueueScaledAgents(ctx)
+		if err != nil {
+			// A failed read is not a reason to stop beating for the agents already
+			// known, so it degrades to the previous behaviour rather than to silence.
+			// Agents reachable only through the lister age out, and the operator
+			// reads that as "hold the pods you have".
+			p.log.Error("queue signal: agent list failed", "error", err)
+			optedIn = nil
+		}
+	}
+
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -206,6 +243,9 @@ func (p *Publisher) markAll(ctx context.Context) {
 	// from the busy set has drained without telling us, and needs its counts
 	// fixed as well as its timestamp refreshed.
 	for name := range p.last {
+		p.dirty[name] = true
+	}
+	for _, name := range optedIn {
 		p.dirty[name] = true
 	}
 }
@@ -361,4 +401,48 @@ func (k *K8sPatcher) Patch(ctx context.Context, agentName string, sig Signal) er
 		return fmt.Errorf("queuesignal: patch agent %q status: %w", agentName, err)
 	}
 	return nil
+}
+
+// K8sAgentLister reads the Agent CRDs to find the agents that opted into
+// queue-driven scaling, which is the set the sweep owes a heartbeat to.
+//
+// It lists through the hub's API client rather than keeping a set of names,
+// because opting in is a spec change made at any moment by the console, the API or
+// the MCP tools, and a cached set would either miss the new one or need a watch.
+// The read is one List per sweep.
+type K8sAgentLister struct {
+	client    client.Client
+	namespace string
+	log       *slog.Logger
+}
+
+// NewK8sAgentLister builds a lister reading Agents in the given namespace.
+func NewK8sAgentLister(c client.Client, namespace string) *K8sAgentLister {
+	return &K8sAgentLister{client: c, namespace: namespace, log: slog.Default()}
+}
+
+// WithLogger returns the lister, logging to l.
+func (k *K8sAgentLister) WithLogger(l *slog.Logger) *K8sAgentLister {
+	k.log = l
+	return k
+}
+
+// QueueScaledAgents names the agents in the namespace that set a replica floor.
+// Setting MinReplicas is what switches an agent out of static pinning, so these
+// are exactly the agents whose pods the operator is willing to park, and the only
+// ones whose signal anyone is standing behind.
+func (k *K8sAgentLister) QueueScaledAgents(ctx context.Context) ([]string, error) {
+	var list v1alpha1.AgentList
+	if err := k.client.List(ctx, &list, client.InNamespace(k.namespace)); err != nil {
+		return nil, fmt.Errorf("queuesignal: list agents in %q: %w", k.namespace, err)
+	}
+
+	names := make([]string, 0, len(list.Items))
+	for i := range list.Items {
+		s := list.Items[i].Spec.Scaling
+		if s != nil && s.MinReplicas != nil {
+			names = append(names, list.Items[i].Name)
+		}
+	}
+	return names, nil
 }

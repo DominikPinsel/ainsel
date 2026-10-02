@@ -620,3 +620,132 @@ func waitFor(t *testing.T, deadline <-chan time.Time, ok func() bool, msg string
 		}
 	}
 }
+
+// The hub's memory of what it published is not a source of truth: it is empty
+// after every restart, including the restart that ships the heartbeat. An agent
+// that opted into queue scaling must be covered by the sweep on the strength of
+// its spec alone, with no rows waiting and no published history.
+func TestMarkAllCoversOptedInAgentsWithNoHistory(t *testing.T) {
+	counter, patcher := newCounter(), &fakePatcher{}
+	p := New(counter, patcher, WithAgentLister(fakeLister{"a"}), WithLogger(discardLogger()))
+
+	p.markAll(context.Background())
+
+	p.mu.Lock()
+	dirty := p.dirty["a"]
+	p.mu.Unlock()
+	if !dirty {
+		t.Error("markAll skipped an opted-in agent with no history; after a hub restart no agent has history, so nothing scales to zero")
+	}
+}
+
+// End to end through the loop: a brand new publisher, which is what a restarting
+// hub builds, must publish an idle opted-in agent rather than wait for it to be
+// handed work.
+func TestRunBeatsForOptedInAgentWithNoRows(t *testing.T) {
+	counter, patcher := newCounter(), &fakePatcher{}
+	p := New(counter, patcher,
+		WithAgentLister(fakeLister{"sleepy"}),
+		WithTick(5*time.Millisecond),
+		WithSweep(5*time.Millisecond),
+		WithLogger(discardLogger()))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = p.Run(ctx) }()
+
+	deadline := time.After(2 * time.Second)
+	for patcher.count() == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("an opted-in agent with an empty queue was never published by a fresh publisher; it stays stale and cannot park")
+		default:
+			time.Sleep(2 * time.Millisecond)
+		}
+	}
+	sig, ok := p.Published("sleepy")
+	if !ok || !sig.Empty() {
+		t.Errorf("published %+v (found %v), want an empty signal for sleepy", sig, ok)
+	}
+}
+
+// A opted-in agent whose counts are unchanged still needs its timestamp moved,
+// or the operator ages the signal out and holds the pods.
+func TestRunKeepsBeatingForOptedInAgent(t *testing.T) {
+	counter, patcher := newCounter(), &fakePatcher{}
+	p := New(counter, patcher,
+		WithAgentLister(fakeLister{"steady"}),
+		WithTick(5*time.Millisecond),
+		WithSweep(5*time.Millisecond),
+		WithLogger(discardLogger()))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = p.Run(ctx) }()
+
+	deadline := time.After(2 * time.Second)
+	for patcher.count() == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("nothing published for an opted-in agent")
+		default:
+			time.Sleep(2 * time.Millisecond)
+		}
+	}
+	if beat := patcher.count(); func() bool {
+		before := beat
+		time.Sleep(80 * time.Millisecond)
+		return patcher.count() == before
+	}() {
+		t.Error("publisher beat once then stopped; an idle opted-in agent's signal ages out and it holds its pods")
+	}
+}
+
+// fakeLister is a stand-in for the Agent CRD read.
+type fakeLister []string
+
+func (f fakeLister) QueueScaledAgents(context.Context) ([]string, error) { return f, nil }
+
+// A hub whose API read fails must not go silent on the agents it already knows.
+// The lister widens coverage; it must not subtract it.
+func TestMarkAllSurvivesListFailure(t *testing.T) {
+	counter, patcher := newCounter(), &fakePatcher{}
+	p := New(counter, patcher, WithAgentLister(errLister{}), WithLogger(discardLogger()))
+
+	p.mu.Lock()
+	p.last["known"] = Signal{Pending: 0, Active: 0, ObservedAt: time.Now().Add(-6 * time.Minute)}
+	p.mu.Unlock()
+
+	p.markAll(context.Background())
+
+	p.mu.Lock()
+	dirty := p.dirty["known"]
+	p.mu.Unlock()
+	if !dirty {
+		t.Error("a failed Agent list stopped the heartbeat for already-known agents; the lister must only add coverage")
+	}
+}
+
+// Static agents are not the sweep's business: they hold a pinned count whatever
+// the queue says, so beating for them would be one status write per agent per
+// minute that nobody reads.
+func TestMarkAllDoesNotBeatForStaticAgents(t *testing.T) {
+	counter, patcher := newCounter(), &fakePatcher{}
+	p := New(counter, patcher, WithAgentLister(fakeLister{"opted-in"}), WithLogger(discardLogger()))
+
+	p.markAll(context.Background())
+
+	p.mu.Lock()
+	_, dirty := p.dirty["static-agent"]
+	p.mu.Unlock()
+	if dirty {
+		t.Error("markAll queued a static agent; the sweep must stay bounded to agents that opted into queue scaling")
+	}
+}
+
+// errLister stands in for a hub that cannot read the Agent CRDs.
+type errLister struct{}
+
+func (errLister) QueueScaledAgents(context.Context) ([]string, error) {
+	return nil, errors.New("agents forbidden")
+}
