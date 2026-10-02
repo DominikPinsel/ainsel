@@ -116,7 +116,7 @@ Create a new Agent. The hub generates the resource name (`a-<short id>`); the re
   "llm": {"model": "glm-5.1:cloud", "maxTurns": 25, "temperature": 0.2, "vision": true},
   "persona": {"inline": "..."},
   "enabledTools": ["read", "edit"],
-  "scaling": {"minReplicas": 0, "maxReplicas": 3, "cooldownPeriod": 300, "lagThreshold": 5},
+  "scaling": {"replicas": 3, "minReplicas": 0},
   "memory": {"enabled": true, "provider": "example"},
   "env": [{"name": "LOG_LEVEL", "value": "debug"}],
   "ollamaCloud": {"apiKey": "<consumed-once>"}

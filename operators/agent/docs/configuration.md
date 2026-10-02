@@ -25,17 +25,25 @@ The operator binary accepts the following flags (in addition to standard kubebui
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--nats-ack-wait` | `30m` | JetStream redelivery timeout for agent consumers. Gives a long-running agent task enough headroom before NATS redelivers. |
-| `--nats-max-deliver` | `10` | Maximum delivery attempts before JetStream gives up on a message. |
 | `--agent-grace-period` | `1800` | Pod `terminationGracePeriodSeconds` for agent deployments. Allows in-flight tasks to finish on SIGTERM. |
+| `--agent-scale-down-window` | `0` → `2m` | How long an agent with `minReplicas` set must stay free of queued and in-flight work before its last pod is removed. `0` leaves the controller default. |
+| `--queue-signal-ttl` | `0` → `5m` | How long the hub's published queue measurement may be trusted. Older than this, the operator holds the current pod count instead of scaling to zero. `0` leaves the controller default. |
+
+The two scaling knobs are durations (`90s`, `2m`, `5m`), not bare numbers. Both default to `0`
+so the real values live in one place, `internal/controller/scaling.go`; the Helm chart exposes
+them as `agentOperator.agentScaleDownWindow` and `agentOperator.queueSignalTTL`.
 
 ### Recommended values
 
-| Workload profile | `--nats-ack-wait` | `--nats-max-deliver` | `--agent-grace-period` |
-|-----------------|-------------------|---------------------|------------------------|
-| Default (coding agents) | `30m` | `10` | `1800` |
-| Short-lived tasks (chat) | `5m` | `3` | `300` |
-| Long-running analysis | `1h` | `5` | `3600` |
+| Workload profile | `--agent-grace-period` | `--agent-scale-down-window` |
+|-----------------|------------------------|-----------------------------|
+| Default (coding agents) | `1800` | `2m` |
+| Short-lived tasks (chat) | `300` | `5m` |
+| Long-running analysis | `3600` | `1m` |
+
+The window is a latency trade, not a resource one: a short window parks pods sooner and makes
+the next request pay the cold boot. `queueSignalTTL` only needs to stay comfortably above the
+hub's 60s publish sweep, so it rarely wants tuning.
 
 ## Operator Environment Variables
 
@@ -46,9 +54,7 @@ The operator pod itself reads the following environment variables to control wha
 | `FORGEJO_URL` | Optional | Forgejo API URL. When set, propagated as a literal value to each agent's `FORGEJO_URL`. |
 | `FORGEJO_TOKEN_SECRET_NAME` | Optional | Name of a Kubernetes Secret in the agent's namespace containing the Forgejo API token. When set, agents get `FORGEJO_TOKEN` via `valueFrom.secretKeyRef` (the operator never reads the token value). |
 | `FORGEJO_TOKEN_SECRET_KEY` | Optional | Key inside `FORGEJO_TOKEN_SECRET_NAME`. Defaults to `token`. |
-| `NATS_URL` | Optional | Default NATS client URL. Used when `spec.natsUrl` is not set on the Agent. Defaults to `nats://nats.platform.svc.cluster.local:4222`. |
-| `NATS_MONITORING_URL` | Optional | NATS HTTP monitoring endpoint queried by the KEDA NATS JetStream scaler. Defaults to `http://nats.platform.svc.cluster.local:8222`. Only used when an Agent has `spec.scaling.maxReplicas` set. |
-| `NATS_ACCOUNT` | Optional | JetStream account name passed to the KEDA scaler. Defaults to `$G`. |
+| `HUB_URL` | Optional | Hub API base URL, propagated to agent pods and MCP sidecars so the runtime can poll for tasks. |
 
 ## Agent Environment Variables
 
@@ -59,55 +65,88 @@ When the Agent controller creates a Deployment for an Agent CR, it sets these en
 | `AGENT_NAME` | `metadata.name` | Agent name |
 | `AGENT_PROVIDER` | `spec.runtime.provider` | LLM provider |
 | `CLAUDE_MODEL` / `MISTRAL_MODEL` | `spec.llm.model` | LLM model |
-| `NATS_URL` | Hub config | NATS connection URL |
-| `NATS_STREAM` | Constant | `AGENTS` |
-| `NATS_CONSUMER` | `metadata.name` | JetStream durable consumer name. The agent runtime MUST bind to this consumer; KEDA references the same name to read pending counts. |
-| `NATS_MAX_ACK_PENDING` | Constant | `1`. The agent runtime MUST configure its consumer with `max_ack_pending=1` so each pod processes exactly one event at a time (true parallel processing: 3 replicas = 3 concurrent events). |
-| `AGENT_EVENT_SUBJECTS` | Derived | `agent.<name>` |
+| `HUB_URL` | Operator env (`HUB_URL`) | Hub API the runtime polls for tasks |
+| `HUB_INTERNAL_VALIDATE_SECRET` | Operator env | `X-Internal-Token` used against the hub's internal endpoints. Platform-owned: declarations on the AgentImage are dropped in favour of this. |
 | `AGENT_PERSONA_PATH` | Mount path | Path to persona file |
 | `FORGEJO_URL` | Operator env (`FORGEJO_URL`) | Forgejo API URL |
 | `FORGEJO_TOKEN` | `secretKeyRef` (configured via `FORGEJO_TOKEN_SECRET_NAME` / `FORGEJO_TOKEN_SECRET_KEY` on the operator) | Forgejo API token |
 | `HUB_ENABLED` | Constant: `true` | Enables publishing of task lifecycle events to the hub backend |
 
-## Autoscaling (KEDA)
+## Scaling
 
-When an Agent declares `spec.scaling.maxReplicas`, the operator additionally creates a
-[KEDA](https://keda.sh) `ScaledObject` in the agent's namespace targeting the agent's Deployment.
-The ScaledObject is owned by the Agent CR and is garbage-collected with it.
+The operator owns `Deployment.spec.replicas` directly. There is no HPA and no
+KEDA `ScaledObject` in the picture: pod count is decided from the queue depth the
+hub publishes onto the Agent's own status, so the same component that owns the
+task store decides when an agent has work and when it does not.
 
-### Mapping
+### Modes
 
-| Agent field | KEDA field |
-|-------------|------------|
-| `spec.scaling.minReplicas` (default `0`) | `spec.minReplicaCount` |
-| `spec.scaling.maxReplicas` (required) | `spec.maxReplicaCount` |
-| `spec.scaling.cooldownPeriod` (default `300`) | `spec.cooldownPeriod` |
-| `spec.scaling.lagThreshold` (default `1`) | `spec.triggers[0].metadata.lagThreshold` |
+| `spec.scaling` | Mode | Pod count |
+|----------------|------|-----------|
+| `minReplicas` unset | `static` | Exactly `replicas` (default `1`), regardless of queue depth. |
+| `minReplicas` set | `queue` | Between `minReplicas` and `replicas`, following the queue. |
 
-### Trigger
+Setting `minReplicas` is itself the opt-in. An agent that does not set it is never
+compared against the queue, so the feature cannot change the behaviour of anything
+that was configured before it existed. `0` is the value that lets an agent go
+dormant between tasks; a floor of `1` keeps a warm pod and only sheds burst
+capacity.
 
-A single `nats-jetstream` trigger is configured with:
+### The decision
 
-- `natsServerMonitoringEndpoint` from the operator's `NATS_MONITORING_URL` env var
-- `account` from the operator's `NATS_ACCOUNT` env var (default `$G`)
-- `stream`: `AGENTS`
-- `consumer`: the agent's name (also injected as `NATS_CONSUMER` on the agent pod)
+In order, as `resolveReplicas` applies it:
 
-### Prerequisites
+1. **Static** — no `minReplicas`: pin `replicas`, consult nothing.
+2. **Disabled** — `replicas: 0`: an explicit zero is a user saying "none", and
+   queued work does not overrule it.
+3. **Stale or missing signal** — older than `--queue-signal-ttl`, or never
+   published: hold the pods that are running, clamped into
+   [`minReplicas`, `replicas`], and look again in 15s. Absence of a signal is not
+   evidence of an empty queue; a hub that stopped publishing looks exactly like a
+   queue that drained, and only one of those is permission to sleep.
+4. **Work waiting or in flight** — one pod per task, bounded by the ceiling. A
+   runtime claims exactly one task at a time, so queue depth is also the
+   concurrency need; claimed tasks count, because losing a pod does not lose the
+   task but parks it until the reaper gives up on the claim.
+5. **Quiet, not quiet long enough** — shed burst capacity down to one pod and keep
+   it for the rest of `--agent-scale-down-window`.
+6. **Quiet past the window** — drop to the floor, which is zero for a dormant
+   agent.
 
-KEDA must be installed in the cluster (CRDs and controller). If the
-`scaledobjects.keda.sh` CRD is missing the operator logs a notice and skips the
-ScaledObject reconcile — the Deployment is still created with `spec.scaling.minReplicas`
-replicas, but no autoscaling will occur.
+Quiet is measured from `status.lastInvocation`, which only moves when work
+arrives. An agent the hub is reporting on but has never been handed anything skips
+the grace window and sits at its floor (`Dormant`): there is no quiet period to
+wait out if nothing has ever been queued. A brand-new agent is created at its
+floor for the same reason it would be held without a signal — the operator starts
+from the Deployment it is about to write, and on creation that count is zero.
 
-### Behavior
+### The signal
 
-- **Scale-up** kicks in as soon as the agent's NATS consumer reports more pending
-  messages than `lagThreshold` (default 1: scale on the first waiting event).
-- **Scale-to-zero** is supported when `minReplicas: 0` and KEDA is installed; vanilla
-  Kubernetes HPAs cannot reach 0 replicas.
-- **Scale-down** is delayed by `cooldownPeriod` after the queue drains.
-- Once a ScaledObject exists, the operator stops mutating `Deployment.spec.replicas`
-  on subsequent reconciles so it does not fight KEDA.
-- Removing `spec.scaling.maxReplicas` deletes the ScaledObject and the operator
-  resumes managing replicas directly (using `spec.scaling.minReplicas` or `1`).
+The hub's `queuesignal` publisher owns `status.pendingTasks`,
+`status.activeTasks`, `status.queueObservedAt` and `status.lastInvocation`; the
+operator owns everything else on status, and neither writes the other's fields.
+
+| Knob | Default | Effect |
+|------|---------|--------|
+| hub publish tick | `250ms` | How soon an enqueued task becomes visible to the operator. |
+| hub debounce | `2s` | Minimum gap between non-edge updates for one agent. Queue emptying or filling bypasses it, because that is the case a human is waiting on. |
+| hub sweep | `60s` | Heartbeat. Re-measures and republishes every opted-in agent whether or not anything changed, which is what keeps a live hub's "this queue is empty" distinguishable from "nobody has looked". |
+| `--queue-signal-ttl` | `5m` | How long the operator trusts a measurement it did not write. Must stay comfortably above the 60s sweep. |
+| `--agent-scale-down-window` | `2m` | How long an agent must be quiet before its last pod goes. |
+
+The operator reads the live decision back into `status.scaling`, so "asleep, waiting
+for work" is distinguishable from "broken": `mode`, `desired`, and a `reason` of
+`Static`, `QueueDepth`, `Dormant`, `ScaledToZero`, `IdleGrace`, `QueueSignalStale` or
+`Disabled`.
+
+```console
+$ kubectl get agent.ainsel.dev a-reviewer -n ainsel-dev -o jsonpath='{.status.scaling}'
+{"desired":0,"message":"quiet for 4m12s","mode":"queue","reason":"ScaledToZero"}
+```
+
+### Waking
+
+Parked is not stopped. A task arrives at the hub, the publisher treats the empty
+to non-empty transition as an edge and writes it on the next tick, the operator's
+watch on Agent fires, and the Deployment scales up. The agent pays a pod creation
+and boot, which is what the scale-down window exists to amortise.

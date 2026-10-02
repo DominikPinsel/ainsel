@@ -44,11 +44,11 @@ sequenceDiagram
 
     K->>AC: Agent created/updated
     AC->>AC: Build desired Deployment spec
-    AC->>AC: Set env vars (AGENT_NAME, NATS_URL, etc.)
+    AC->>AC: Set env vars (AGENT_NAME, HUB_URL, PI_PROVIDER, ...)
     AC->>CM: Create/update persona ConfigMap
     AC->>DEP: Create/update Deployment
     AC->>K: Update Agent status conditions
-    Note over AC,K: Conditions: Ready, NATSConsumerReady, ForgejoAccountReady
+    Note over AC,K: Conditions: Ready, DeploymentReady, PersonaConfigMapReady, MCPDiscoveryComplete
 ```
 
 ## Trigger Reconciliation Flow
@@ -118,10 +118,14 @@ The Agent controller creates and owns these Kubernetes resources for each Agent 
 
 | Resource | Name Pattern | Purpose | Conditional |
 |----------|-------------|---------|-------------|
-| Deployment | `agent-<agent-name>` | Runs ainsel-ai-agent pods | always |
-| ConfigMap | `agent-<agent-name>-persona` | Mounts persona as `persona.md` | when `spec.persona.inline` is set |
+| Deployment | `agent-<agent-name>` | Runs the agent pods; `spec.replicas` is the operator's scaling decision | always |
+| ConfigMap | `agent-<agent-name>-pi-models` | `models.json` for the pi runtime, keeping LLM config out of the pod env | always |
 | Service | `agent-<agent-name>-metrics` | Exposes the agent's `:9090` metrics port | always |
-| ScaledObject (`keda.sh/v1alpha1`) | `agent-<agent-name>` | Autoscales the Deployment based on the agent's NATS JetStream consumer lag | when `spec.scaling.maxReplicas` is set |
+| Secret | `agent-<agent-name>-image-env` | Runtime-profile env vars resolved from the AgentImage | when the image or agent defines profile env vars |
+
+The persona ConfigMap is **not** created here — the hub owns it and the operator only
+reads it and reports `PersonaConfigMapReady`. `Owns(&ConfigMap{})` covers both, so a
+hand-edited `pi-models` ConfigMap still re-triggers the Agent.
 
 ## Status Conditions
 
@@ -129,9 +133,15 @@ The Agent controller creates and owns these Kubernetes resources for each Agent 
 
 | Condition | Meaning |
 |-----------|---------|
-| `Ready` | Overall readiness |
-| `NATSConsumerReady` | NATS consumer is configured |
-| `ForgejoAccountReady` | Forgejo user exists |
+| `Ready` | Overall readiness; True only when every sub-condition below is True |
+| `DeploymentReady` | The Deployment has at least its desired count of ready replicas |
+| `MCPDiscoveryComplete` | Referenced MCP servers were resolved |
+| `PersonaConfigMapReady` | The hub's persona ConfigMap exists and is readable |
+| `ImageEnvSecretReady` | The runtime-profile Secret exists |
+| `Degraded` | Carries a reason that is not fatal — e.g. MCP servers missing env on the image |
+
+`ConsumerReady` is declared in the API but no longer set by anything: it named the
+NATS consumer that the hub's task queue replaced.
 
 ### Trigger
 

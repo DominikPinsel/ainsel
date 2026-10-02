@@ -89,7 +89,7 @@ agentOperator:
   # How long an un-refreshed queue measurement from the hub stays trusted. Beyond
   # it the operator holds the pods it has rather than scaling down, because a
   # hub that stopped publishing looks exactly like a queue that drained.
-  queueSignalTTL: 0 # e.g. 5m (default 10m when unset)
+  queueSignalTTL: 0 # e.g. 5m (default 5m when unset; stay above the hub's 60s sweep)
   resources:
     requests:
       cpu: 50m

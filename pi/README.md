@@ -122,11 +122,10 @@ Variables consumed by the `ainsel-runner` extension (see
 
 | Var                | Required | Purpose |
 | ------------------ | -------- | ------- |
-| `NATS_URL`         | yes      | NATS server, typically `nats://nats.<ns>.svc.cluster.local:4222` |
-| `NATS_STREAM`      | yes      | Stream name (operator sets this to `AGENTS`) |
-| `NATS_CONSUMER`    | yes      | Durable consumer name (operator-managed) |
-| `AGENT_NAME`       | yes      | Logical agent name, propagated into event context for every tool call |
-| `OLLAMA_CLOUD_MODEL` | no     | Default `glm-5.1:cloud` |
+| `HUB_URL`          | yes      | Hub API the runner long-polls for tasks and reports results to |
+| `HUB_INTERNAL_VALIDATE_SECRET` | yes | `X-Internal-Token` for the hub's internal task endpoints |
+| `AGENT_NAME`       | yes      | Logical agent name, used in the task URLs and propagated into event context for every tool call |
+| `OLLAMA_CLOUD_MODEL` | yes    | Model the runner asks for; the operator writes it from `spec.llm.model` |
 | `OLLAMA_API_KEY`   | yes      | Read by the pi-ollama-cloud provider (operator mounts from `<agent>-ollama-key` Secret) |
 | `HUB_ENABLED`      | no       | Default `true`. Set to `false` to silence hub task lifecycle publishing. |
 | `AGENT_TOOLS`      | no       | Comma-separated allowlist consumed by the ainsel-tools extension. Unset = all tools available. |
