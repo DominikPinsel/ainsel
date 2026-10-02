@@ -291,8 +291,13 @@ func (p *Publisher) publishOne(ctx context.Context, name string, force bool) (bo
 	prev, hadPrev := p.last[name]
 	sig := Signal{Pending: depth.Pending, Active: depth.Active, ObservedAt: now}
 	// Work arrived: advance the idle clock, so an agent cannot be judged quiet
-	// while tasks are queued for it.
-	if !hadPrev || depth.Pending > prev.Pending {
+	// while tasks are queued for it. Only a queue that actually has something in
+	// it counts. In particular a first observation with nothing queued — which is
+	// every opted-in agent the sweep publishes after a hub restart — must leave the
+	// clock alone, or each deploy would restart the countdown before the agent is
+	// allowed to park, and status.lastInvocation would report activity that never
+	// happened.
+	if depth.Pending > 0 && (!hadPrev || depth.Pending > prev.Pending) {
 		sig.LastInvocation = now
 	}
 	// An edge — the queue emptying or filling, or a claim starting or finishing —
