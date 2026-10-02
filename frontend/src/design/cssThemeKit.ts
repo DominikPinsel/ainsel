@@ -67,17 +67,158 @@ export function resolveVar(value: string, palette: Map<string, string>, depth = 
   return resolveVar(next, palette, depth + 1)
 }
 
-/** Declarations of one top-level rule in primitives.css. */
+/**
+ * Expand every `var(--x)` occurrence in a value, not just a value that is
+ * wholly one. Needed for `color-mix(in srgb, var(--signal) 12%, var(--paper))`,
+ * which resolveVar() passes through untouched.
+ */
+export function expandVars(value: string, palette: Map<string, string>, depth = 0): string {
+  if (depth > 8) throw new Error(`var() chain too deep at "${value}"`)
+  const out = value.replace(/var\(\s*(--[\w-]+)\s*\)/g, (_all, name: string) => {
+    const v = palette.get(name)
+    if (!v) throw new Error(`unknown token ${name} in "${value}"`)
+    return v
+  })
+  return out === value ? out.trim() : expandVars(out, palette, depth + 1)
+}
+
+/**
+ * Resolve a colour value to a literal `#rrggbb` (opaque) or `rgba(...)`.
+ * Evaluates `color-mix(in srgb, …)` the way the CSS spec does — premultiplied
+ * alpha, weights normalised — so a mixed surface can be measured rather than
+ * guessed at.
+ */
+export function resolveColor(value: string, palette: Map<string, string>): string {
+  let s = expandVars(value, palette)
+  for (let guard = 0; s.includes('color-mix('); guard++) {
+    if (guard > 8) throw new Error(`color-mix() nested too deep in "${value}"`)
+    const m =
+      /color-mix\(\s*in\s+srgb\s*,\s*(.+?)\s+(\d*\.?\d+)%\s*,\s*(.+?)\s*(?:(\d*\.?\d+)%)?\s*\)/i.exec(
+        s,
+      )
+    if (!m) throw new Error(`unsupported color-mix() form in "${value}"`)
+    const a = parseColor(m[1].trim())
+    const b = parseColor(m[3].trim())
+    // An omitted second weight is `100% - first`, per spec.
+    const w1 = Number(m[2]) / 100
+    const w2 = (m[4] === undefined ? 100 - Number(m[2]) : Number(m[4])) / 100
+    const total = w1 + w2
+    const p1 = w1 / total
+    const p2 = w2 / total
+    const alpha = p1 * a.a + p2 * b.a
+    const chan = (x: number, y: number) => (alpha === 0 ? 0 : (p1 * x * a.a + p2 * y * b.a) / alpha)
+    const rgb = [chan(a.r, b.r), chan(a.g, b.g), chan(a.b, b.b)].map((n) => Math.round(n))
+    const to2 = (n: number) => n.toString(16).padStart(2, '0')
+    const mixed =
+      alpha >= 1
+        ? `#${rgb.map(to2).join('')}`
+        : `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${Number(alpha.toFixed(4))})`
+    s = s.slice(0, m.index) + mixed + s.slice(m.index! + m[0].length)
+  }
+  return s
+}
+
+/**
+ * Declarations of one top-level rule in primitives.css.
+ *
+ * The selector must match a whole entry of some rule's selector list, not a
+ * substring: `indexOf('.tool-meta {')` also hits `.tool-row-off .tool-meta {`,
+ * which quietly measures a different rule than the one asked for.
+ */
 export function declarationsFor(css: string, selector: string): Record<string, string> {
-  const start = css.indexOf(`${selector} {`)
-  if (start === -1) throw new Error(`no rule for "${selector}" in primitives.css`)
-  const body = css.slice(start + selector.length + 2, css.indexOf('}', start))
-  const out: Record<string, string> = {}
-  for (const decl of body.split(';')) {
-    const [prop, ...value] = decl.split(':')
-    if (prop && value.length) out[prop.trim()] = value.join(':').trim()
+  for (const rule of parseRules(css)) {
+    if (rule.selectors.includes(selector)) return rule.declarations
+  }
+  throw new Error(`no rule for "${selector}" in primitives.css`)
+}
+
+export type CssRule = { selectors: string[]; declarations: Record<string, string> }
+
+/**
+ * At-rules whose bodies are ordinary style rules. Flattening one would apply its
+ * declarations unconditionally, and skipping it would hide them, so parseRules
+ * refuses rather than guessing.
+ */
+const CONDITIONAL_AT_RULES = new Set([
+  'media',
+  'supports',
+  'container',
+  'layer',
+  'scope',
+  'document',
+])
+
+/**
+ * Every top-level rule in a stylesheet, in source order.
+ *
+ * Non-conditional at-rules (`@keyframes`, `@font-face`) are dropped: their
+ * bodies are not selector rules, and `@keyframes` percentage stops would
+ * otherwise be mistaken for selectors.
+ */
+export function parseRules(css: string): CssRule[] {
+  const source = withoutAtRuleBlocks(stripComments(css))
+  const out: CssRule[] = []
+  for (const m of source.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const declarations: Record<string, string> = {}
+    for (const decl of m[2].split(';')) {
+      const [prop, ...value] = decl.split(':')
+      if (prop && value.length) declarations[prop.trim()] = value.join(':').trim()
+    }
+    out.push({
+      selectors: m[1]
+        .trim()
+        .split(',')
+        .map((s) => s.trim()),
+      declarations,
+    })
   }
   return out
+}
+
+/** Remove at-rule blocks, throwing on the conditional ones. */
+function withoutAtRuleBlocks(source: string): string {
+  let out = ''
+  let i = 0
+  while (i < source.length) {
+    const c = source[i]
+    // A quoted value may mention an at-rule (`content: "@media"`); copy it
+    // through verbatim so it is not mistaken for one.
+    if (c === '"' || c === "'") {
+      const close = source.indexOf(c, i + 1)
+      const end = close === -1 ? source.length : close + 1
+      out += source.slice(i, end)
+      i = end
+      continue
+    }
+    const at = /^@([\w-]+)/.exec(source.slice(i))
+    if (!at) {
+      out += c
+      i++
+      continue
+    }
+    const name = at[1].toLowerCase()
+    if (CONDITIONAL_AT_RULES.has(name)) {
+      throw new Error(`parseRules does not handle @${name}; its body is real style rules`)
+    }
+    i = endOfAtRule(source, i) // drop the whole block
+  }
+  return out
+}
+
+/** Index just past an at-rule: its balanced `{…}` body, or its terminating `;`. */
+function endOfAtRule(source: string, start: number): number {
+  let i = start
+  let depth = 0
+  while (i < source.length) {
+    const c = source[i]
+    if (c === '{') depth++
+    else if (c === '}') {
+      depth--
+      if (depth === 0) return i + 1
+    } else if (c === ';' && depth === 0) return i + 1
+    i++
+  }
+  return source.length
 }
 
 /** Foreground/background of one rule with its tokens resolved for a theme. */

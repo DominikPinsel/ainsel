@@ -856,7 +856,7 @@ pre.code code {
   font-size: 9px;
   text-transform: uppercase;
   letter-spacing: .18em;
-  color: var(--ink-4);
+  color: var(--ink-3);
   font-weight: 700;
 }
 .md-sources-list {
@@ -910,7 +910,7 @@ pre.code code {
   font-size: 9px;
   text-transform: uppercase;
   letter-spacing: .14em;
-  color: var(--ink-4);
+  color: var(--ink-3);
   background: var(--paper-deep);
   border-bottom: 1px solid var(--rule-soft);
   font-weight: 700;
@@ -918,12 +918,21 @@ pre.code code {
   justify-content: space-between;
   align-items: center;
 }
-.tool-row-off .tool-name { color: var(--ink-4); }
-.tool-row-off .tool-meta { color: var(--ink-4); }
+/* Dimmed, but still legible: --ink-4 measures 2.6-4.0:1 on these panes, under
+   WCAG AA. --ink-3 keeps a visible gap against the enabled row's --ink while
+   clearing 4.5:1 in every theme, and matches .tool-hint beside it. The off
+   state is still carried by the Check toggle and by .tool-name dimming. */
+.tool-row-off .tool-name { color: var(--ink-3); }
+.tool-row-off .tool-meta { color: var(--ink-3); }
+/* Opaque tinted pill rather than solid teal. --paper on --signal is 3.67:1 in
+   the light theme and no lighter foreground clears 4.5:1 there. Mixing against
+   --paper-2 (what .md-grid actually paints) instead of using the translucent
+   --signal-haze keeps the chip from stacking with an active row's tint, which
+   would drop peat to 3.77:1. Same colour-mix idiom as .tag.warn. */
 .tool-new-badge {
   display: inline-block;
-  background: var(--signal);
-  color: var(--paper);
+  background: color-mix(in srgb, var(--signal) 12%, var(--paper-2));
+  color: var(--signal-ink);
   font-size: 8px;
   padding: 1px 6px;
   font-family: var(--mono);
@@ -991,7 +1000,7 @@ pre.code code {
 .tool-row .idx {
   font-family: var(--mono);
   font-size: 10px;
-  color: var(--ink-4);
+  color: var(--ink-3);
 }
 .tool-row .tool-name {
   font-family: var(--mono);

@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest'
 
 import {
   THEMES,
+  composite,
+  contrast,
   contrastOn,
   declarationsFor,
   paletteFor,
   readCss,
-  resolveVar,
+  resolveColor,
   tokenColor,
 } from './cssThemeKit'
 
@@ -66,13 +68,15 @@ const SURFACES: Surface[] = [
     name: 'Notice — warning banner',
     tintSelector: '.notice-warn',
     inkSelector: '.notice-warn',
-    backdrop: '--paper',
+    // Notices render both on the bare page and inside a Panel; --paper-2 is the
+    // darker of the two in every theme, so it is the case worth pinning.
+    backdrop: '--paper-2',
   },
   {
     name: 'Notice — error banner',
     tintSelector: '.notice-err',
     inkSelector: '.notice-err',
-    backdrop: '--paper',
+    backdrop: '--paper-2',
   },
 ]
 
@@ -87,7 +91,7 @@ function resolve(selector: string, prop: string, theme: string | null): string {
   const decls = declarationsFor(readCss('primitives.css'), selector)
   const raw = decls[prop]
   if (!raw) throw new Error(`${selector} declares no ${prop}`)
-  return resolveVar(raw, paletteFor(theme))
+  return resolveColor(raw, paletteFor(theme))
 }
 
 describe('signal-tinted selection surfaces', () => {
@@ -142,4 +146,81 @@ describe('signal-tinted selection surfaces', () => {
       expect(resolve(selector, 'color', null)).toBe(tokenColor('--signal-ink', null))
     }
   })
+})
+
+/**
+ * Text that is not a selection tint: section heads, row metadata, badges.
+ * These are the rules that reached for `--ink-4`, the palette's faintest text
+ * tier, and measured 2.3–4.0:1 — under WCAG AA in all four themes. `--ink-4`
+ * stays correct for placeholders and log timestamps elsewhere in the console,
+ * so the fix is per-rule, not a token change.
+ */
+type TextSurface = {
+  name: string
+  selector: string
+  /** Opaque pane this text is painted on. */
+  backdrop: string
+}
+
+const TEXT_SURFACES: TextSurface[] = [
+  { name: 'Tool list — section head', selector: '.tool-section-head', backdrop: '--paper-deep' },
+  {
+    name: 'Tool sources — header label',
+    selector: '.md-sources-header span',
+    backdrop: '--paper-deep',
+  },
+  { name: 'Tool sources — rail item', selector: '.src-item', backdrop: '--paper-deep' },
+  { name: 'Tool list — row index', selector: '.tool-row .idx', backdrop: '--paper-2' },
+  { name: 'Tool list — row meta', selector: '.tool-row .tool-meta', backdrop: '--paper-2' },
+  {
+    name: 'Tool list — disabled row name',
+    selector: '.tool-row-off .tool-name',
+    backdrop: '--paper-2',
+  },
+  {
+    name: 'Tool list — disabled row meta',
+    selector: '.tool-row-off .tool-meta',
+    backdrop: '--paper-2',
+  },
+  { name: 'Tool detail — hint text', selector: '.tool-hint', backdrop: '--paper-2' },
+  { name: 'Tool detail — FQN', selector: '.tool-fqn', backdrop: '--paper-2' },
+  { name: 'Tool detail — read-only note', selector: '.tool-readonly', backdrop: '--paper-2' },
+  // Opaque color-mix chip: stays put whether it sits on the pane or on an
+  // active row's tint, which a translucent --signal-haze badge did not.
+  { name: 'Tool list — NEW badge', selector: '.tool-new-badge', backdrop: '--paper-2' },
+  { name: 'Picker — pane header', selector: '.dual-list-pane-header', backdrop: '--paper' },
+  { name: 'Picker — row label', selector: '.dual-list-row-label', backdrop: '--paper' },
+  { name: 'Picker — row description', selector: '.dual-list-row-desc', backdrop: '--paper' },
+  { name: 'Picker — missing-item marker', selector: '.dual-list-missing', backdrop: '--paper' },
+  { name: 'Notice — default', selector: '.notice', backdrop: '--paper-2' },
+]
+
+/**
+ * What the browser paints behind this text: the rule's own background (which
+ * may be translucent, or a color-mix chip) flattened onto the pane beneath.
+ */
+function paintedBackground(selector: string, backdrop: string, theme: string | null): string {
+  const decls = declarationsFor(readCss('primitives.css'), selector)
+  const page = tokenColor(backdrop, theme)
+  const own = decls.background ?? decls['background-color']
+  if (!own) return page
+  const resolved = resolveColor(own, paletteFor(theme))
+  return resolved === 'transparent' ? page : composite(resolved, page)
+}
+
+describe('tools-tab and picker text', () => {
+  it.each(ALL_THEMES.map((t) => [themeName(t), t] as const))(
+    'clears WCAG AA in the %s theme',
+    (label, theme) => {
+      for (const s of TEXT_SURFACES) {
+        const ink = resolve(s.selector, 'color', theme)
+        const bg = paintedBackground(s.selector, s.backdrop, theme)
+        const ratio = contrast(ink, bg)
+        expect(
+          ratio,
+          `${s.name} fails WCAG AA in the ${label} theme: ${ink} on ${bg}`,
+        ).toBeGreaterThanOrEqual(WCAG_AA)
+      }
+    },
+  )
 })
