@@ -364,11 +364,15 @@ func (s *Server) prometheusMethodGate(w http.ResponseWriter, r *http.Request, h 
 // hub answers from the records it wrote while routing, which is what lets a
 // standalone install — the common shape, as the chart ships no Prometheus of its
 // own — show real charts instead of an empty panel.
+//
+// The records are only a backend if the store can actually read them. A store
+// built over a nil pool exists but answers nothing, and naming it here would
+// turn "no metrics source configured" into a query failure.
 func (s *Server) metricsBackend() (string, bool) {
 	switch {
 	case s.prom != nil:
 		return metricsSourcePrometheus, true
-	case s.telemetry != nil:
+	case s.telemetry.Ready():
 		return metricsSourcePostgres, true
 	default:
 		return "", false
@@ -619,6 +623,11 @@ const maxSeriesPoints = 2000
 // [start, end), zero-filling the gaps. The chart places bars by index, so
 // passing the sparse result straight through would spread a handful of events
 // across the whole window and misreport when they happened.
+//
+// The grid spans [start, end): a window that divides evenly by step yields one
+// fewer point than Prometheus' QueryRange, which samples its end bound
+// inclusively. The chart lays bars out by index, so both backends render the
+// same shape; only a response diff sees the difference.
 func denseBuckets(rows []telemetry.Bucket, start, end time.Time, step time.Duration) []TimeseriesPoint {
 	count := int(end.Sub(start) / step)
 	if count < 0 {

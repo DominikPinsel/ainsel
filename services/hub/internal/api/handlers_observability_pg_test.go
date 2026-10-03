@@ -180,6 +180,34 @@ func TestObservability_SummaryReturns503WithNoBackendAtAll(t *testing.T) {
 	}
 }
 
+func TestObservability_StoreWithNoDatabaseIsNotAMetricsBackend(t *testing.T) {
+	// NewStore accepts a nil pool, so a wired-but-database-less store is a
+	// non-nil pointer that can answer nothing. It must not be chosen as the
+	// backend: the caller gets the same 503 as a hub with no backend at all,
+	// rather than a 502 from a query that could never run. No container needed —
+	// the missing pool is the point.
+	s := testServer(t)
+	s.SetTelemetryStore(telemetry.NewStore(nil))
+	s.mux.HandleFunc("/api/v1/observability/metrics/summary", s.handleObservability)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/observability/metrics/summary", nil)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Error string `json:"error"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Error != metricsRequiredMessage {
+		t.Errorf("expected %q, got %q", metricsRequiredMessage, body.Error)
+	}
+}
+
 // --- timeseries from the hub's own records ---
 
 func TestObservability_TimeseriesFromPostgresIsZeroFilled(t *testing.T) {

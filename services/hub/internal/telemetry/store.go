@@ -141,6 +141,16 @@ func NewStore(pool *pgxpool.Pool) *Store {
 	return &Store{pool: pool}
 }
 
+// Ready reports whether the store can answer anything. NewStore tolerates a nil
+// pool so wiring never has to special-case a hub without a database, but a store
+// over a nil pool is not a metrics backend — every query it takes fails with
+// ErrNoDatabase. Callers choosing between backends ask this instead of asking
+// whether a pointer was set, so such a hub reports that no metrics source is
+// configured rather than advertising "postgres" and then erroring.
+func (s *Store) Ready() bool {
+	return s != nil && s.pool != nil
+}
+
 // SupportsMetric reports whether this store can answer queries for name.
 func SupportsMetric(name string) bool {
 	_, ok := metricSpecs[name]
