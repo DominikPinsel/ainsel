@@ -1,0 +1,168 @@
+name: PR sign-off
+
+# Every commit arriving in a PR must carry a `Signed-off-by:` trailer - the
+# Developer Certificate of Origin (https://developercertificate.org/), the
+# contributor's own statement that they are allowed to submit the code under
+# this project's Apache-2.0 licence. It is the record a relicensing or a
+# "where did this come from" question falls back on, and right now the
+# repository keeps almost none of it: the org's "require signed-off commits"
+# setting only covers commits the web UI creates, so pushes from git and PRs
+# are unchecked. Of the last thirty commits on develop, twenty-two carry no
+# trailer at all; of the eight that do, seven are Dependabot's, which signs
+# itself.
+#
+# The rules, and why each is what it is:
+#
+# - Every commit, not just the PR head. Squash-merge collapses the branch into
+#   one commit, but the pre-squash commits stay reachable as the PR's head ref,
+#   and the attestation is about each of them.
+# - Merge commits are skipped. They carry no authorship; `git merge` writes the
+#   message, and demanding a sign-off for it would only push people to rebase.
+#   Detected from the commit's parent count, which the API returns.
+# - Bot PRs are exempt. A sign-off is an attestation a natural person makes;
+#   dependabot[bot] and the repository's own agent bots have nobody to attest,
+#   and Dependabot's trailer (`support@github.com`) is not even its author
+#   identity (`49699333+dependabot[bot]@users.noreply.github.com`).
+# - A sign-off that names someone other than the commit author warns instead of
+#   failing. `git commit -s` writes the *committer's* configured identity, so
+#   co-authored commits, cherry-picks and web-UI commits legitimately differ.
+#
+# No checkout and no third-party action: the commits arrive through the API and
+# the rule is one trailer per commit, so there is nothing to install or
+# supply-chain - same posture as pr-title.yml.
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  signoff:
+    name: Signed off
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+    steps:
+      - name: Check every commit carries a Signed-off-by trailer
+        run: |
+          set -euo pipefail
+
+          case "${PR_AUTHOR}" in
+            *'[bot]')
+              echo "ok: '${PR_AUTHOR}' is a bot; a sign-off needs a person, so this PR is exempt."
+              exit 0
+              ;;
+          esac
+
+          # The API lists exactly the commits the PR brings into its base, in
+          # order, so there is nothing to fetch or re-derive from a checkout.
+          # --paginate covers branches longer than one API page.
+          #
+          # Failing to read the commits must fail the check, not skip it: a
+          # green light here is what tells a maintainer the PR may merge.
+          if ! raw="$(gh api --paginate "/repos/${GH_REPO}/pulls/${PR_NUMBER}/commits" 2>/dev/null)"; then
+            echo "::error::could not read PR #${PR_NUMBER}'s commits from the API - cannot check sign-off."
+            exit 1
+          fi
+          commits="$(jq -s 'add' <<<"${raw}")"
+          if ! jq -e 'type == "array"' >/dev/null <<<"${commits}"; then
+            echo "::error::unexpected API response for PR #${PR_NUMBER}'s commits - refusing to guess."
+            exit 1
+          fi
+
+          total="$(jq 'length' <<<"${commits}")"
+          if [ "${total}" -eq 0 ]; then
+            echo "ok: PR #${PR_NUMBER} brings no commits."
+            exit 0
+          fi
+
+          # Classify each commit: merge | ok | missing | malformed.
+          # A trailer is well formed when it names a person and an address, the
+          # way `git commit -s` writes it. Case and indentation are tolerated;
+          # the trailer may sit anywhere in the message, as with the standard
+          # DCO checkers.
+          rows="$(jq -r '
+            def signoffs: split("\n") | map(select(test("^[ \t]*[Ss]igned-off-by:")));
+            def wellformed:
+              test("^[ \t]*[Ss]igned-off-by:[ \t]*[^<> \t][^<>]*<[^<> \t]+@[^<> \t]+>[ \t]*$");
+            .[]
+            | ((.parents // []) | length) as $np
+            | (.commit.message | signoffs) as $so
+            | (if    $np > 1                    then "merge"
+               elif ($so | length) == 0         then "missing"
+               elif ($so | map(wellformed) | all) then "ok"
+               else "malformed" end) as $state
+            | [$state, (.sha[0:7]), .commit.author.name, ($so | length | tostring)]
+            | @tsv
+          ' <<<"${commits}")"
+
+          ok=0
+          merge=0
+          missing=()
+          malformed=()
+          while IFS=$'\t' read -r state sha author count; do
+            printf '%-9s %s  %s\n' "${state}" "${sha}" "${author}"
+            case "${state}" in
+              ok)        ok=$((ok + 1)) ;;
+              merge)     merge=$((merge + 1)) ;;
+              missing)   missing+=("${sha}") ;;
+              malformed) malformed+=("${sha}") ;;
+            esac
+          done <<<"${rows}"
+
+          # Advisory only: report a sign-off whose address is not the author's.
+          jq -r '
+            def signoffs: split("\n") | map(select(test("^[ \t]*[Ss]igned-off-by:")));
+            .[]
+            | select(((.parents // []) | length) < 2)
+            | (.commit.message | signoffs
+               | map(capture("<(?<email>[^<> \t]+@[^<> \t]+)>").email) | map(ascii_downcase)) as $so
+            | (.commit.author.email | ascii_downcase) as $a
+            | select(($so | length) > 0)
+            | select(($so | index($a)) == null)
+            | [(.sha[0:7]), $a, ($so | join(" "))]
+            | @tsv
+          ' <<<"${commits}" | while IFS=$'\t' read -r sha author signed; do
+            echo "::warning::${sha} is signed off as '${signed}', not as its author '${author}' - fine for a co-author or a cherry-pick, wrong for anything else"
+          done
+
+          echo ""
+          summary="${ok}/${total} commit(s) signed off"
+          if [ "${merge}" -gt 0 ]; then
+            summary="${summary}, ${merge} merge commit(s) skipped"
+          fi
+          echo "${summary}."
+
+          if [ "${#missing[@]}" -eq 0 ] && [ "${#malformed[@]}" -eq 0 ]; then
+            exit 0
+          fi
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::no Signed-off-by trailer: ${missing[*]}"
+          fi
+          if [ "${#malformed[@]}" -gt 0 ]; then
+            echo "::error::malformed Signed-off-by trailer: ${malformed[*]}"
+          fi
+
+          echo ""
+          echo "Every commit in the PR needs one line of the form"
+          echo ""
+          echo "    Signed-off-by: Ada Lovelace <ada@example.com>"
+          echo ""
+          echo "which is exactly what 'git commit -s' appends from user.name and"
+          echo "user.email. Fix it with:"
+          echo ""
+          echo "    git rebase --signoff origin/develop   # every commit on the branch"
+          echo "    git rebase --signoff --root           # ...if the branch has no upstream base"
+          echo "    git commit --amend --signoff          # only the tip commit"
+          echo ""
+          echo "Then force-push the branch ('git push --force-with-lease'); this check"
+          echo "re-runs on the new head. A sign-off is not a GPG signature - it is the"
+          echo "DCO statement that you may submit this code, see"
+          echo "https://developercertificate.org/."
+          exit 1
