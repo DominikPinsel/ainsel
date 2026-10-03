@@ -501,6 +501,15 @@ func (s *Service) Converge(ctx context.Context) (*DeliveryReport, error) {
 //
 // The state is per hub replica. With hub.replicas > 1 two replicas run
 // their own pass, so each logs its own first observation of a failure.
+//
+// Failures on the CRUD paths (Update and Assign, via renderBestEffort)
+// are deliberately logged there and not folded in here: they answer a
+// user action synchronously, and this dedup only understands whole-pass
+// snapshots — calling it with one skill would forget the state of every
+// other undelivered one. So a full ConfigMap legitimately produces a
+// "configmap render failed" WARN on the write and an "enabled skill not
+// delivered" WARN on the next pass. That is the intended shape, not a
+// duplicate to delete.
 func (s *Service) logDeliveryChanges(delivered []string, undelivered map[string]error, enabled int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
