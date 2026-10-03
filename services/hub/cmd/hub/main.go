@@ -112,6 +112,14 @@ func main() {
 		return nil
 	})
 
+	// Skill delivery: the shared skills ConfigMap mirrors the skills
+	// agents have enabled, not the whole registry. This pass runs once at
+	// startup to prune catalogue entries (which is what frees the object
+	// after it filled) and then keeps retrying anything that did not fit.
+	g.Go(runUntilCanceled(ctx, func(ctx context.Context) error {
+		return runSkillsDelivery(ctx, c)
+	}))
+
 	// Periodic task log pruning (hourly, non-fatal).
 	g.Go(runUntilCanceled(ctx, func(ctx context.Context) error {
 		ticker := time.NewTicker(1 * time.Hour)
