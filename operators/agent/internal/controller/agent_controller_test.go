@@ -1537,6 +1537,13 @@ var _ = Describe("Agent Controller", func() {
 				corev1.KeyToPath{Key: "git-review", Path: "git-review/SKILL.md"},
 				corev1.KeyToPath{Key: "bash-advanced", Path: "bash-advanced/SKILL.md"},
 			))
+			// The hub delivers skills on a size-capped shared object, so a
+			// projected key can legitimately be absent. Tolerance must be
+			// declared or the missing key fails volume setup and wedges the
+			// pod instead of just leaving that skill undiscovered.
+			Expect(skillsVol.ConfigMap.Optional).NotTo(BeNil())
+			Expect(*skillsVol.ConfigMap.Optional).To(BeTrue(),
+				"skills volume must be optional so an undelivered skill cannot block pod startup")
 
 			By("Verifying the init container copies skills into the EmptyDir")
 			initContainers := deploy.Spec.Template.Spec.InitContainers

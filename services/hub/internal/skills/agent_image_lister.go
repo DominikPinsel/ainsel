@@ -135,14 +135,55 @@ func (l *kubeAgentImageLister) UsageCounts(ctx context.Context) (map[string]int,
 		if err != nil || !found {
 			continue
 		}
-		seen := make(map[string]struct{}, len(skills))
-		for _, s := range skills {
-			if _, ok := seen[s]; ok {
-				continue
-			}
-			seen[s] = struct{}{}
-			counts[s]++
-		}
+		tallyUnique(counts, skills)
 	}
 	return counts, nil
+}
+
+// EnabledSkillIDs tallies every skill ID that some pod is meant to
+// project, across both levels of the skill selection.
+//
+// UsageCounts alone is not enough: Agent.spec.skills.items *replaces* the
+// referenced image's enabledSkills rather than adding to it, so a skill
+// chosen only on the Agent would look unclaimed and get pruned out of
+// the ConfigMap the running agent mounts from.
+//
+// The result is a union, which can over-count — an Agent that narrows to
+// a subset still sits on an image whose other skills other agents use.
+// Over-delivering is the safe direction here; under-delivering silently
+// costs an agent a skill.
+func (l *kubeAgentImageLister) EnabledSkillIDs(ctx context.Context) (map[string]int, error) {
+	counts, err := l.UsageCounts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	list := &unstructured.UnstructuredList{}
+	list.SetGroupVersionKind(schema.GroupVersionKind{
+		Group: "ainsel.dev", Version: "v1alpha1", Kind: "AgentList",
+	})
+	if err := l.client.List(ctx, list, ctrlclient.InNamespace(l.namespace)); err != nil {
+		return nil, err
+	}
+	for _, item := range list.Items {
+		// An absent spec.skills means "inherit the image", which
+		// UsageCounts already covered.
+		skills, found, err := unstructured.NestedStringSlice(item.Object, "spec", "skills", "items")
+		if err != nil || !found {
+			continue
+		}
+		tallyUnique(counts, skills)
+	}
+	return counts, nil
+}
+
+// tallyUnique adds each distinct id in ids to counts once.
+func tallyUnique(counts map[string]int, ids []string) {
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		counts[id]++
+	}
 }

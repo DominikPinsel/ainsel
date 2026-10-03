@@ -14,7 +14,9 @@ import (
 
 // Reconciler renders the single shared skills ConfigMap in the hub's
 // namespace. Each skill is one data key (the skill ID) whose value is
-// the full SKILL.md (frontmatter + body).
+// the full SKILL.md (frontmatter + body). The object is a cache of the
+// skills agents have enabled, not a mirror of the registry: see
+// Converge.
 type Reconciler struct {
 	client    ctrlclient.Client
 	namespace string
@@ -111,4 +113,93 @@ func (r *Reconciler) Delete(ctx context.Context, skillID string) error {
 		return fmt.Errorf("update configmap %s: %w", name, err)
 	}
 	return nil
+}
+
+// Converge makes the shared ConfigMap hold exactly the data keys in
+// keep, each carrying the rendered SKILL.md for that skill. Any other key
+// in the object is pruned, which is what releases space for skills that
+// are actually enabled -- the object is hub-owned, so nothing else is
+// expected to live in it.
+//
+// Ordering matters: non-target keys are dropped before any target key is
+// written, so a ConfigMap that filled up with catalogue entries can
+// recover in a single pass rather than failing every write.
+//
+// keep must come from a successful live read of the enabling CRs. The
+// prune is unconditional, so a wrong-empty keep would strip every key out
+// of the object and agents would come up without their skills until the
+// next pass. Callers therefore propagate a list error instead of an empty
+// set, and the pass aborts before pruning; do not source keep from a
+// cache that can answer "empty" for "not loaded yet".
+//
+// Partial delivery is a normal outcome, not an error. A skill whose
+// rendered body would push the shared object past the apiserver's 1 MiB
+// ceiling cannot be delivered no matter how the pass is ordered, so the
+// rest are delivered, the remainder is reported, and the next pass
+// retries. Returning an error would make every caller treat a healthy
+// pass as a failed one.
+func (r *Reconciler) Converge(ctx context.Context, keep map[string]*Skill) (delivered []string, undelivered map[string]error, err error) {
+	undelivered = map[string]error{}
+	name := sharedskills.ConfigMapName
+	var cm corev1.ConfigMap
+	getErr := r.client.Get(ctx, types.NamespacedName{Name: name, Namespace: r.namespace}, &cm)
+	if apierrors.IsNotFound(getErr) {
+		if len(keep) == 0 {
+			return nil, undelivered, nil
+		}
+		// Seed an empty object and let the update path below fill it; a
+		// single Create carrying every skill would hit the same ceiling
+		// this pass exists to work around.
+		if err := r.client.Create(ctx, &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      name,
+				Namespace: r.namespace,
+				Labels: map[string]string{
+					"ainsel.dev/managed-by": "hub",
+					"ainsel.dev/resource":   "skills",
+				},
+			},
+			Data: map[string]string{},
+		}); err != nil && !apierrors.IsAlreadyExists(err) {
+			return nil, undelivered, fmt.Errorf("create configmap %s: %w", name, err)
+		}
+		if err := r.client.Get(ctx, types.NamespacedName{Name: name, Namespace: r.namespace}, &cm); err != nil {
+			return nil, undelivered, fmt.Errorf("get configmap %s after create: %w", name, err)
+		}
+	} else if getErr != nil {
+		return nil, undelivered, fmt.Errorf("get configmap %s: %w", name, getErr)
+	}
+
+	changed := false
+	for key := range cm.Data {
+		if _, want := keep[key]; !want {
+			delete(cm.Data, key)
+			changed = true
+		}
+	}
+	if changed {
+		if err := r.client.Update(ctx, &cm); err != nil {
+			return nil, undelivered, fmt.Errorf("prune configmap %s: %w", name, err)
+		}
+	}
+
+	for id, sk := range keep {
+		// Skip what is already correct. Every write to the shared object
+		// changes it, the operator hashes it, and agents restart on a new
+		// hash — so a pass that rewrote unchanged skills would cycle every
+		// skill-bearing pod for no reason. A steady-state pass must be a
+		// no-op on the object.
+		if existing, ok := cm.Data[id]; ok && existing == assembleSKILLMD(sk) {
+			delivered = append(delivered, id)
+			continue
+		}
+		// Ensure re-reads the object, so a stale resourceVersion from the
+		// prune above costs a retry rather than a lost write.
+		if err := r.Ensure(ctx, sk); err != nil {
+			undelivered[id] = err
+			continue
+		}
+		delivered = append(delivered, id)
+	}
+	return delivered, undelivered, nil
 }
