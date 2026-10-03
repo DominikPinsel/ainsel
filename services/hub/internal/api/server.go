@@ -79,12 +79,14 @@ type Server struct {
 	userTokens             *usertokens.Store
 	internalValidateSecret string
 
-	// skillMCPHandler is the read-only skill catalogue MCP, gated by the
-	// internal secret and built once in SetSkillDiscovery. nil until a
+	// skillMCPHandler is the read-only skill catalogue MCP, gated by
+	// skillsMCPToken below and built once in SetSkillDiscovery. nil until a
 	// catalogue is wired.
 	skillMCPHandler http.Handler
-	// skillsMCPToken gates the read-only skill catalogue MCP. Empty means
-	// the endpoint stays disabled rather than open.
+	// skillsMCPToken is HUB_SKILLS_MCP_TOKEN, the bearer token the catalogue
+	// accepts. Empty means the endpoint stays disabled rather than open. It is
+	// separate from internalValidateSecret on purpose: that one is the
+	// cluster-wide internal credential. See requireCatalogueToken.
 	skillsMCPToken string
 
 	// wsAllowedOrigins lists Origins permitted to open /api/v1/ws in addition

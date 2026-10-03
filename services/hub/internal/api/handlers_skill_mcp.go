@@ -22,7 +22,10 @@ import (
 // serveHTTPInner runs the user-auth middleware only for /api/v1/* paths.
 // So this endpoint is unreachable from outside the cluster and is not
 // reachable by a user session either: the only credential that opens it is
-// the cluster-internal secret, checked in requireInternalSecret below.
+// the dedicated catalogue token HUB_SKILLS_MCP_TOKEN, checked in
+// requireCatalogueToken below. It is deliberately not
+// HUB_INTERNAL_VALIDATE_SECRET -- see that function for why the two must
+// stay separate.
 const skillMCPPath = "/api/internal/skills/mcp"
 
 // SkillDiscovery is the read surface the skill MCP needs. It is separate
@@ -65,7 +68,7 @@ func skillMCPServer(d SkillDiscovery) *server.StreamableHTTPServer {
 
 	srv.AddTool(
 		mcp.NewTool("search_skills",
-			mcp.WithDescription("Search the full hub skill catalogue by keyword and/or tags. Returns metadata only (id, name, description, tags) — never the body, so this stays cheap to call. Use it to find something, then load it with get_skill. An empty query with no tags lists the catalogue in creation order."),
+			mcp.WithDescription("Search the full hub skill catalogue by keyword and/or tags. Returns metadata only (id, name, description, tags) — never the body, so this stays cheap to call. Use it to find something, then load it with get_skill. An empty query with no tags lists the newest skills first (the catalogue is read in descending creation order)."),
 			mcp.WithString("query", mcp.Description("Keyword matched case-insensitively against id, name and description")),
 			mcp.WithArray("tags", mcp.Description("Tag names to filter by; a skill matches if it carries any of them"), mcp.WithStringItems()),
 			mcp.WithNumber("limit", mcp.Description("Max results (default 20, hard max 50). Check truncated in the response before assuming you saw everything.")),

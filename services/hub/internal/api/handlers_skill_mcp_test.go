@@ -76,13 +76,17 @@ func hasAnyTag(have, want []string) bool {
 }
 
 const (
-	bodySentinel   = "SECRET-BODY-TEXT-DO-NOT-LEAK"
-	internalSecret = "test-catalogue-token"
+	bodySentinel = "SECRET-BODY-TEXT-DO-NOT-LEAK"
+	// catalogueToken is the test value of HUB_SKILLS_MCP_TOKEN. It is named
+	// for what it actually is rather than "internalSecret": the two internal
+	// credentials are deliberately separate, and a shared name here is how a
+	// test ends up asserting the wrong one.
+	catalogueToken = "test-catalogue-token"
 )
 
 // newCatalogueServer builds a Server wired like production for this route:
 // an auth middleware that rejects any request without an authenticated
-// user (the OIDC/local behaviour), plus the handler-level internal-secret
+// user (the OIDC/local behaviour), plus the handler-level catalogue-token
 // check. If the middleware ever started applying to /api/internal/*, the
 // catalogue would stop being reachable by agents and these tests fail —
 // which is the point of asserting through ServeHTTP rather than the handler.
@@ -134,7 +138,7 @@ func doCatalogue(s *Server, method, path, header, value string) *httptest.Respon
 // agents can use it) and unreachable without the catalogue token (so
 // nothing in the cluster can read the catalogue anonymously).
 func TestCatalogueBypassesUserAuthAndRequiresToken(t *testing.T) {
-	s := newCatalogueServer(t, catalogueFixture(), internalSecret)
+	s := newCatalogueServer(t, catalogueFixture(), catalogueToken)
 
 	cases := []struct {
 		name   string
@@ -151,8 +155,8 @@ func TestCatalogueBypassesUserAuthAndRequiresToken(t *testing.T) {
 		{"wrong catalogue token", "X-Internal-Token", "nope", http.StatusUnauthorized, "invalid skill catalogue token"},
 		{"wrong bearer", "Authorization", "Bearer nope", http.StatusUnauthorized, "invalid skill catalogue token"},
 		{"user session token is not a catalogue token", "Authorization", "Bearer ainsel-some-user-token", http.StatusUnauthorized, "invalid skill catalogue token"},
-		{"catalogue token as bearer", "Authorization", "Bearer " + internalSecret, http.StatusOK, ""},
-		{"catalogue token as header", "X-Internal-Token", internalSecret, http.StatusOK, ""},
+		{"catalogue token as bearer", "Authorization", "Bearer " + catalogueToken, http.StatusOK, ""},
+		{"catalogue token as header", "X-Internal-Token", catalogueToken, http.StatusOK, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -163,7 +167,7 @@ func TestCatalogueBypassesUserAuthAndRequiresToken(t *testing.T) {
 				// the gate let it through to the MCP layer, which rejects
 				// the payload rather than the caller.
 				if rec.Code == http.StatusUnauthorized {
-					t.Fatalf("request was rejected at the secret gate: %s", rec.Body.String())
+					t.Fatalf("request was rejected at the catalogue-token gate: %s", rec.Body.String())
 				}
 				return
 			}
@@ -189,8 +193,8 @@ func TestCatalogueRefusesToOpenWithoutConfiguredSecret(t *testing.T) {
 }
 
 func TestCatalogueWithoutDiscoveryServiceIs503(t *testing.T) {
-	s := newCatalogueServer(t, nil, internalSecret)
-	rec := doCatalogue(s, http.MethodPost, skillMCPPath, "X-Internal-Token", internalSecret)
+	s := newCatalogueServer(t, nil, catalogueToken)
+	rec := doCatalogue(s, http.MethodPost, skillMCPPath, "X-Internal-Token", catalogueToken)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("got %d, want 503 (%s)", rec.Code, rec.Body.String())
 	}
@@ -209,14 +213,14 @@ type catalogueClient struct {
 	c *client.Client
 }
 
-func connectCatalogue(t *testing.T, d SkillDiscovery, secret string) *catalogueClient {
+func connectCatalogue(t *testing.T, d SkillDiscovery, token string) *catalogueClient {
 	t.Helper()
-	s := newCatalogueServer(t, d, secret)
+	s := newCatalogueServer(t, d, token)
 	ts := httptest.NewServer(s)
 	t.Cleanup(ts.Close)
 
 	trans, err := transport.NewStreamableHTTP(ts.URL+skillMCPPath,
-		transport.WithHTTPHeaders(map[string]string{"Authorization": "Bearer " + secret}))
+		transport.WithHTTPHeaders(map[string]string{"Authorization": "Bearer " + token}))
 	if err != nil {
 		t.Fatalf("transport: %v", err)
 	}
@@ -262,7 +266,7 @@ func textOf(t *testing.T, res *mcp.CallToolResult) string {
 }
 
 func TestCatalogueServesExactlyTwoReadOnlyTools(t *testing.T) {
-	cc := connectCatalogue(t, catalogueFixture(), internalSecret)
+	cc := connectCatalogue(t, catalogueFixture(), catalogueToken)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	tools, err := cc.c.ListTools(ctx, mcp.ListToolsRequest{})
@@ -292,7 +296,7 @@ func TestCatalogueServesExactlyTwoReadOnlyTools(t *testing.T) {
 }
 
 func TestCatalogueSearchReturnsMetadataAndNeverBodies(t *testing.T) {
-	cc := connectCatalogue(t, catalogueFixture(), internalSecret)
+	cc := connectCatalogue(t, catalogueFixture(), catalogueToken)
 	res := cc.call(t, "search_skills", map[string]any{"query": "rubric"})
 	if res.IsError {
 		t.Fatalf("search returned an error: %s", textOf(t, res))
@@ -338,7 +342,7 @@ func TestCatalogueSearchReportsTruncationTruthfully(t *testing.T) {
 			Description: "description",
 		})
 	}
-	cc := connectCatalogue(t, d, internalSecret)
+	cc := connectCatalogue(t, d, catalogueToken)
 	res := cc.call(t, "search_skills", map[string]any{"limit": 2})
 	var payload struct {
 		Skills    []map[string]any `json:"skills"`
@@ -360,26 +364,43 @@ func TestCatalogueSearchReportsTruncationTruthfully(t *testing.T) {
 }
 
 func TestCatalogueSearchClampsLimit(t *testing.T) {
-	d := &stubDiscovery{byID: map[string]*skills.Skill{}}
-	for i := 0; i < 60; i++ {
-		d.all = append(d.all, skills.SkillSummary{ID: "s"})
+	cases := []struct {
+		name  string
+		limit any
+		want  int
+	}{
+		{"above the max is clamped down", 100000, skillSearchMaxLimit},
+		// A limit of 0 or less is a caller that meant "no limit", not one
+		// that asked for an empty page. req.GetInt only falls back to the
+		// default when the key is absent, so an explicit 0 reaches the
+		// handler and has to be clamped there.
+		{"zero falls back to the default", 0, skillSearchDefaultLimit},
+		{"negative falls back to the default", -7, skillSearchDefaultLimit},
 	}
-	cc := connectCatalogue(t, d, internalSecret)
-	res := cc.call(t, "search_skills", map[string]any{"limit": 100000})
-	var payload struct {
-		Skills []map[string]any `json:"skills"`
-	}
-	if err := json.Unmarshal([]byte(textOf(t, res)), &payload); err != nil {
-		t.Fatalf("not JSON: %v", err)
-	}
-	if len(payload.Skills) != skillSearchMaxLimit {
-		t.Errorf("got %d results, want the hard max %d", len(payload.Skills), skillSearchMaxLimit)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := &stubDiscovery{byID: map[string]*skills.Skill{}}
+			for i := 0; i < 60; i++ {
+				d.all = append(d.all, skills.SkillSummary{ID: "s"})
+			}
+			cc := connectCatalogue(t, d, catalogueToken)
+			res := cc.call(t, "search_skills", map[string]any{"limit": tc.limit})
+			var payload struct {
+				Skills []map[string]any `json:"skills"`
+			}
+			if err := json.Unmarshal([]byte(textOf(t, res)), &payload); err != nil {
+				t.Fatalf("not JSON: %v", err)
+			}
+			if len(payload.Skills) != tc.want {
+				t.Errorf("limit %v: got %d results, want %d", tc.limit, len(payload.Skills), tc.want)
+			}
+		})
 	}
 }
 
 func TestCatalogueSearchForwardsTags(t *testing.T) {
 	d := catalogueFixture()
-	cc := connectCatalogue(t, d, internalSecret)
+	cc := connectCatalogue(t, d, catalogueToken)
 	cc.call(t, "search_skills", map[string]any{"query": "designer", "tags": []any{"assessment"}})
 	if d.lastQ != "designer" {
 		t.Errorf("query forwarded as %q, want %q", d.lastQ, "designer")
@@ -392,7 +413,7 @@ func TestCatalogueSearchForwardsTags(t *testing.T) {
 func TestCatalogueSearchFailureBecomesAToolError(t *testing.T) {
 	d := catalogueFixture()
 	d.searchE = errors.New("db gone")
-	cc := connectCatalogue(t, d, internalSecret)
+	cc := connectCatalogue(t, d, catalogueToken)
 	res := cc.call(t, "search_skills", map[string]any{"query": "x"})
 	if !res.IsError {
 		t.Fatal("a failed search must surface as a tool error, not an empty result")
@@ -403,7 +424,7 @@ func TestCatalogueSearchFailureBecomesAToolError(t *testing.T) {
 }
 
 func TestCatalogueGetSkillReturnsTheMountedFile(t *testing.T) {
-	cc := connectCatalogue(t, catalogueFixture(), internalSecret)
+	cc := connectCatalogue(t, catalogueFixture(), catalogueToken)
 	res := cc.call(t, "get_skill", map[string]any{"id": "rubric-designer"})
 	if res.IsError {
 		t.Fatalf("get_skill errored: %s", textOf(t, res))
@@ -428,7 +449,7 @@ func TestCatalogueGetSkillReturnsTheMountedFile(t *testing.T) {
 // readable: this fixture description carries ": ", the exact shape that
 // made six live hub skills render frontmatter no YAML parser accepts.
 func TestCatalogueGetSkillFrontmatterParses(t *testing.T) {
-	cc := connectCatalogue(t, catalogueFixture(), internalSecret)
+	cc := connectCatalogue(t, catalogueFixture(), catalogueToken)
 	got := textOf(t, cc.call(t, "get_skill", map[string]any{"id": "rubric-designer"}))
 
 	fm := strings.TrimPrefix(got, "---\n")
@@ -449,7 +470,7 @@ func TestCatalogueGetSkillFrontmatterParses(t *testing.T) {
 }
 
 func TestCatalogueGetSkillUnknownIDNamesTheID(t *testing.T) {
-	cc := connectCatalogue(t, catalogueFixture(), internalSecret)
+	cc := connectCatalogue(t, catalogueFixture(), catalogueToken)
 	res := cc.call(t, "get_skill", map[string]any{"id": "does-not-exist"})
 	if !res.IsError {
 		t.Fatal("want a tool error for an unknown id")
@@ -464,7 +485,7 @@ func TestCatalogueGetSkillUnknownIDNamesTheID(t *testing.T) {
 }
 
 func TestCatalogueGetSkillRequiresID(t *testing.T) {
-	cc := connectCatalogue(t, catalogueFixture(), internalSecret)
+	cc := connectCatalogue(t, catalogueFixture(), catalogueToken)
 	res := cc.call(t, "get_skill", map[string]any{})
 	if !res.IsError || !strings.Contains(textOf(t, res), "id is required") {
 		t.Errorf("want a clear missing-id error, got %q", textOf(t, res))
@@ -478,7 +499,7 @@ func TestCatalogueGetSkillRequiresID(t *testing.T) {
 // not travel in traffic where it can be replayed. If someone "simplifies"
 // the gate back to the shared secret, this fails.
 func TestCatalogueDoesNotAcceptTheInternalSecret(t *testing.T) {
-	s := newCatalogueServer(t, catalogueFixture(), internalSecret)
+	s := newCatalogueServer(t, catalogueFixture(), catalogueToken)
 	s.SetInternalValidateSecret("a-different-cluster-wide-secret")
 
 	rec := doCatalogue(s, http.MethodPost, skillMCPPath, "X-Internal-Token", "a-different-cluster-wide-secret")
@@ -487,7 +508,7 @@ func TestCatalogueDoesNotAcceptTheInternalSecret(t *testing.T) {
 	}
 	// ...and the catalogue token must not be accepted as an internal token
 	// on the endpoints that do use it, so neither leaks into the other.
-	rec = doCatalogue(s, http.MethodPost, skillMCPPath, "X-Internal-Token", internalSecret)
+	rec = doCatalogue(s, http.MethodPost, skillMCPPath, "X-Internal-Token", catalogueToken)
 	if rec.Code == http.StatusUnauthorized {
 		t.Fatalf("the catalogue token itself was rejected: %s", rec.Body.String())
 	}

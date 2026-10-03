@@ -83,6 +83,7 @@ func wireAPIClient(mgr ctrl.Manager) (client.Client, error) {
 	return ac, nil
 }
 
+
 // wirePrometheus creates the Prometheus client if URL is set.
 func wirePrometheus(promURL string) *prometheus.Client {
 	if promURL == "" {
@@ -138,12 +139,14 @@ func wireAPIServer(c *container, cfg containerConfig) *api.Server {
 	}
 	srv.SetSkillDiscovery(c.skillSvc)
 
+	// This block reports the validate credential only. The catalogue has its
+	// own token and its own line above; naming it here would tie two
+	// independent settings together and let one log line lie about the other.
 	if secret := os.Getenv("HUB_INTERNAL_VALIDATE_SECRET"); secret != "" {
 		srv.SetInternalValidateSecret(secret)
-		slog.Info("internal endpoints enabled", "validate", true, "skillCatalogue", true)
+		slog.Info("user token validate endpoint enabled")
 	} else {
-		slog.Warn("HUB_INTERNAL_VALIDATE_SECRET not set, internal endpoints disabled",
-			"validate", false, "skillCatalogue", false)
+		slog.Warn("HUB_INTERNAL_VALIDATE_SECRET not set, user token validate endpoint disabled")
 	}
 
 	// Extra Origins allowed to open /api/v1/ws. Same-origin is always

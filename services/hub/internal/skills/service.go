@@ -292,6 +292,13 @@ func (s *Service) List(ctx context.Context, filter ListFilter) ([]SkillSummary, 
 // The full match set is returned: bounding it is the caller's job, and a
 // caller that wants to say "there is more" needs to know whether there
 // is, which a pre-truncated list cannot show.
+//
+// The cost of that is an unbounded read -- Store.List has no LIMIT, so a
+// query-less browse fetches the whole registry to slice <=50 off it. At the
+// current size this is one small sequential scan and the truthfulness of
+// `matched` is worth more than the rows. If the registry grows by orders of
+// magnitude, the fix belongs in the store (LIMIT n+1 with a COUNT for the
+// total), not in a smaller slice here.
 func (s *Service) SearchForDiscovery(ctx context.Context, query string, tags []string) ([]SkillSummary, error) {
 	return s.store.List(ctx, ListFilter{Search: query, Tags: tags})
 }
