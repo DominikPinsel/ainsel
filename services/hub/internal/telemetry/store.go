@@ -193,6 +193,12 @@ func (s *Store) Totals(ctx context.Context, since, until time.Time) (Totals, err
 // [since, until). Buckets align to `since`, and only buckets holding records
 // come back: the caller zero-fills, so an absence of rows stays an absence the
 // caller can render, rather than a count this package invented.
+//
+// The alignment on `since` is load-bearing, not cosmetic: the metrics handler
+// files each bucket on its own grid by rounding (api.denseBuckets), which is
+// only unambiguous while the distance from `since` is a whole number of steps.
+// A bucket derived from any other origin — an epoch-aligned date_bin, say — is
+// refused there rather than silently mis-dating the chart.
 func (s *Store) Series(ctx context.Context, metric string, since, until time.Time, step time.Duration) ([]Bucket, error) {
 	if s.pool == nil {
 		return nil, ErrNoDatabase

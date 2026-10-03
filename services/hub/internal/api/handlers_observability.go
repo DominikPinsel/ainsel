@@ -611,8 +611,12 @@ func (s *Server) pointsFromRecords(ctx context.Context, metric string, start, en
 	if err != nil {
 		return nil, fmt.Errorf("failed to read %s from the hub database: %s", metric, err.Error())
 	}
-	return denseBuckets(rows, start, end, step), nil
+	return denseBuckets(rows, start, end, step)
 }
+
+// maxBucketDrift bounds how far a bucket the records store reports may sit from
+// the grid point it is filed to. See denseBuckets.
+const maxBucketDrift = time.Millisecond
 
 // maxSeriesPoints bounds the zero-filled response. The supported ranges step to
 // at most 120-180 points; the cap exists so a future fine-grained step cannot
@@ -630,8 +634,9 @@ const maxSeriesPoints = 2000
 // same shape; only a response diff sees the difference.
 //
 // Bucket bounds are matched to the grid by rounding, not truncating: see the
-// comment in the loop below.
-func denseBuckets(rows []telemetry.Bucket, start, end time.Time, step time.Duration) []TimeseriesPoint {
+// comment in the loop below. A bucket that is not on this grid at all is an
+// error rather than a mis-dated chart, so the function reports one.
+func denseBuckets(rows []telemetry.Bucket, start, end time.Time, step time.Duration) ([]TimeseriesPoint, error) {
 	count := int(end.Sub(start) / step)
 	if count < 0 {
 		count = 0
@@ -656,9 +661,21 @@ func denseBuckets(rows []telemetry.Bucket, start, end time.Time, step time.Durat
 		if idx < 0 || idx >= count {
 			continue
 		}
+		// Rounding is only safe because telemetry.Series anchors its buckets on
+		// the `start` passed here, so the residual is that sub-microsecond Postgres
+		// sliver and nothing else. The invariant is owned by another package and
+		// rounding cannot express it — rounding a bucket a quarter-step off lands it
+		// on a neighbour just as quietly as truncation did. Fail loudly instead: a
+		// store that stopped aligning to the window is a broken fallback, not a chart
+		// whose x-axis is a guess.
+		drift := row.Start.Sub(start) - time.Duration(idx)*step
+		if drift > maxBucketDrift || drift < -maxBucketDrift {
+			return nil, fmt.Errorf("metrics bucket %s sits %s from grid point %d of the %s window starting %s: the records store must bucket from the window start",
+				row.Start.UTC().Format(time.RFC3339Nano), drift, idx, step, start.UTC().Format(time.RFC3339Nano))
+		}
 		points[idx].Value += float64(row.Count)
 	}
-	return points
+	return points, nil
 }
 
 func (s *Server) getAgentsMetrics(w http.ResponseWriter, r *http.Request) {
