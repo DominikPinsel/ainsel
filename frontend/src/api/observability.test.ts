@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ServiceUnavailableError } from './client'
 import {
   getObservabilityLogs,
   getObservabilitySummary,
@@ -6,6 +7,8 @@ import {
   getTokensByEvent,
   getTokensBySubject,
   getTokensSummary,
+  unavailableDetail,
+  formatStep,
 } from './observability'
 
 const mockFetch = () => globalThis.fetch as ReturnType<typeof vi.fn>
@@ -175,5 +178,41 @@ describe('api/observability', () => {
     expect(logs[1].agent).toBeUndefined()
     expect(logs[1].app).toBeUndefined()
     expect(logs[1].level).toBeUndefined()
+  })
+})
+describe('metrics helpers', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn())
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('formatStep shortens the hub step to what a bar holds', () => {
+    expect(formatStep('10m0s')).toBe('10m')
+    expect(formatStep('1h0m0s')).toBe('1h')
+    expect(formatStep('30s')).toBe('30s')
+    expect(formatStep('3m0s')).toBe('3m')
+    expect(formatStep(undefined)).toBeUndefined()
+    expect(formatStep('nonsense')).toBeUndefined()
+  })
+
+  it('unavailableDetail carries the reason the hub gave for a 503', async () => {
+    mockFetch().mockResolvedValue(
+      new Response(JSON.stringify({ error: 'prometheus not configured' }), {
+        status: 503,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    // One request only: a Response body can be read once, and the point is the
+    // message the client attaches to the error it throws.
+    const error = await getTokensSummary().catch((e) => e)
+    expect(error).toBeInstanceOf(ServiceUnavailableError)
+    expect(unavailableDetail(error)).toBe('prometheus not configured')
+  })
+
+  it('unavailableDetail stays silent for anything that is not a 503', () => {
+    expect(unavailableDetail(new Error('boom'))).toBeUndefined()
+    expect(unavailableDetail(undefined)).toBeUndefined()
   })
 })

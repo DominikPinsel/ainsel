@@ -1,13 +1,14 @@
 import { ServiceUnavailableError } from '../../api/client'
-import { useObservabilityTimeseries } from '../../api/observability'
+import { formatStep, useObservabilityTimeseries } from '../../api/observability'
 import { Panel } from '../../primitives/Panel'
+import { SectionStatus, type SectionState } from '../../primitives/SectionStatus'
 
 const CHART_WIDTH = 400
 const CHART_HEIGHT = 120
 const PADDING = { top: 14, bottom: 20, left: 6, right: 6 }
 
 export function ThroughputChart() {
-  const { data, isLoading, error } = useObservabilityTimeseries({
+  const { data, isLoading, error, refetch } = useObservabilityTimeseries({
     range: '24h',
     metric: 'events_routed',
   })
@@ -22,23 +23,36 @@ export function ThroughputChart() {
   const barWidth = Math.max(6, barSlot - 6)
   const peakY = PADDING.top + innerH * (1 - (peak > 0 ? 1 : 0))
 
+  const state: SectionState = isLoading
+    ? 'loading'
+    : error
+      ? error instanceof ServiceUnavailableError
+        ? 'unavailable'
+        : 'error'
+      : 'ready'
+  // The hub's own records count events per bucket; a Prometheus counter is a
+  // rate. Whichever answered, the label has to say what the bars measure.
+  const unit =
+    data?.source === 'postgres'
+      ? `events / ${formatStep(data.step) ?? 'bucket'}`
+      : 'events / hour'
+
   return (
-    <Panel
-      title="Throughput · 24h"
-      right={<span className="label">events / hour</span>}
-      className="cropped"
-    >
-      {isLoading ? <div className="label" style={{ padding: 14 }}>Loading…</div> : null}
-      {error instanceof ServiceUnavailableError ? (
-        <div className="label" style={{ padding: 14 }}>
-          Telemetry not configured.
-        </div>
-      ) : error ? (
-        <div className="label" style={{ padding: 14, color: 'var(--signal)' }}>
-          Failed to load throughput.
-        </div>
-      ) : null}
-      {!isLoading && !error ? (
+    <Panel title="Throughput · 24h" right={<span className="label">{unit}</span>} className="cropped">
+      {state !== 'ready' ? (
+        <SectionStatus
+          state={state}
+          title={
+            state === 'unavailable'
+              ? 'No metrics source configured'
+              : state === 'error'
+                ? 'Failed to load throughput'
+                : undefined
+          }
+          detail={error instanceof Error ? error.message : undefined}
+          onRetry={() => refetch()}
+        />
+      ) : (
         <>
           <div style={{ padding: 14, borderBottom: '1px solid var(--rule-soft)' }}>
             <svg
@@ -110,7 +124,7 @@ export function ThroughputChart() {
             <span>NOW</span>
           </div>
         </>
-      ) : null}
+      )}
     </Panel>
   )
 }

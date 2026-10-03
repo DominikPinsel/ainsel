@@ -2,10 +2,13 @@ import { useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { ServiceUnavailableError } from '../../api/client'
 import {
+  formatStep,
+  unavailableDetail,
   useObservabilitySummary,
   useObservabilityTimeseries,
   useTokensBySubject,
   useTokensSummary,
+  type MetricsSource,
   type Range,
   type TimeseriesParams,
 } from '../../api/observability'
@@ -48,6 +51,14 @@ function deriveState(
   return 'idle'
 }
 
+// chartUnit names what one bar of the throughput chart holds. The two metric
+// backends answer in different units, so the label follows whichever responded:
+// Prometheus gives a per-second rate, the hub's records give a count per bucket.
+function chartUnit(source?: MetricsSource, step?: string): string {
+  if (source === 'postgres') return `events / ${formatStep(step) ?? 'bucket'}`
+  return 'events / period'
+}
+
 export function Observability() {
   const [params, setParams] = useSearchParams()
   const range: Range = isRange(params.get('range')) ? (params.get('range') as Range) : '24h'
@@ -71,11 +82,16 @@ export function Observability() {
   const routed = useObservabilityTimeseries({ range, metric: 'events_routed' })
   const errors = useObservabilityTimeseries({ range, metric: 'routing_errors' })
 
+  // The KPI cards read the hub's event counters, which the hub answers from its
+  // own records when there is no Prometheus. Token usage is the exception: it is
+  // published by the agent runtime to Prometheus only, so a missing Prometheus
+  // must not blank the event cards — it costs the one token tile.
   const summaryState = deriveState(
-    summary.isLoading || tokensSummary.isLoading,
-    summary.error ?? tokensSummary.error,
+    summary.isLoading,
+    summary.error,
     Boolean(summary.data),
   )
+  const tokensUnavailable = tokensSummary.error instanceof ServiceUnavailableError
 
   const chartLoadingOrError =
     consumed.isLoading || matched.isLoading || routed.isLoading || errors.isLoading
@@ -133,11 +149,23 @@ export function Observability() {
       <div style={{ padding: '28px 32px', display: 'grid', gap: 24 }}>
         <section>
           {summaryState === 'ready' ? (
-            <SummaryCards summary={summary.data} tokens={tokensSummary.data} range={range} />
+            <>
+              <SummaryCards summary={summary.data} tokens={tokensSummary.data} range={range} />
+              {tokensUnavailable ? (
+                <p className="label" style={{ marginTop: 8 }}>
+                  Token usage needs Prometheus: the agent runtime publishes it as a
+                  metric, so that tile stays empty without one.
+                </p>
+              ) : null}
+            </>
           ) : (
             <Panel className="cropped">
               <SectionStatus
                 state={summaryState}
+                title={
+                  summaryState === 'unavailable' ? 'No metrics source configured' : undefined
+                }
+                detail={unavailableDetail(summary.error)}
                 onRetry={() => {
                   summary.refetch()
                   tokensSummary.refetch()
@@ -149,7 +177,9 @@ export function Observability() {
 
         <Panel
           title={`Throughput · ${range}`}
-          right={<span className="label">events / period</span>}
+          right={
+            <span className="label">{chartUnit(consumed.data?.source, consumed.data?.step)}</span>
+          }
           className="cropped"
         >
           {chartState === 'ready' ? (
@@ -161,6 +191,12 @@ export function Observability() {
           ) : (
             <SectionStatus
               state={chartState}
+              title={chartState === 'unavailable' ? 'No metrics source configured' : undefined}
+              detail={unavailableDetail(
+                [consumed.error, matched.error, routed.error, errors.error].find(
+                  (e) => e instanceof ServiceUnavailableError,
+                ),
+              )}
               onRetry={() => {
                 consumed.refetch()
                 matched.refetch()
@@ -181,6 +217,8 @@ export function Observability() {
           ) : (
             <SectionStatus
               state={tokensState}
+              title={tokensState === 'unavailable' ? 'Token metrics need Prometheus' : undefined}
+              detail={unavailableDetail(tokensSubject.error)}
               onRetry={() => tokensSubject.refetch()}
             />
           )}

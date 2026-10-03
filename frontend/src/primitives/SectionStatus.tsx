@@ -7,9 +7,14 @@ type SectionStatusProps = {
   onRetry?: () => void
 }
 
+// SectionStatus is the body of a panel that has nothing to show yet. The
+// `unavailable` default says only that no source can answer — a panel's own
+// heading comes from `title`, and the hub's reason for the 503 comes from
+// `detail`, because "telemetry is not configured" was wrong for every panel
+// that was missing something other than Prometheus.
 const DEFAULT_TITLES: Record<Exclude<SectionState, 'ready' | 'idle'>, string> = {
   loading: 'Loading…',
-  unavailable: 'Telemetry not configured',
+  unavailable: 'No data source configured',
   error: 'Failed to load',
 }
 

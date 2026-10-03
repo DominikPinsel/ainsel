@@ -1,5 +1,12 @@
 import { useQuery } from '@tanstack/react-query'
-import { request } from './client'
+import { request, ServiceUnavailableError } from './client'
+
+// Which backend answered a metrics query. The hub serves these from Prometheus
+// when it has one and from its own Postgres records when it does not, and the
+// two differ in units: Prometheus reports a rate, the hub's records report a
+// count per bucket. Panels surface this so a reader can tell which they're
+// looking at.
+export type MetricsSource = 'prometheus' | 'postgres'
 
 // Shape mirrors what GET /api/v1/observability/metrics/summary returns:
 // scalar floats per metric. Backend names: snake_case for the metric registry,
@@ -10,6 +17,7 @@ export type ObservabilitySummary = {
   eventsRouted: number
   routingErrors: number
   updatedAt: string
+  source?: MetricsSource
 }
 
 export type TimeseriesPoint = {
@@ -29,9 +37,39 @@ export type ObservabilityTimeseries = {
   range: string
   step?: string
   points: TimeseriesPoint[]
+  source?: MetricsSource
 }
 
 export type Range = '1h' | '6h' | '24h' | '7d'
+
+// The reason a panel has no data, in the hub's own words.
+//
+// The hub's 503 bodies name the specific dependency that is missing — the
+// metrics backend, Prometheus, or the log store — because the panels need
+// different things and a bare status code cannot say which. Showing that text
+// instead of a fixed string keeps "prometheus not configured" from reading as
+// "telemetry not configured" on a panel that never asked for Prometheus.
+export function unavailableDetail(error: unknown): string | undefined {
+  if (error instanceof ServiceUnavailableError) return error.message
+  return undefined
+}
+
+// Human width of a bucket, from the `step` the hub echoes back (a Go duration:
+// "30s", "10m0s", "1h0m0s"). The chart labels need it because the two metric
+// backends measure different things per point: Prometheus returns a per-second
+// rate, the hub's records return a count per bucket. Labelling the second as
+// "events / hour" would be a unit lie, so the label is built from the step.
+export function formatStep(step?: string): string | undefined {
+  if (!step) return undefined
+  const parts = /^(?:(\d+)h)?(?:(\d+)m)?(?:([\d.]+)s)?$/.exec(step)
+  if (!parts) return undefined
+  const [, h, m, s] = parts
+  const out: string[] = []
+  if (h && h !== '0') out.push(`${h}h`)
+  if (m && m !== '0') out.push(`${m}m`)
+  if (s && s !== '0') out.push(`${s}s`)
+  return out.length ? out.join('') : undefined
+}
 
 export type MetricName =
   | 'events_consumed'

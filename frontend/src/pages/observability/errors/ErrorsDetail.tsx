@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useErrors } from '../../../api/errors'
 import type { ErrorSeverity, ErrorSource, PlatformError } from '../../../api/errors'
-import { useObservabilityTimeseries, type Range } from '../../../api/observability'
+import { useObservabilityTimeseries, unavailableDetail, type Range } from '../../../api/observability'
 import { ServiceUnavailableError } from '../../../api/client'
 import { Titleblock } from '../../../layout/Titleblock'
 import { Panel } from '../../../primitives/Panel'
@@ -143,7 +143,12 @@ export function ErrorsDetail() {
               ariaLabel={`Routing errors over ${range}`}
             />
           ) : (
-            <SectionStatus state={chartState} onRetry={() => timeseries.refetch()} />
+            <SectionStatus
+              state={chartState}
+              title={chartState === 'unavailable' ? 'No metrics source configured' : undefined}
+              detail={unavailableDetail(timeseries.error)}
+              onRetry={() => timeseries.refetch()}
+            />
           )}
         </Panel>
 
