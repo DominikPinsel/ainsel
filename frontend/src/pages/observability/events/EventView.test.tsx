@@ -350,6 +350,23 @@ describe('EventView', () => {
     expect(payloadPanel?.querySelector('.scroll-cap')).toBeInTheDocument()
   })
 
+  it('keeps the invocations scroll cap out of the panel layout', async () => {
+    // A capped region only scrolls while its content overflows it. Laying the
+    // cap out as a grid lets `.panel`, which is a scroll container in its own
+    // right, shrink to the cap's height instead: the transcript gets clipped by
+    // the panel and the cap reports nothing to scroll, so the rest of the
+    // conversation is unreachable. The cap must stay a plain scroll container
+    // and the panel stack must be its single child.
+    renderEventView('/observability/events/evt-1234567890000000000')
+    const invocationHeading = await screen.findByText('Invocation inv-1 · review-bot')
+    const cap = invocationHeading.closest('.scroll-cap')
+    const panel = invocationHeading.closest('.panel')
+
+    expect(cap?.firstElementChild).not.toBeNull()
+    expect(cap?.firstElementChild).not.toBe(panel)
+    expect(cap?.firstElementChild?.contains(panel)).toBe(true)
+  })
+
   it('shows a back-to-top button only after scrolling', async () => {
     renderEventView('/observability/events/evt-1234567890000000000')
     await screen.findByText('Invocation inv-1 · review-bot')

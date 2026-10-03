@@ -272,10 +272,12 @@ export function EventView() {
               </Panel>
             ) : (
               <>
-                <div className="scroll-cap" style={{ display: 'grid', gap: 24 }}>
-                  {invocations.data?.items.map((inv) => (
-                    <InvocationDetail key={inv.id} invocation={inv} />
-                  ))}
+                <div className="scroll-cap">
+                  <div style={{ display: 'grid', gap: 24 }}>
+                    {invocations.data?.items.map((inv) => (
+                      <InvocationDetail key={inv.id} invocation={inv} />
+                    ))}
+                  </div>
                 </div>
                 {(invocations.data?.total ?? 0) > (invocations.data?.items.length ?? 0) ? (
                   <div className="label" style={{ padding: '6px 2px', color: 'var(--ink-3)' }}>
