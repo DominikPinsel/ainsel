@@ -1026,7 +1026,7 @@ Tier 1 delivers enabled skills as files (`/var/agent-skills`, from the shared Co
 
 No write tools. `create_skill` / `update_skill` / `delete_skill` stay on the admin gateway, and the interface this endpoint is built against exposes no methods for them.
 
-**Search.** Substring matching, case-insensitive, over `id`, `name` and `description`. There is no ranking and no semantic match, so a query phrased in words the catalogue does not use finds nothing; tags are the reliable filter. A call with no query and no tags lists the whole catalogue newest first.
+**Search.** Substring matching, case-insensitive, over `id`, `name` and `description`. There is no ranking and no semantic match, so a query phrased in words the catalogue does not use finds nothing; tags are the reliable filter. A call with no query and no tags is ordered over the whole catalogue, newest first, but still returns only `limit` of it — a bare browse shows the 20 newest, with `matched` reporting the true total and `truncated` set.
 
 **Limits.** `limit` defaults to 20 and is clamped to 50. `matched` counts the whole result set before the clamp, so it stays a true statement about how many skills match even when the page is smaller. The endpoint is behind the hub's global per-IP limiter (default 30 rps, burst 60; `HUB_RATE_LIMIT_RPS` / `HUB_RATE_LIMIT_BURST`); there is no per-token or per-tool limit.
 
