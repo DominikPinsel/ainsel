@@ -12,8 +12,8 @@ import (
 // a buffer, and returns what it logged. The delivery loop runs every 30 s
 // while something is undelivered, so what this captures is the log volume an
 // operator actually sees across passes — which is the whole point of the
-// gating, and the reason it is tested here rather than through Service.
-// Converge, which needs a registry and a cluster.
+// gating, and the reason it is tested here rather than through
+// Service.Converge, which needs a registry and a cluster.
 func runDeliveryLog(t *testing.T, s *Service, delivered []string, undelivered map[string]error, enabled int) string {
 	t.Helper()
 	var buf bytes.Buffer
