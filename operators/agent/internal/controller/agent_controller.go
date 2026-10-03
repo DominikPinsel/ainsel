@@ -503,6 +503,18 @@ func (r *AgentReconciler) reconcileDeployment(ctx context.Context, agent *ainsel
 				ConfigMap: &corev1.ConfigMapVolumeSource{
 					LocalObjectReference: corev1.LocalObjectReference{Name: sharedskills.ConfigMapName},
 					Items:                skillItems,
+					// The hub keeps this ConfigMap sized to the skills
+					// agents have enabled, and delivery of one skill
+					// can lag or fail outright while the shared object
+					// is at its size ceiling. Optionality is declared
+					// per volume, not per item, so this covers the
+					// whole set: a missing key projects nothing and
+					// the agent comes up with the skills that did
+					// land. Without it the apiserver refuses to set
+					// up the volume, so an undelivered skill would
+					// wedge every pod that enabled it -- a worse
+					// outcome than running without that one skill.
+					Optional: ptr.To(true),
 				},
 			},
 		})
