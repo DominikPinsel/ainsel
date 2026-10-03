@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 
 	sharedskills "github.com/DominikPinsel/ainsel/shared/api/skills"
 )
@@ -35,6 +36,12 @@ type Service struct {
 	store            *Store
 	rec              *Reconciler
 	agentImageLister AgentImageLister
+
+	mu sync.Mutex
+	// undelivered remembers why each skill was last reported as not
+	// mounted, so a failure that repeats on the next retry is not logged
+	// again. See logDeliveryChanges.
+	undelivered map[string]string
 }
 
 // NewService wires a Service against its dependencies.
@@ -175,7 +182,8 @@ func (s *Service) renderBestEffort(ctx context.Context, op string, sk *Skill) {
 	}
 }
 
-// deliverIfEnabled renders a skill only when some AgentImage enables it.
+// deliverIfEnabled renders a skill only when some AgentImage or Agent
+// enables it (the same union Converge keeps, via EnabledSkillIDs).
 //
 // The shared ConfigMap is sized to what agents mount, so writing a skill
 // nobody has opted into spends ceiling and re-hashes the object, which
@@ -388,7 +396,8 @@ type DeliveryReport struct {
 }
 
 // Converge reconciles the shared skills ConfigMap to exactly the skills
-// that at least one AgentImage enables.
+// that at least one AgentImage (spec.enabledSkills) or Agent
+// (spec.skills.items) enables.
 //
 // The ConfigMap is a single Kubernetes object and so carries the
 // apiserver's 1 MiB ceiling. Treating it as a mirror of the whole
@@ -435,20 +444,69 @@ func (s *Service) Converge(ctx context.Context) (*DeliveryReport, error) {
 		return nil, err
 	}
 	report := &DeliveryReport{Enabled: len(keep), Delivered: delivered}
-	for id, uerr := range undelivered {
-		// Per skill, with the reason. Undelivered is a valid steady state
-		// and nothing alerts on it, so this WARN line is the only place an
-		// operator learns which skill is not mounted, and that the shared
-		// object's size ceiling is what said so.
-		slog.Warn("skills: enabled skill not delivered to the configmap",
-			"skill_id", id, "err", uerr)
+	for id := range undelivered {
 		report.Undelivered = append(report.Undelivered, id)
 	}
 	sort.Strings(report.Delivered)
 	sort.Strings(report.Undelivered)
-	if len(report.Undelivered) > 0 {
-		slog.Warn("skills: enabled skills not yet delivered to the configmap",
-			"undelivered", len(report.Undelivered), "enabled", len(keep))
-	}
+	s.logDeliveryChanges(delivered, undelivered, len(keep))
 	return report, nil
+}
+
+// logDeliveryChanges reports undelivered skills whose situation *changed*
+// and nothing else.
+//
+// Per skill, with the reason, because undelivered is a valid steady state
+// and nothing alerts on it: this WARN line is the only place an operator
+// learns which skill is not mounted, and that the shared object's size
+// ceiling is what said so. It fires when a skill first fails to be
+// delivered and again if the error changes. It deliberately does not fire
+// on every pass: the delivery loop retries every 30 s while anything is
+// undelivered, so an unconditional line would repeat the same message
+// ~100k times a day for a full ConfigMap and bury the one that reports a
+// new failure. The per-pass aggregate stays with runSkillsDelivery, which
+// logs the counts and the retry interval.
+//
+// A skill that stops being reported without being delivered was disabled
+// (or deleted) rather than fixed, so it is forgotten silently; only a skill
+// that actually arrived gets the recovery line.
+//
+// The state is per hub replica. With hub.replicas > 1 two replicas run
+// their own pass, so each logs its own first observation of a failure.
+func (s *Service) logDeliveryChanges(delivered []string, undelivered map[string]error, enabled int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.undelivered == nil {
+		s.undelivered = make(map[string]string)
+	}
+
+	ids := make([]string, 0, len(undelivered))
+	for id := range undelivered {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		reason := undelivered[id].Error()
+		if prev, seen := s.undelivered[id]; seen && prev == reason {
+			continue
+		}
+		slog.Warn("skills: enabled skill not delivered to the configmap",
+			"skill_id", id, "err", undelivered[id], "enabled", enabled)
+		s.undelivered[id] = reason
+	}
+
+	arrived := make(map[string]bool, len(delivered))
+	for _, id := range delivered {
+		arrived[id] = true
+	}
+	for id := range s.undelivered {
+		if _, still := undelivered[id]; still {
+			continue
+		}
+		if arrived[id] {
+			slog.Info("skills: enabled skill delivered after retry",
+				"skill_id", id, "enabled", enabled)
+		}
+		delete(s.undelivered, id)
+	}
 }
