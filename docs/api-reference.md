@@ -1028,7 +1028,7 @@ No write tools. `create_skill` / `update_skill` / `delete_skill` stay on the adm
 
 **Search.** Substring matching, case-insensitive, over `id`, `name` and `description`. There is no ranking and no semantic match, so a query phrased in words the catalogue does not use finds nothing; tags are the reliable filter. A call with no query and no tags lists the whole catalogue newest first.
 
-**Limits.** `limit` defaults to 20 and is clamped to 50. `matched` counts the whole result set before the clamp, so it stays a true statement about how many skills match even when the page is smaller. The endpoint is behind the hub's global per-IP limiter (default 30 rps, burst 60; `HUB_RATE_LIMIT_RPS` / `HUB_RATE_LIMIT_BURST`) — the bucket is the caller's pod IP, so an agent that loops these tools bounds itself. There is no per-token or per-tool limit.
+**Limits.** `limit` defaults to 20 and is clamped to 50. `matched` counts the whole result set before the clamp, so it stays a true statement about how many skills match even when the page is smaller. The endpoint is behind the hub's global per-IP limiter (default 30 rps, burst 60; `HUB_RATE_LIMIT_RPS` / `HUB_RATE_LIMIT_BURST`); there is no per-token or per-tool limit.
 
 **Auth.** A dedicated bearer token, `HUB_SKILLS_MCP_TOKEN` — deliberately not `HUB_INTERNAL_VALIDATE_SECRET`. Unset leaves the endpoint answering `503`: configured-off, never open. The token is checked in the handler, because `/api/internal/*` bypasses the user-session middleware by design, so the handler is the only gate.
 
