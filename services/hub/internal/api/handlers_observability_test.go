@@ -13,6 +13,7 @@ import (
 
 	agentv1alpha1 "github.com/DominikPinsel/ainsel/shared/api/api/v1alpha1"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/prometheus"
+	"github.com/DominikPinsel/ainsel/services/hub/internal/telemetry"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -727,5 +728,44 @@ func TestPromCache_TTLExpires(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if _, ok := c.get("k"); ok {
 		t.Fatal("expected entry to be expired")
+	}
+}
+
+// --- denseBuckets grid placement ---
+
+// TestDenseBucketsKeepsBucketsWithinSubMicrosecondDrift pins why the grid
+// lookup rounds instead of truncating. The store derives its bucket bounds in
+// Postgres, which is microsecond-accurate, so a bucket belonging on grid point
+// k arrives as start+k*step less the sub-microsecond remainder the window start
+// carried. Truncating filed every one of them a whole bucket early — a silently
+// mis-dated chart, not a cosmetic one.
+//
+// This needs no database, unlike the seeded suites that exercise the same path.
+func TestDenseBucketsKeepsBucketsWithinSubMicrosecondDrift(t *testing.T) {
+	// A wall-clock window start: the shape that actually has nanoseconds.
+	start := time.Date(2026, 10, 3, 22, 49, 40, 123456789, time.UTC)
+	end := start.Add(time.Hour)
+	const step = 30 * time.Second
+
+	// Bucket 118 as the store returns it — 118 steps in, less the 200ns that
+	// fell below the microsecond boundary.
+	drifted := start.Add(118*step - 200*time.Nanosecond)
+	points := denseBuckets([]telemetry.Bucket{{Start: drifted, Count: 3}}, start, end, step)
+
+	if len(points) != 120 {
+		t.Fatalf("expected 120 dense points for a 1h/30s window, got %d", len(points))
+	}
+	if got := points[117].Value; got != 0 {
+		t.Errorf("bucket 117 = %v, want 0: sub-microsecond drift shifted the series a whole bucket early", got)
+	}
+	if got := points[118].Value; got != 3 {
+		t.Errorf("bucket 118 = %v, want 3", got)
+	}
+
+	// The same drift on the leading bucket must not fall off the front of the
+	// grid, where an out-of-range index would drop the count outright.
+	head := denseBuckets([]telemetry.Bucket{{Start: start.Add(-200 * time.Nanosecond), Count: 1}}, start, end, step)
+	if got := head[0].Value; got != 1 {
+		t.Errorf("bucket 0 = %v, want 1", got)
 	}
 }

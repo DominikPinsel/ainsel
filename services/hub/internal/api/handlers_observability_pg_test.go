@@ -252,11 +252,18 @@ func TestObservability_TimeseriesFromPostgresIsZeroFilled(t *testing.T) {
 	if sum != 3 {
 		t.Errorf("points sum = %v, want 3", sum)
 	}
-	// The seeded events are within the last minute of the window, and the
-	// handler's window end moves a few milliseconds after `now` is taken, so
-	// they land together in the final or penultimate 30s bucket.
-	if len(nonZero) != 1 || nonZero[0] < 118 {
-		t.Errorf("expected one populated bucket at the end of the window, got %v", nonZero)
+	// Exactly one bucket carries the seeded events, and it is the one that
+	// actually contains them. Which bucket that is gets derived from the grid the
+	// response returned, not assumed to be the last one: the handler takes its own
+	// `end` some time after `now` is captured, so the events land in whichever of
+	// the final buckets the seeded instant really falls in.
+	if len(nonZero) != 1 {
+		t.Fatalf("expected exactly one populated bucket, got %v", nonZero)
+	}
+	populated := body.Points[nonZero[0]]
+	if populated.Timestamp.After(now) || now.Sub(populated.Timestamp) >= 30*time.Second {
+		t.Errorf("populated bucket %d starts at %s, want the 30s bucket containing %s",
+			nonZero[0], populated.Timestamp, now)
 	}
 }
 

@@ -628,6 +628,9 @@ const maxSeriesPoints = 2000
 // fewer point than Prometheus' QueryRange, which samples its end bound
 // inclusively. The chart lays bars out by index, so both backends render the
 // same shape; only a response diff sees the difference.
+//
+// Bucket bounds are matched to the grid by rounding, not truncating: see the
+// comment in the loop below.
 func denseBuckets(rows []telemetry.Bucket, start, end time.Time, step time.Duration) []TimeseriesPoint {
 	count := int(end.Sub(start) / step)
 	if count < 0 {
@@ -642,7 +645,14 @@ func denseBuckets(rows []telemetry.Bucket, start, end time.Time, step time.Durat
 		points[i] = TimeseriesPoint{Timestamp: start.Add(time.Duration(i) * step).UTC()}
 	}
 	for _, row := range rows {
-		idx := int(row.Start.Sub(start) / step)
+		// Bucket bounds were derived in Postgres, which keeps timestamps to the
+		// microsecond. The window start it worked from can therefore differ from
+		// this Go-side `start` by up to 1µs, and every bucket it returns carries
+		// that same sliver of error. Truncating the division would file the whole
+		// series one bucket early — a silently mis-dated chart — so round to the
+		// nearest bucket instead. The drift is orders of magnitude smaller than
+		// any step this endpoint uses, so rounding is never ambiguous.
+		idx := int(math.Round(float64(row.Start.Sub(start)) / float64(step)))
 		if idx < 0 || idx >= count {
 			continue
 		}
