@@ -198,6 +198,11 @@ func getSkill(ctx context.Context, d SkillDiscovery, req mcp.CallToolRequest) (*
 // while internal HTTP callers and curl use a header. Only one applies per
 // request; both are compared against the same value.
 //
+// The header keeps its repo-wide name for caller ergonomics only. Everywhere
+// else in the hub `X-Internal-Token` carries HUB_INTERNAL_VALIDATE_SECRET;
+// here it carries HUB_SKILLS_MCP_TOKEN, and the two are not interchangeable
+// in either direction (TestCatalogueDoesNotAcceptTheInternalSecret).
+//
 // A missing token means the endpoint is disabled, never open: a hub that
 // did not configure one answers 503 rather than serving the catalogue to
 // anything in the namespace.
