@@ -32,6 +32,8 @@ All commits follow [Conventional Commits](https://www.conventionalcommits.org/en
 - Imperative mood: "add login page", not "added login page"
 - No period at the end
 - Body is optional, separated by a blank line; use it to explain the *why*
+- Every commit carries a DCO sign-off trailer, written by `git commit -s`:
+  `Signed-off-by: Ada Lovelace <ada@example.com>`
 
 Breaking changes need a marker: append `!` to the type
 (`feat(api)!: drop enabledMCPs`) or add a `BREAKING CHANGE: <what>` footer.
@@ -84,6 +86,11 @@ pins a single image tag per component.
 ### Pull Requests
 
 - One topic per PR. Don't bundle unrelated changes — open separate PRs.
+- Every commit is signed off (`git commit -s`); `.github/workflows/pr-signoff.yml`
+  rejects a PR whose commits are not. Merge commits and bot PRs are exempt, and
+  a sign-off whose address differs from the commit author's warns rather than
+  fails - co-authors and cherry-picks do that legitimately. See
+  [CONTRIBUTING.md](../CONTRIBUTING.md#sign-off).
 - The PR description should explain *why*, not just *what*.
 - Run lints and tests locally before opening (see [Code style](#4-code-style)).
 

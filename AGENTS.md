@@ -29,6 +29,10 @@ Folder map (role -> path):
 - **Never commit to `main`.** Always create a branch and open a PR.
 - **Conventional Commits** for every commit: `feat:`, `fix:`, `chore:`,
   `docs:`, `refactor:`, `test:`, `perf:`. Imperative, lowercase, no trailing period.
+- **`git commit -s`** — every commit carries a DCO sign-off trailer.
+  `.github/workflows/pr-signoff.yml` rejects a PR whose commits do not have one
+  (merge commits and bot-authored PRs are exempt). Already-pushed commits:
+  `git rebase --signoff origin/develop`, then `git push --force-with-lease`.
 - **One topic per PR.** Don't bundle unrelated changes — open separate PRs.
 - **Sync before editing:** `git fetch origin` and check for divergence on
   your branch. Multiple agents work in this repo; local state goes stale.
@@ -74,6 +78,7 @@ Before reporting work as complete:
 - [ ] Build passes: `go build ./...`, `pnpm build` (frontend),
       `helm lint chart/` (if chart touched).
 - [ ] Commit messages use Conventional Commits style; PR title does too.
+- [ ] Every commit on the branch is signed off (`git commit -s`).
 - [ ] PR body explains *why*, not just *what*.
 - [ ] Diff contains only changes relevant to the PR's one topic.
 - [ ] No commented-out code, no debug prints, no `TODO` left for the

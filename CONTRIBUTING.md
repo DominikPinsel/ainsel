@@ -120,6 +120,7 @@ repository on Forgejo, not here.
 | --- | --- | --- |
 | `ci-<component>.yml` (10) | PR based on `main` or `develop`, path-filtered | build, test, lint that component |
 | `pr-title.yml` | PR opened, edited or updated | reject a PR title release-please could not parse |
+| `pr-signoff.yml` | PR opened, edited or updated | reject a PR whose commits carry no `Signed-off-by:` trailer |
 | `dependabot-auto-merge.yml` | PR by `dependabot[bot]`, or dispatch with a PR number | wait for every other check on the PR, then squash-merge it; refuse on any red check |
 | `ci-chart.yml` | same, for `chart/**` and `operators/*/config/crd/**` | helm lint, template with default/example/medium/large values, CRD sync check |
 | `ci-workflows.yml` | same, for `dev-image-*.yml` and their test | assert the publish decision for every event/branch combination |
@@ -207,6 +208,44 @@ Without one the change still ships - it just won't appear under *BREAKING* in
 the changelog, and the version won't bump for it.
 
 The full convention lives in [`docs/conventions.md`](docs/conventions.md).
+
+### Sign-off
+
+Every commit in a PR carries a [DCO](https://developercertificate.org/)
+sign-off: one trailer line naming the person submitting the code.
+
+    Signed-off-by: Ada Lovelace <ada@example.com>
+
+`git commit -s` appends that line from `user.name` and `user.email`, so the
+habit is `-s` on every commit (an alias helps: `git config alias.cs 'commit -s'`).
+`.github/workflows/pr-signoff.yml` rejects a PR whose commits do not have it.
+The repository setting "require signed-off commits" is not enough: it covers
+only the commits the web UI creates, so pushes from git are unchecked. Of the
+last thirty commits on `develop`, twenty-two carry no trailer - the eight that
+do are Dependabot's, which signs itself, plus one squash-merge of signed
+commits.
+
+Three deliberate limits on the check:
+
+- **Merge commits are skipped.** `git merge` writes their message and they
+  carry no authorship to attest for.
+- **Bot PRs are exempt** (`dependabot[bot]`, the agent bots). A sign-off is an
+  attestation a natural person makes; no bot can make one. Dependabot signs its
+  own commits anyway.
+- **A sign-off that names someone other than the commit author warns instead of
+  failing.** `-s` records the *committer*, so co-authored commits, cherry-picks
+  and web-UI commits differ legitimately.
+
+To sign off commits that are already on a branch:
+
+```bash
+git rebase --signoff origin/develop   # every commit on the branch
+git commit --amend --signoff          # only the tip commit
+git push --force-with-lease           # the check re-runs on the new head
+```
+
+A sign-off is not a GPG signature - `commit.gpgsign` is a different, unrelated
+thing.
 
 ## Releases
 
@@ -338,6 +377,8 @@ the chart version (or the component `image.tag` values) explicitly.
   the repository allows, so PR titles become commit subjects on both branches.
 - The PR description should explain *why*, not just *what*.
 - Reference the issue you're addressing if there is one.
+- Every commit on the branch is signed off (`git commit -s`) - see
+  [Sign-off](#sign-off).
 - Rebase your branch on `develop` regularly:
   `git fetch origin && git rebase origin/develop`.
 - CI runs only for PRs based on `main` or `develop`. A PR stacked on another
