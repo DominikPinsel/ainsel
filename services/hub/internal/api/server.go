@@ -79,6 +79,16 @@ type Server struct {
 	userTokens             *usertokens.Store
 	internalValidateSecret string
 
+	// skillMCPHandler is the read-only skill catalogue MCP, gated by
+	// skillsMCPToken below and built once in SetSkillDiscovery. nil until a
+	// catalogue is wired.
+	skillMCPHandler http.Handler
+	// skillsMCPToken is HUB_SKILLS_MCP_TOKEN, the bearer token the catalogue
+	// accepts. Empty means the endpoint stays disabled rather than open. It is
+	// separate from internalValidateSecret on purpose: that one is the
+	// cluster-wide internal credential. See requireCatalogueToken.
+	skillsMCPToken string
+
 	// wsAllowedOrigins lists Origins permitted to open /api/v1/ws in addition
 	// to same-origin requests. See SetWSAllowedOrigins.
 	wsAllowedOrigins []string
@@ -116,6 +126,12 @@ func (s *Server) SetAuthZ(store authzStore, checker *authz.Checker) {
 // SetUserTokenStore wires the user token store.
 func (s *Server) SetUserTokenStore(store *usertokens.Store) {
 	s.userTokens = store
+}
+
+// SetSkillsMCPToken sets the bearer token accepted by the read-only skill
+// catalogue MCP (/api/internal/skills/mcp).
+func (s *Server) SetSkillsMCPToken(token string) {
+	s.skillsMCPToken = token
 }
 
 // SetInternalValidateSecret sets the shared secret for /api/internal/user-tokens/validate.
@@ -224,6 +240,7 @@ func New(c client.Client, namespace string, connectorCfg ConnectorConfig, promCl
 	s.mux.HandleFunc("/api/v1/observability/logs", s.handleObservabilityLogs)
 	s.mux.HandleFunc("/api/v1/observability/metrics/query", s.handleObservabilityMetricsQuery)
 	s.mux.HandleFunc("/api/internal/events", s.handleIngestEvent)
+	s.mux.HandleFunc(skillMCPPath, s.handleSkillMCP)
 	s.mux.HandleFunc("/api/internal/agents/", s.handleInternalAgent)
 	s.mux.HandleFunc("/api/v1/queue/info", s.handleQueueInfo)
 	s.mux.HandleFunc("/api/v1/queue/recent", s.handleQueueRecent)

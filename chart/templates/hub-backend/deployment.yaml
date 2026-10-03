@@ -162,6 +162,15 @@ spec:
             - name: HUB_INTERNAL_VALIDATE_SECRET
               value: {{ .Values.auth.internalValidateSecret | quote }}
             {{- end }}
+            {{- if .Values.auth.skillsMcpToken }}
+            # Bearer token for the read-only skill catalogue MCP. Separate
+            # from HUB_INTERNAL_VALIDATE_SECRET on purpose: that one is the
+            # cluster-wide internal credential, and reusing it here would
+            # make it a bearer token for a second endpoint. Unset means the
+            # endpoint answers 503 rather than open.
+            - name: HUB_SKILLS_MCP_TOKEN
+              value: {{ .Values.auth.skillsMcpToken | quote }}
+            {{- end }}
             {{- with .Values.hub.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

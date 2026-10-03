@@ -1013,6 +1013,43 @@ Delete a skill.
 
 **Response:** `204 No Content`, `400` if the ID is missing, `404 Not Found`.
 
+### Skill catalogue MCP (internal)
+
+`POST /api/internal/skills/mcp` — a read-only MCP server over the whole skill catalogue, for agents that need a skill they were not given.
+
+Tier 1 delivers enabled skills as files (`/var/agent-skills`, from the shared ConfigMap) and they appear in the agent's skill list. Tier 2 is this endpoint: the catalogue stays in Postgres, and a skill costs context only when an agent actually asks for it.
+
+| Tool | Returns |
+|---|---|
+| `search_skills` (`query`, `tags`, `limit`) | `id`, `name`, `description`, `tags` for up to 50 hits — **never bodies** — plus `matched` and `truncated`, so a partial page is not misread as the whole answer |
+| `get_skill` (`id`) | the complete `SKILL.md`, rendered by the same function that writes the mounted file, so a fetched skill is byte-identical to an enabled one |
+
+No write tools. `create_skill` / `update_skill` / `delete_skill` stay on the admin gateway, and the interface this endpoint is built against exposes no methods for them.
+
+**Search.** Substring matching, case-insensitive, over `id`, `name` and `description`. There is no ranking and no semantic match, so a query phrased in words the catalogue does not use finds nothing; tags are the reliable filter. A call with no query and no tags is ordered over the whole catalogue, newest first, but still returns only `limit` of it — a bare browse shows the 20 newest, with `matched` reporting the true total and `truncated` set.
+
+**Limits.** `limit` defaults to 20 and is clamped to 50. `matched` counts the whole result set before the clamp, so it stays a true statement about how many skills match even when the page is smaller. The endpoint is behind the hub's global per-IP limiter (default 30 rps, burst 60; `HUB_RATE_LIMIT_RPS` / `HUB_RATE_LIMIT_BURST`); there is no per-token or per-tool limit.
+
+**Auth.** A dedicated bearer token, `HUB_SKILLS_MCP_TOKEN` — deliberately not `HUB_INTERNAL_VALIDATE_SECRET`. Unset leaves the endpoint answering `503`: configured-off, never open. The token is checked in the handler, because `/api/internal/*` bypasses the user-session middleware by design, so the handler is the only gate.
+
+**Reachability.** In-cluster only. The hub's ingress publishes `/api/v1/*` and nothing else — which is why this sits under `/api/internal/` rather than beside the admin MCP.
+
+**Enabling it for an agent** is configuration, not a code change: an `AgentImage` entry plus a secret env var holding the same token.
+
+```yaml
+spec:
+  env:
+    - name: SKILLS_MCP_TOKEN
+      value: <HUB_SKILLS_MCP_TOKEN>
+      secret: true
+  mcpServers:
+    - name: ainsel-skills
+      url: http://hub-backend.<namespace>.svc.cluster.local:8080/api/internal/skills/mcp
+      tokenFromEnv: SKILLS_MCP_TOKEN
+```
+
+The env entry has to be declared on the image. The operator treats a short list of names as platform-owned and injects its own copies — `HUB_INTERNAL_VALIDATE_SECRET` among them — and an MCP server referencing one of those names is skipped with a `Degraded` condition, so `tokenFromEnv` cannot point at the internal secret. Any other name works.
+
 ---
 
 ## Stats

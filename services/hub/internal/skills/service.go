@@ -156,14 +156,17 @@ func validateTags(tags []string) ([]string, error) {
 	return normalized, nil
 }
 
-// assembleSKILLMD builds the full SKILL.md content with YAML frontmatter.
+// RenderSkillMD builds the full SKILL.md content: YAML frontmatter
+// followed by the body. It is the single place the hub turns a registry
+// row into the file an agent reads, so the ConfigMap mount and the skill
+// catalogue MCP cannot drift in how the same skill is presented.
 //
 // The description is emitted as a double-quoted YAML scalar via %q, which
 // handles the escaping. Plain scalars break on ": " — which is how skill
 // descriptions are routinely written ("Read pull requests: metadata,
 // commits, ...") — and that invalid YAML cost discovery for every skill
 // whose summary happened to contain a colon.
-func assembleSKILLMD(sk *Skill) string {
+func RenderSkillMD(sk *Skill) string {
 	return fmt.Sprintf("---\nname: %s\ndescription: %q\n---\n%s", sk.ID, sk.Description, sk.Body)
 }
 
@@ -273,6 +276,31 @@ func (s *Service) List(ctx context.Context, filter ListFilter) ([]SkillSummary, 
 		summaries[i].UsedBy = counts[summaries[i].ID]
 	}
 	return summaries, nil
+}
+
+// SearchForDiscovery returns skill metadata for the skill MCP, without
+// the UsedBy enrichment List performs.
+//
+// The enrichment is a Kubernetes LIST of every AgentImage in the
+// namespace. That is fine for an admin page loaded occasionally, but this
+// method backs an agent-facing tool that a model may call repeatedly
+// inside one task, and the answer it computes is one an agent has no use
+// for: whether some image happens to mount the skill says nothing about
+// whether the skill helps with the task at hand. Skipping it keeps the
+// read to a single Postgres query.
+//
+// The full match set is returned: bounding it is the caller's job, and a
+// caller that wants to say "there is more" needs to know whether there
+// is, which a pre-truncated list cannot show.
+//
+// The cost of that is an unbounded read -- Store.List has no LIMIT, so a
+// query-less browse fetches the whole registry to slice <=50 off it. At the
+// current size this is one small sequential scan and the truthfulness of
+// `matched` is worth more than the rows. If the registry grows by orders of
+// magnitude, the fix belongs in the store (LIMIT n+1 with a COUNT for the
+// total), not in a smaller slice here.
+func (s *Service) SearchForDiscovery(ctx context.Context, query string, tags []string) ([]SkillSummary, error) {
+	return s.store.List(ctx, ListFilter{Search: query, Tags: tags})
 }
 
 // Update applies a partial update. It re-renders the ConfigMap only when

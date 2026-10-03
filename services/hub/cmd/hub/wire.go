@@ -126,7 +126,22 @@ func wireAPIServer(c *container, cfg containerConfig) *api.Server {
 	srv.SetChannelService(c.channels, c.transfer)
 	srv.SetUserTokenStore(c.userTokenStore)
 	srv.SetTaskLogStore(c.taskLogStore)
+	// The read-only skill catalogue MCP. c.skillSvc is the concrete service,
+	// which satisfies SkillDiscovery; passing it here rather than widening
+	// SkillService keeps Create/Update/Delete out of the catalogue's reach.
+	// The token is deliberately not HUB_INTERNAL_VALIDATE_SECRET: see
+	// requireCatalogueToken. Unset means the endpoint answers 503.
+	if token := os.Getenv("HUB_SKILLS_MCP_TOKEN"); token != "" {
+		srv.SetSkillsMCPToken(token)
+		slog.Info("skill catalogue MCP enabled", "path", "/api/internal/skills/mcp")
+	} else {
+		slog.Info("skill catalogue MCP disabled (HUB_SKILLS_MCP_TOKEN not set)")
+	}
+	srv.SetSkillDiscovery(c.skillSvc)
 
+	// This block reports the validate credential only. The catalogue has its
+	// own token and its own line above; naming it here would tie two
+	// independent settings together and let one log line lie about the other.
 	if secret := os.Getenv("HUB_INTERNAL_VALIDATE_SECRET"); secret != "" {
 		srv.SetInternalValidateSecret(secret)
 		slog.Info("user token validate endpoint enabled")
