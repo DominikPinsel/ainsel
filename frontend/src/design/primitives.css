@@ -1646,11 +1646,19 @@ html[data-theme="dark"] .settings-side-item.active { color: var(--signal); }
 }
 
 /* ===== Scroll cap + back-to-top ===== */
+/* A capped, scrollable window over content too tall for the page: the payload
+   well and the invocation stack on the event detail page. A cap only works
+   while its content can overflow it, so the rows stay content-sized — see the
+   note in design/scrollCap.test.ts. An `auto` row is otherwise free to shrink
+   down to the cap, and a `.panel` lets it: `overflow: hidden` makes a grid
+   item's automatic minimum size zero, so the panel collapses to 480px, clips
+   its own transcript, and leaves the cap with nothing to scroll. */
 .scroll-cap {
   max-height: 480px;
   overflow-y: auto;
   min-width: 0;
   overflow-x: auto;
+  grid-auto-rows: max-content;
 }
 .to-top {
   position: fixed;
