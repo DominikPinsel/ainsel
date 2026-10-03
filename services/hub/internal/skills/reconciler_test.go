@@ -16,8 +16,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
-	sharedskills "github.com/DominikPinsel/ainsel/shared/api/skills"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/skills"
+	sharedskills "github.com/DominikPinsel/ainsel/shared/api/skills"
 )
 
 const testNamespace = "ainsel-test"
@@ -52,8 +52,18 @@ func TestReconcilerEnsureCreatesSharedConfigMap(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected key 'code-review' in data, got keys %v", keys(cm.Data))
 	}
-	if !strings.Contains(got, "name: code-review") || !strings.Contains(got, `description: "Reviews PRs"`) || !strings.HasSuffix(got, "Body.") {
-		t.Errorf("assembled SKILL.md mismatch: %q", got)
+	meta := frontmatter(t, got)
+	if meta["name"] != "code-review" || meta["description"] != "Reviews PRs" {
+		t.Errorf("assembled frontmatter mismatch: %v (raw %q)", meta, got)
+	}
+	if !strings.HasSuffix(got, "Body.") {
+		t.Errorf("assembled SKILL.md should end with the body, got %q", got)
+	}
+	// The ConfigMap entry and the catalogue MCP must be the same bytes:
+	// one renderer for both delivery paths, or "works when enabled,
+	// subtly different when fetched" is the failure you get to debug.
+	if want := skills.RenderSkillMD(sk); got != want {
+		t.Errorf("mounted bytes differ from RenderSkillMD:\nmounted: %q\nrenderer:  %q", got, want)
 	}
 }
 
@@ -94,8 +104,11 @@ func TestReconcilerEnsureOverwritesSameID(t *testing.T) {
 	if err := r.Client().Get(ctx, types.NamespacedName{Name: sharedskills.ConfigMapName, Namespace: testNamespace}, &cm); err != nil {
 		t.Fatalf("get cm: %v", err)
 	}
-	if !strings.Contains(cm.Data["x"], `description: "v2"`) || !strings.HasSuffix(cm.Data["x"], "new") {
-		t.Errorf("expected v2 contents, got %q", cm.Data["x"])
+	if meta := frontmatter(t, cm.Data["x"]); meta["description"] != "v2" {
+		t.Errorf("expected v2 to overwrite v1, got %v (raw %q)", meta["description"], cm.Data["x"])
+	}
+	if !strings.HasSuffix(cm.Data["x"], "new") {
+		t.Errorf("expected the new body to survive, got %q", cm.Data["x"])
 	}
 }
 
@@ -214,6 +227,9 @@ func TestReconcilerEnsureRendersParsableFrontmatter(t *testing.T) {
 		{"embedded quotes", `He said "ship it", then left`},
 		{"backslash", `paths like C:\skills`},
 		{"trailing colon", "Coordinates tools through a hierarchy:"},
+		{"multiple colons", "a: b: c"},
+		{"hash", "counts # of items"},
+		{"empty", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -232,6 +248,12 @@ func TestReconcilerEnsureRendersParsableFrontmatter(t *testing.T) {
 			}
 			if fm["description"] != tc.description {
 				t.Errorf("description round-trip = %q, want %q", fm["description"], tc.description)
+			}
+			// The mounted bytes are the renderer's bytes. The catalogue MCP
+			// hands out the same function, so a skill cannot read one way
+			// when an operator enabled it and another when an agent fetched it.
+			if got := cm.Data["s"]; got != skills.RenderSkillMD(sk) {
+				t.Errorf("mounted bytes differ from RenderSkillMD:\nmounted: %q\nrenderer:  %q", got, skills.RenderSkillMD(sk))
 			}
 		})
 	}

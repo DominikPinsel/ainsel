@@ -55,7 +55,7 @@ func (r *Reconciler) Ensure(ctx context.Context, sk *Skill) error {
 				},
 			},
 			Data: map[string]string{
-				sk.ID: assembleSKILLMD(sk),
+				sk.ID: RenderSkillMD(sk),
 			},
 		}
 		createErr := r.client.Create(ctx, &cm)
@@ -83,7 +83,7 @@ func (r *Reconciler) Ensure(ctx context.Context, sk *Skill) error {
 	if cm.Data == nil {
 		cm.Data = map[string]string{}
 	}
-	cm.Data[sk.ID] = assembleSKILLMD(sk)
+	cm.Data[sk.ID] = RenderSkillMD(sk)
 	if err := r.client.Update(ctx, &cm); err != nil {
 		return fmt.Errorf("update configmap %s: %w", name, err)
 	}
@@ -189,7 +189,7 @@ func (r *Reconciler) Converge(ctx context.Context, keep map[string]*Skill) (deli
 		// hash — so a pass that rewrote unchanged skills would cycle every
 		// skill-bearing pod for no reason. A steady-state pass must be a
 		// no-op on the object.
-		if existing, ok := cm.Data[id]; ok && existing == assembleSKILLMD(sk) {
+		if existing, ok := cm.Data[id]; ok && existing == RenderSkillMD(sk) {
 			delivered = append(delivered, id)
 			continue
 		}

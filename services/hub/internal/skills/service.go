@@ -156,14 +156,17 @@ func validateTags(tags []string) ([]string, error) {
 	return normalized, nil
 }
 
-// assembleSKILLMD builds the full SKILL.md content with YAML frontmatter.
+// RenderSkillMD builds the full SKILL.md content: YAML frontmatter
+// followed by the body. It is the single place the hub turns a registry
+// row into the file an agent reads, so the ConfigMap mount and the skill
+// catalogue MCP cannot drift in how the same skill is presented.
 //
 // The description is emitted as a double-quoted YAML scalar via %q, which
 // handles the escaping. Plain scalars break on ": " — which is how skill
 // descriptions are routinely written ("Read pull requests: metadata,
 // commits, ...") — and that invalid YAML cost discovery for every skill
 // whose summary happened to contain a colon.
-func assembleSKILLMD(sk *Skill) string {
+func RenderSkillMD(sk *Skill) string {
 	return fmt.Sprintf("---\nname: %s\ndescription: %q\n---\n%s", sk.ID, sk.Description, sk.Body)
 }
 
