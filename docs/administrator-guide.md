@@ -53,7 +53,7 @@ recommended once a persona grows beyond a paragraph — you can edit
 them without touching the Agent.
 
 **Tools and skills.** What the agent can act on — Forgejo API, git,
-shell, the test runner, Kubernetes, Loki. `Agent.spec.enabledTools`
+shell, the test runner, Kubernetes. `Agent.spec.enabledTools`
 explicitly opts the agent into each tool; nothing is implicit. This
 limits blast radius: a code reviewer doesn't need `shell` or
 `docker-builder`, so don't grant them.

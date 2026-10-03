@@ -1,6 +1,6 @@
 # Observability
 
-This document describes how to observe a running ainsel platform: where logs come from, which metrics are exported, and how the optional Loki and Prometheus backends integrate.
+This document describes how to observe a running ainsel platform: where logs come from, which metrics are exported, and which parts of the console need an external metrics backend.
 
 ## Logs
 
@@ -16,40 +16,26 @@ All components write **structured JSON logs** using Go's `log/slog` package. Eve
 
 ### Querying logs via the hub API
 
-When Loki is configured (see [Required vs optional backends](#required-vs-optional-backends)), logs from any component are queryable through the hub API:
+Agent task logs are stored in the hub's own database, so the console's log panels
+need no external log backend:
 
 ```
-GET /api/v1/observability/logs?app=<component>&namespace=<namespace>
+GET /api/v1/observability/logs?app=<agent>&range=<1h|6h|24h>&limit=<n>
 ```
 
-Replace `<namespace>` with the Kubernetes namespace where ainsel is deployed.
+Despite the `app` parameter name, the value is an **agent name** — the filter is
+`task_logs.agent_name`, and the console's LogQL-shaped `app=` label is a
+compatibility holdover from when this endpoint proxied Loki.
 
-### Component log labels
+The entries are the structured log lines agents publish while a task runs. Each
+one carries its agent, level, message, and the invocation and correlation ids it
+belongs to, which is what links a log line to an event (see
+[Event detail & conversation transcript](#event-detail--conversation-transcript)).
 
-| Component | `app` label |
-|-----------|-------------|
-| Hub backend | `ainsel-hub` |
-| Webhook receiver (connector) | `connector-<name>` |
-| Agent pod | `<agent-name>` |
-
-### Example LogQL patterns
-
-```logql
-# All hub logs in the last hour
-{namespace="<namespace>", app="ainsel-hub"} | json
-
-# Hub errors only
-{namespace="<namespace>", app="ainsel-hub"} | json | level="error"
-
-# Connector logs for a specific connector
-{namespace="<namespace>", app="connector-<name>"} | json
-
-# Agent logs for a specific agent
-{namespace="<namespace>", app="<agent-name>"} | json
-
-# Routing errors across the hub
-{namespace="<namespace>", app="ainsel-hub"} | json | msg=~"routing error.*"
-```
+The hub's own process log — startup, routing decisions, `activity_event` lines —
+goes to stdout as JSON and is yours to collect with whatever the cluster already
+runs (`kubectl logs deploy/hub-backend`, or a log pipeline). It is not served by
+this endpoint.
 
 ## Event detail & conversation transcript
 
@@ -102,14 +88,31 @@ The following counters are exported by the hub. No other ainsel components expor
 
 ### Enabling Prometheus scraping
 
-The hub UI labels metric-backed panels **telemetry**: when the hub has no Prometheus
-client, every `/api/v1/observability/metrics/*` call returns `503` and the panels
-replace their content with **"Telemetry not configured"**. That message means exactly
-one thing — `observability.prometheus.url` is unset — and
-[Troubleshooting → "Dashboard says Telemetry not configured"](troubleshooting)
-walks through confirming and fixing it.
+The console labels the metric-backed panels **telemetry**. Those panels read
+`/api/v1/observability/metrics/*`, which the hub answers from one of two backends:
 
-Set `observability.prometheus.url` in `values.yaml` to the URL of your Prometheus instance. The hub uses this URL to proxy metric queries through the `/api/v1/observability/metrics/*` endpoints. Configure it and restart the hub; the client is built once at startup.
+| Panel | Needs |
+|-------|-------|
+| KPI cards (events consumed, triggers matched, events routed, errors) and the throughput charts | Prometheus **or** the hub's own database — one is always enough |
+| Token tiles and tables (per agent, per subject, timeseries) | Prometheus. The agent runtime publishes token usage as a metric, and the hub keeps no cache-token columns, so Postgres cannot answer them ([issue #281](https://github.com/DominikPinsel/ainsel/issues/281) tracks adding them) |
+| Raw PromQL (`/api/v1/observability/metrics/query`, MCP `query_metrics`) | Prometheus |
+
+So the throughput charts and event KPIs work on a default install with no
+Prometheus at all: the hub counts the rows it wrote while routing. When *nothing*
+can answer — no Prometheus and no database — a panel says **No metrics source
+configured** and shows the hub's reason underneath. A panel that specifically
+needs Prometheus says **Token metrics need Prometheus** rather than blaming
+telemetry in general.
+
+Set `observability.prometheus.url` in `values.yaml` to the URL of your Prometheus instance to switch the event panels onto counters and light up the token panels. The hub reads it once at startup, so configure it and let `helm upgrade` roll the pods.
+
+The two backends report in different units, and every metrics response carries a
+`source` field (`"prometheus"` or `"postgres"`) so a reader can tell which it is:
+a Prometheus point is a per-second rate of a counter, a Postgres point is a count
+of rows inside that bucket. The console derives its axis label from `source` and
+`step` accordingly. Postgres also sees only rows that are still retained, so a
+window older than the retention reports zero rather than the history a counter
+would still remember.
 
 To have Prometheus scrape the hub's own `/metrics` endpoint, enable the ServiceMonitor or PodMonitor resources in `values.yaml`:
 
@@ -128,12 +131,14 @@ observability:
 
 ## Required vs optional backends
 
-Both Loki and Prometheus are **optional**. The platform continues to function fully without them; only the observability query endpoints are affected.
+The hub's **PostgreSQL database is required** — it is the event queue, and the hub
+refuses to start without `HUB_DB_URL`. Prometheus is **optional**: the platform and
+its console work without it, and only the panels listed above are affected.
 
 | Backend | Effect when absent |
 |---------|--------------------|
-| **Loki** | `GET /api/v1/observability/logs` returns an error. All other platform functionality works normally. |
-| **Prometheus** | `GET /api/v1/observability/metrics/*` returns `503`, and the dashboard and Observability panels show **"Telemetry not configured"** in place of their charts. All other platform functionality works normally. |
+| **Prometheus** | Token panels and raw PromQL return `503` naming Prometheus as the missing backend. Event KPIs and throughput charts keep working, served from the hub's own records. Everything else is unaffected. |
+| **No Prometheus *and* no database** | Every metrics panel returns `503` with **No metrics source configured**. This is not a supported configuration: the hub will not start without a database. |
 
 The platform health endpoint reports the status of every pod in the hub's namespace:
 

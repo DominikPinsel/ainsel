@@ -1056,7 +1056,7 @@ The env entry has to be declared on the image. The operator treats a short list 
 
 ### GET /api/v1/stats
 
-Aggregate dashboard tile. Returns resource counts (total + healthy) for agents, connectors, and triggers, plus the last-hour error count from Loki and the lifetime token total from Prometheus.
+Aggregate dashboard tile. Returns resource counts (total + healthy) for agents, connectors, and triggers, plus the last-hour error count from the hub's `task_logs` table and the lifetime token total from Prometheus.
 
 **Response:** `200 OK`
 ```json
@@ -1071,7 +1071,7 @@ Aggregate dashboard tile. Returns resource counts (total + healthy) for agents, 
 
 Token counts only — the platform has no pricing data configured, so nothing here is a currency amount. See [token components](#token-components).
 
-When Loki or Prometheus is not configured, the affected fields are silently left at zero rather than failing the request.
+The tile degrades rather than fails: with no Prometheus the token fields stay at zero, and with no log store the error count stays at zero. Neither makes the request fail.
 
 ---
 
@@ -1147,17 +1147,28 @@ List recent error-level agent log entries (from the hub's `task_logs` table).
 }
 ```
 
-**Status codes:** `200`, `502` (query failed), `503` (log backend not configured).
+**Status codes:** `200`, `502` (query failed), `503` (the hub has no database to read task logs from).
 
 ---
 
 ## Observability — Metrics
 
-Hub-internal Prometheus counters and per-agent token usage. Responses are cached server-side for ~30 s. All endpoints return `503` when the Prometheus backend is not configured and `502` when the upstream query fails.
+Hub event metrics and per-agent token usage. Responses are cached server-side for ~30 s, keyed by backend so a hub that gains Prometheus cannot answer from the previous source.
+
+Two backends can answer, and every response says which one did in its `source` field:
+
+| `source` | Reads | Endpoints | Point value |
+|----------|-------|-----------|-------------|
+| `prometheus` | The hub's counters, scraped from `/metrics` | all of the below | a per-second rate |
+| `postgres` | The rows the hub wrote while routing: `events`, `agent_tasks`, `task_logs` | `metrics/summary` and `metrics/timeseries` only | a count inside that bucket |
+
+Prometheus wins whenever it is configured. Without it the summary and timeseries fall back to the hub's own records — the normal state of an install, since the chart ships no Prometheus of its own — while the token endpoints and raw PromQL return `503` naming Prometheus as the missing backend. `502` means the backend was reachable and the query failed. Postgres sees only retained rows, so a window older than the retention reports zero where a counter would still remember the history.
 
 ### GET /api/v1/observability/metrics/summary
 
-Current values of the four hub counters (`hub_events_consumed_total`, `hub_triggers_matched_total`, `hub_events_routed_total`, `hub_routing_errors_total`).
+Counts for the four hub metrics: events received, trigger matches (one per agent an event matched to), events delivered to at least one agent, and errors. `routingErrors` counts error-level task logs in the window — the same entries the Errors page lists.
+
+Pass `?range=1h|6h|24h|7d` for the counts inside that window; omit it for everything so far, which means the lifetime counter total under Prometheus and everything still retained under Postgres.
 
 **Response:** `200 OK`
 ```json
@@ -1166,13 +1177,14 @@ Current values of the four hub counters (`hub_events_consumed_total`, `hub_trigg
   "triggersMatched": 4567,
   "eventsRouted": 4500,
   "routingErrors": 12,
-  "updatedAt": "2026-05-20T10:00:00Z"
+  "updatedAt": "2026-05-20T10:00:00Z",
+  "source": "postgres"
 }
 ```
 
 ### GET /api/v1/observability/metrics/timeseries
 
-Per-second rate of a hub counter over a chosen window.
+One metric across a window in `step`-wide points. The unit depends on `source`: a Prometheus point is a per-second rate, a Postgres point is a count inside that bucket. Both return a **dense** series — every bucket across the window, gaps zero-filled — so a chart can place points by index without inventing its own bucketing.
 
 **Query parameters:**
 - `metric` — one of `events_consumed`, `triggers_matched`, `events_routed`, `routing_errors` (default `events_consumed`).
@@ -1184,11 +1196,12 @@ Per-second rate of a hub counter over a chosen window.
   "metric": "events_consumed",
   "range": "1h",
   "step": "30s",
-  "points": [{"timestamp": "2026-05-20T09:00:00Z", "value": 0.42}]
+  "points": [{"timestamp": "2026-05-20T09:00:00Z", "value": 0.42}],
+  "source": "prometheus"
 }
 ```
 
-**Status codes:** `200`, `400` on unknown metric or range, `502`, `503`.
+**Status codes:** `200`, `400` on an unknown metric or range — including a metric the active backend cannot answer, which is refused rather than drawn as an empty chart — `502`, `503`.
 
 ### GET /api/v1/observability/metrics/agents
 
@@ -1316,7 +1329,7 @@ Tail recent agent log lines from the hub's own `task_logs` table, populated by a
 }
 ```
 
-**Status codes:** `200`, `400` on invalid `limit`/`range`, `502` when the Loki query fails, `503` when no log backend is configured.
+**Status codes:** `200`, `400` on invalid `limit`/`range`, `502` when the task-log query fails, `503` when the hub has no database to read it from.
 
 ---
 
@@ -1436,8 +1449,8 @@ All non-WebSocket error responses return:
 | `405` | Method not allowed on this route. |
 | `409` | Conflict (resource already exists; deletion blocked by references; sync already running). |
 | `500` | Internal server error. |
-| `502` | Upstream backend (Loki, Prometheus, Forgejo) returned an error or was unreachable. |
-| `503` | A required dependency is not configured (Loki, Prometheus, MCP service, invocation store). |
+| `502` | Upstream backend (Prometheus, Forgejo) or the hub's database returned an error or was unreachable. |
+| `503` | A dependency this panel needs is not configured. The body's `error` field names it — the hub's database, or Prometheus for the token panels and raw PromQL — and the console shows that text under the panel's own heading. |
 
 ## Authentication
 
