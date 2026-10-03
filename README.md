@@ -217,8 +217,8 @@ graph TD
         QD[(qdrant)]
     end
 
-    AR1 .-.->|store/recall| QD
-    AR2 .-.->|store/recall| QD
+    AR1 -.->|store/recall| QD
+    AR2 -.->|store/recall| QD
 ```
 
 For the full data flow, derived event subjects, CRD relationships, and deployment
