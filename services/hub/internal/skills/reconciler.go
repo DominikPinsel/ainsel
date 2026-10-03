@@ -116,18 +116,21 @@ func (r *Reconciler) Delete(ctx context.Context, skillID string) error {
 }
 
 // Converge makes the shared ConfigMap hold exactly the data keys in
-// keep, each carrying the rendered SKILL.md for that skill. Keys the
-// hub manages that are absent from keep are pruned, which is what
-// releases space for skills that are actually enabled.
+// keep, each carrying the rendered SKILL.md for that skill. Any other key
+// in the object is pruned, which is what releases space for skills that
+// are actually enabled -- the object is hub-owned, so nothing else is
+// expected to live in it.
 //
 // Ordering matters: non-target keys are dropped before any target key is
 // written, so a ConfigMap that filled up with catalogue entries can
 // recover in a single pass rather than failing every write.
 //
-// keep must be derived from a synced informer cache. The prune is
-// unconditional, so an empty result from an unsynced or unreadable cache
-// would strip every key out of the object; agents would then come up
-// without their skills until the next pass restored them.
+// keep must come from a successful live read of the enabling CRs. The
+// prune is unconditional, so a wrong-empty keep would strip every key out
+// of the object and agents would come up without their skills until the
+// next pass. Callers therefore propagate a list error instead of an empty
+// set, and the pass aborts before pruning; do not source keep from a
+// cache that can answer "empty" for "not loaded yet".
 //
 // Partial delivery is a normal outcome, not an error. A skill whose
 // rendered body would push the shared object past the apiserver's 1 MiB

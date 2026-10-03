@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"sort"
 	"strings"
 
 	sharedskills "github.com/DominikPinsel/ainsel/shared/api/skills"
@@ -266,7 +267,9 @@ func (s *Service) List(ctx context.Context, filter ListFilter) ([]SkillSummary, 
 	return summaries, nil
 }
 
-// Update applies a partial update; re-renders the ConfigMap.
+// Update applies a partial update. It re-renders the ConfigMap only when
+// some AgentImage or Agent selects the skill: an edit to a catalogue
+// entry must not touch the shared, size-capped delivery object.
 func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) (*Skill, error) {
 	if req.Name != nil {
 		if err := validateName(*req.Name); err != nil {
@@ -375,7 +378,9 @@ func ConfigMapName() string {
 	return sharedskills.ConfigMapName
 }
 
-// DeliveryReport is the outcome of one Converge pass.
+// DeliveryReport is the outcome of one Converge pass. Both ID lists are
+// sorted: they come out of map iteration, and a report that shuffles
+// between passes is useless for comparison or logging.
 type DeliveryReport struct {
 	Enabled     int      `json:"enabled"`
 	Delivered   []string `json:"delivered"`
@@ -430,9 +435,17 @@ func (s *Service) Converge(ctx context.Context) (*DeliveryReport, error) {
 		return nil, err
 	}
 	report := &DeliveryReport{Enabled: len(keep), Delivered: delivered}
-	for id := range undelivered {
+	for id, uerr := range undelivered {
+		// Per skill, with the reason. Undelivered is a valid steady state
+		// and nothing alerts on it, so this WARN line is the only place an
+		// operator learns which skill is not mounted, and that the shared
+		// object's size ceiling is what said so.
+		slog.Warn("skills: enabled skill not delivered to the configmap",
+			"skill_id", id, "err", uerr)
 		report.Undelivered = append(report.Undelivered, id)
 	}
+	sort.Strings(report.Delivered)
+	sort.Strings(report.Undelivered)
 	if len(report.Undelivered) > 0 {
 		slog.Warn("skills: enabled skills not yet delivered to the configmap",
 			"undelivered", len(report.Undelivered), "enabled", len(keep))

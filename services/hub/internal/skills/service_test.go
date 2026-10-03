@@ -146,7 +146,13 @@ func TestServiceAssignDeliversTheSkill(t *testing.T) {
 	if !strings.Contains(cm.Data["git-review"], "body text") {
 		t.Errorf("rendered SKILL.md missing body: %q", cm.Data["git-review"])
 	}
-	// A colon in the description must not corrupt the rendered file.
+	// Assign is the path that puts a file in front of a running agent, so
+	// the colon in that description has to survive the render here too --
+	// this is the shape that made six live skills unreadable.
+	fm := frontmatter(t, cm.Data["git-review"])
+	if got := fm["description"]; got != "Reviews git: diffs" {
+		t.Errorf("delivered frontmatter description = %v, want %q", got, "Reviews git: diffs")
+	}
 }
 func TestServiceCreateRejectsDuplicateID(t *testing.T) {
 	ctx := context.Background()
