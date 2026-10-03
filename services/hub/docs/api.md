@@ -643,7 +643,9 @@ the hub still retains, and `range` omitted means "everything retained" rather th
 
 Metrics that have never been observed (e.g. fresh hub) return `0` rather
 than an error so the dashboard renders a clean zero state. Returns `400`
-when `range` is outside the supported set.
+when `range` is outside the supported set, `503` when the hub has neither
+Prometheus nor a database to read its own records from, and `502` when the
+backend it did pick fails to answer.
 
 ### GET /api/v1/observability/metrics/tokens/summary
 
@@ -699,7 +701,10 @@ natural rate window (`1m` for `1h`, `5m` for `6h`, etc.), not the raw counter;
 under Postgres it is the number of matching rows inside that bucket. The
 response's `source` says which of the two you are looking at. Returns `400`
 when `metric` is unknown, when the active backend cannot answer it, or when
-`range` is outside the supported set.
+`range` is outside the supported set. A failure *during* the read is not a
+`400`: `503` when the hub has neither Prometheus nor a database, and `502`
+when the query fails or the records store returns buckets the hub cannot place
+on this window's grid — refused rather than drawn as a mis-dated chart.
 
 ### GET /api/v1/observability/metrics/agents
 
