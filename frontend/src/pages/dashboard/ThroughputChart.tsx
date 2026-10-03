@@ -1,5 +1,5 @@
 import { ServiceUnavailableError } from '../../api/client'
-import { formatStep, useObservabilityTimeseries } from '../../api/observability'
+import { chartUnit, useObservabilityTimeseries } from '../../api/observability'
 import { Panel } from '../../primitives/Panel'
 import { SectionStatus, type SectionState } from '../../primitives/SectionStatus'
 
@@ -32,8 +32,7 @@ export function ThroughputChart() {
       : 'ready'
   // The hub's own records count events per bucket; a Prometheus counter is a
   // rate. Whichever answered, the label has to say what the bars measure.
-  const unit =
-    data?.source === 'postgres' ? `events / ${formatStep(data.step) ?? 'bucket'}` : 'events / hour'
+  const unit = chartUnit(data?.source, data?.step)
 
   return (
     <Panel

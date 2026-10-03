@@ -9,6 +9,7 @@ import {
   getTokensSummary,
   unavailableDetail,
   formatStep,
+  chartUnit,
 } from './observability'
 
 const mockFetch = () => globalThis.fetch as ReturnType<typeof vi.fn>
@@ -195,6 +196,19 @@ describe('metrics helpers', () => {
     expect(formatStep('3m0s')).toBe('3m')
     expect(formatStep(undefined)).toBeUndefined()
     expect(formatStep('nonsense')).toBeUndefined()
+  })
+
+  it('chartUnit labels each backend in the unit it actually answers in', () => {
+    // The hub's records count events per bucket, so the bucket width is the label.
+    expect(chartUnit('postgres', '10m0s')).toBe('events / 10m')
+    // A Prometheus sample is a per-second rate, not a count. Labelling it
+    // "events / hour" would overstate the bar by 3600x, so the rate branch
+    // stays unitless-but-honest no matter what step came back.
+    expect(chartUnit('prometheus', '1h0m0s')).toBe('events / period')
+    expect(chartUnit(undefined, undefined)).toBe('events / period')
+    // A missing or unparseable step still yields a label, never "undefined".
+    expect(chartUnit('postgres', undefined)).toBe('events / bucket')
+    expect(chartUnit('postgres', 'nonsense')).toBe('events / bucket')
   })
 
   it('unavailableDetail carries the reason the hub gave for a 503', async () => {

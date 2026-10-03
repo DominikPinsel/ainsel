@@ -71,6 +71,17 @@ export function formatStep(step?: string): string | undefined {
   return out.length ? out.join('') : undefined
 }
 
+// chartUnit names what one bar of a throughput chart holds. The two metric
+// backends answer in different units: Prometheus returns a per-second rate
+// (sum(rate(...[window]))), the hub's own records return a count per bucket.
+// Only the count can be labelled from `step`, and a rate cannot be labelled
+// "events / hour" without a 3600x lie, so every panel asks this one function
+// rather than keeping its own ternary.
+export function chartUnit(source?: MetricsSource, step?: string): string {
+  if (source === 'postgres') return `events / ${formatStep(step) ?? 'bucket'}`
+  return 'events / period'
+}
+
 export type MetricName =
   | 'events_consumed'
   | 'triggers_matched'

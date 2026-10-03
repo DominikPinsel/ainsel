@@ -2,13 +2,12 @@ import { useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { ServiceUnavailableError } from '../../api/client'
 import {
-  formatStep,
+  chartUnit,
   unavailableDetail,
   useObservabilitySummary,
   useObservabilityTimeseries,
   useTokensBySubject,
   useTokensSummary,
-  type MetricsSource,
   type Range,
   type TimeseriesParams,
 } from '../../api/observability'
@@ -49,14 +48,6 @@ function deriveState(
   if (error) return 'error'
   if (hasData) return 'ready'
   return 'idle'
-}
-
-// chartUnit names what one bar of the throughput chart holds. The two metric
-// backends answer in different units, so the label follows whichever responded:
-// Prometheus gives a per-second rate, the hub's records give a count per bucket.
-function chartUnit(source?: MetricsSource, step?: string): string {
-  if (source === 'postgres') return `events / ${formatStep(step) ?? 'bucket'}`
-  return 'events / period'
 }
 
 export function Observability() {
