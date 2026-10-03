@@ -80,7 +80,7 @@ func skillMCPServer(d SkillDiscovery) *server.StreamableHTTPServer {
 
 	srv.AddTool(
 		mcp.NewTool("get_skill",
-			mcp.WithDescription("Load one skill by id. Returns the complete SKILL.md — YAML frontmatter plus body — exactly as a file-mounted skill would read. Follow the instructions in it for the current task, or save it under your workspace's skills directory to reuse it later. Not limited by which skills your agent image has enabled."),
+			mcp.WithDescription("Load one skill by id. Returns the complete SKILL.md — YAML frontmatter plus body — exactly as a file-mounted skill would read. Follow the instructions in it for the current task. Not limited by which skills your agent image has enabled."),
 			mcp.WithString("id", mcp.Required(), mcp.Description("Skill id (slug) from search_skills")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
