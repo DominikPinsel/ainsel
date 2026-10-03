@@ -167,8 +167,15 @@
   border-radius: var(--radius-pill);
 }
 .tag.ok { color: var(--ink); border-color: var(--rule-soft); }
-.tag.warn { color: var(--warn); border-color: transparent; background: color-mix(in srgb, var(--warn) 12%, transparent); }
-.tag.err { color: var(--err); border-color: transparent; background: color-mix(in srgb, var(--err) 12%, transparent); background: var(--signal-haze); }
+.tag.warn { color: var(--warn-ink); border-color: transparent; background: color-mix(in srgb, var(--warn) 12%, var(--paper)); }
+/* Status colour follows Fjord's error idiom — --signal teal, as used by
+   .field-error, .dot.err (which sits beside these tags in activity rows) and
+   .kpi.alert. --err red is reserved for destructive *actions* (.btn-danger).
+   The chip is an opaque mix against --paper rather than --signal-haze: .tag
+   already paints --paper, and a translucent override would composite over
+   whatever the tag happens to sit on — a table row, a card, a hover state — so
+   its contrast would depend on context. Same reasoning as .tool-new-badge. */
+.tag.err { color: var(--signal-ink); border-color: transparent; background: color-mix(in srgb, var(--signal) 12%, var(--paper)); }
 .tag.stale { color: var(--stale); border-color: var(--rule-soft); }
 .tag.solid { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 .tag.solid.err { background: var(--signal); border-color: var(--signal); color: #fff; }
