@@ -33,12 +33,14 @@ export function ThroughputChart() {
   // The hub's own records count events per bucket; a Prometheus counter is a
   // rate. Whichever answered, the label has to say what the bars measure.
   const unit =
-    data?.source === 'postgres'
-      ? `events / ${formatStep(data.step) ?? 'bucket'}`
-      : 'events / hour'
+    data?.source === 'postgres' ? `events / ${formatStep(data.step) ?? 'bucket'}` : 'events / hour'
 
   return (
-    <Panel title="Throughput · 24h" right={<span className="label">{unit}</span>} className="cropped">
+    <Panel
+      title="Throughput · 24h"
+      right={<span className="label">{unit}</span>}
+      className="cropped"
+    >
       {state !== 'ready' ? (
         <SectionStatus
           state={state}

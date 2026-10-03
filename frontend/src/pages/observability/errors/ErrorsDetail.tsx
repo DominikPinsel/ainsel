@@ -2,7 +2,11 @@ import { useMemo } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useErrors } from '../../../api/errors'
 import type { ErrorSeverity, ErrorSource, PlatformError } from '../../../api/errors'
-import { useObservabilityTimeseries, unavailableDetail, type Range } from '../../../api/observability'
+import {
+  useObservabilityTimeseries,
+  unavailableDetail,
+  type Range,
+} from '../../../api/observability'
 import { ServiceUnavailableError } from '../../../api/client'
 import { Titleblock } from '../../../layout/Titleblock'
 import { Panel } from '../../../primitives/Panel'
