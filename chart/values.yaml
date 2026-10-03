@@ -415,6 +415,14 @@ auth:
   # service used to protect the /api/internal/user-tokens/validate endpoint.
   # When unset, user token auth is disabled; OIDC remains the only MCP auth.
   internalValidateSecret: ""
+  # skillsMcpToken is the bearer token for the read-only skill catalogue MCP
+  # (/api/internal/skills/mcp in-cluster). Agents get it as a normal secret
+  # env entry on their AgentImage and reference it from
+  # spec.mcpServers[].tokenFromEnv. Deliberately separate from
+  # internalValidateSecret: that one is the cluster-wide internal credential
+  # and must not become a bearer token for a second endpoint. Unset leaves
+  # the catalogue endpoint answering 503, so it is opt-in per instance.
+  skillsMcpToken: ""
   # Settings for mode "local" (hub-managed username/password accounts).
   local:
     # Username of the bootstrapped admin account (created on first start).

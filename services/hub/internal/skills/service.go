@@ -278,6 +278,24 @@ func (s *Service) List(ctx context.Context, filter ListFilter) ([]SkillSummary, 
 	return summaries, nil
 }
 
+// SearchForDiscovery returns skill metadata for the skill MCP, without
+// the UsedBy enrichment List performs.
+//
+// The enrichment is a Kubernetes LIST of every AgentImage in the
+// namespace. That is fine for an admin page loaded occasionally, but this
+// method backs an agent-facing tool that a model may call repeatedly
+// inside one task, and the answer it computes is one an agent has no use
+// for: whether some image happens to mount the skill says nothing about
+// whether the skill helps with the task at hand. Skipping it keeps the
+// read to a single Postgres query.
+//
+// The full match set is returned: bounding it is the caller's job, and a
+// caller that wants to say "there is more" needs to know whether there
+// is, which a pre-truncated list cannot show.
+func (s *Service) SearchForDiscovery(ctx context.Context, query string, tags []string) ([]SkillSummary, error) {
+	return s.store.List(ctx, ListFilter{Search: query, Tags: tags})
+}
+
 // Update applies a partial update. It re-renders the ConfigMap only when
 // some AgentImage or Agent selects the skill: an edit to a catalogue
 // entry must not touch the shared, size-capped delivery object.
