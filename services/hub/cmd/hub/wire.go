@@ -126,6 +126,7 @@ func wireAPIServer(c *container, cfg containerConfig) *api.Server {
 	srv.SetChannelService(c.channels, c.transfer)
 	srv.SetUserTokenStore(c.userTokenStore)
 	srv.SetTaskLogStore(c.taskLogStore)
+	srv.SetTelemetryStore(c.telemetryStore)
 	// The read-only skill catalogue MCP. c.skillSvc is the concrete service,
 	// which satisfies SkillDiscovery; passing it here rather than widening
 	// SkillService keeps Create/Update/Delete out of the catalogue's reach.

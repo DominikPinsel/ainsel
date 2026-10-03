@@ -20,6 +20,7 @@ import (
 	"github.com/DominikPinsel/ainsel/services/hub/internal/router"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/skills"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/tasklogs"
+	"github.com/DominikPinsel/ainsel/services/hub/internal/telemetry"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/trigger"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/triggers"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/usertokens"
@@ -55,6 +56,9 @@ type container struct {
 	chatStore      *chat.Store
 	apiServer      *api.Server
 	userTokenStore *usertokens.Store
+	// telemetryStore answers the event metric panels from the hub's own records,
+	// so the console has charts on a hub with no Prometheus.
+	telemetryStore *telemetry.Store
 	rtr            *router.Router
 	apiHTTPServer  *http.Server
 	metricsServer  *http.Server
@@ -171,6 +175,7 @@ func newContainer(ctx context.Context, cfg containerConfig, deps containerDeps) 
 	c.skillSvc = wireSkills(pool, c.apiClient, cfg.namespace)
 	c.chatStore = chat.NewStore(pool)
 	c.taskLogStore = tasklogs.NewStore(pool)
+	c.telemetryStore = telemetry.NewStore(pool)
 
 	// --- API server + auth middleware ---
 	c.userTokenStore = usertokens.NewStore(pool)

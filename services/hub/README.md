@@ -39,9 +39,10 @@ Ports:
 - `8080` — REST API (`HUB_PORT`)
 - `9090` — Prometheus metrics (`HUB_METRICS_PORT`)
 
-Required env vars: `HUB_DB_URL` (Postgres DSN — MCP server registry).
-Optional: `HUB_LOKI_URL`, `HUB_PROMETHEUS_URL` for observability endpoints,
-`HUB_NAMESPACE` (default `ainsel`).
+Required env vars: `HUB_DB_URL` (Postgres DSN — event queue, task logs, MCP
+server registry). Optional: `HUB_PROMETHEUS_URL` for the token metric endpoints
+and raw PromQL — the event metrics and charts are served from `HUB_DB_URL`
+without it. `HUB_NAMESPACE` defaults to `ainsel`.
 
 ## Testing
 

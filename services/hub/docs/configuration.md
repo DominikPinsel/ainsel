@@ -5,12 +5,11 @@
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `NATS_URL` | `nats://localhost:4222` | NATS server connection URL |
+| `HUB_DB_URL` | _required_ | Postgres DSN. The hub refuses to start without it: it is the event queue, the log and conversation store, and the source the metric panels fall back to when there is no Prometheus. |
 | `HUB_PORT` | `8080` | Port for the REST API server |
 | `HUB_METRICS_PORT` | `9090` | Port for Prometheus metrics |
 | `HUB_NAMESPACE` | `ainsel` | Kubernetes namespace for CRD operations |
-| `HUB_LOKI_URL` | _(unset)_ | Loki HTTP base URL. When unset, log endpoints return `503`. |
-| `HUB_LOKI_NAMESPACE` | `ainsel` | Kubernetes namespace label used in the simple stream selector for `/api/observability/logs?app=...`. |
-| `HUB_PROMETHEUS_URL` | _(unset)_ | Prometheus HTTP base URL. When unset, metrics endpoints return `503`. |
+| `HUB_PROMETHEUS_URL` | _(unset)_ | Prometheus HTTP base URL. When unset the event metrics endpoints fall back to the hub's own records, and only the token endpoints and raw PromQL return `503`. |
 
 ## Helm Values
 
