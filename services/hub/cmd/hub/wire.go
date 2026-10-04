@@ -87,7 +87,7 @@ func wireAPIClient(mgr ctrl.Manager) (client.Client, error) {
 // wirePrometheus creates the Prometheus client if URL is set.
 func wirePrometheus(promURL string) *prometheus.Client {
 	if promURL == "" {
-		slog.Warn("HUB_PROMETHEUS_URL not set, token queries will fail")
+		slog.Warn("HUB_PROMETHEUS_URL not set: token panels and raw PromQL are unavailable, event metrics come from the hub's own records")
 		return nil
 	}
 	slog.Info("prometheus client configured", "url", promURL)
@@ -127,6 +127,12 @@ func wireAPIServer(c *container, cfg containerConfig) *api.Server {
 	srv.SetUserTokenStore(c.userTokenStore)
 	srv.SetTaskLogStore(c.taskLogStore)
 	srv.SetTelemetryStore(c.telemetryStore)
+	// Logged rather than left implicit: which backend answers is the difference
+	// between two sets of figures on the same panel, and an operator reading a
+	// support report needs to know which one their hub picked.
+	source := wireMetricsSource(cfg.metricsSource)
+	srv.SetMetricsSource(source)
+	slog.Info("event metric source configured", "source", source, "prometheus", c.promClient != nil)
 	// The read-only skill catalogue MCP. c.skillSvc is the concrete service,
 	// which satisfies SkillDiscovery; passing it here rather than widening
 	// SkillService keeps Create/Update/Delete out of the catalogue's reach.
@@ -389,6 +395,23 @@ func runUntilCanceled(ctx context.Context, fn func(context.Context) error) func(
 			return nil
 		}
 		return err
+	}
+}
+
+// wireMetricsSource normalises HUB_METRICS_SOURCE into the token api.Server
+// expects. An unrecognised value falls back to the default with a warning
+// instead of failing startup: this setting chooses between two backends that
+// both work, so a typo should cost an operator a log line, not a pod.
+func wireMetricsSource(raw string) string {
+	switch normalized := strings.ToLower(strings.TrimSpace(raw)); normalized {
+	case "", api.MetricsSourceRecords:
+		return api.MetricsSourceRecords
+	case api.MetricsSourcePrometheus:
+		return api.MetricsSourcePrometheus
+	default:
+		slog.Warn("unknown HUB_METRICS_SOURCE, ignoring it",
+			"value", raw, "using", api.MetricsSourceRecords)
+		return api.MetricsSourceRecords
 	}
 }
 

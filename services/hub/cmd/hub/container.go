@@ -56,8 +56,9 @@ type container struct {
 	chatStore      *chat.Store
 	apiServer      *api.Server
 	userTokenStore *usertokens.Store
-	// telemetryStore answers the event metric panels from the hub's own records,
-	// so the console has charts on a hub with no Prometheus.
+	// telemetryStore answers the event metric panels from the hub's own records.
+	// It is the backend those panels ask by default, so the console keeps its
+	// charts on a hub with no Prometheus and reports the same figures with one.
 	telemetryStore *telemetry.Store
 	rtr            *router.Router
 	apiHTTPServer  *http.Server
@@ -75,11 +76,15 @@ type containerDeps struct {
 
 // containerConfig holds env-derived configuration for newContainer.
 type containerConfig struct {
-	dbURL                  string
-	namespace              string
-	hubPort                string
-	metricsPort            string
-	promURL                string
+	dbURL       string
+	namespace   string
+	hubPort     string
+	metricsPort string
+	promURL     string
+	// metricsSource is HUB_METRICS_SOURCE: which backend answers the event
+	// metric panels. Empty means the default, the hub's own records. See
+	// wireMetricsSource.
+	metricsSource          string
 	claimTimeoutSecs       int
 	connectorCfg           api.ConnectorConfig
 	hubAllowInsecureNoAuth bool

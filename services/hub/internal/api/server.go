@@ -113,10 +113,15 @@ type Server struct {
 	// eventQueue is the PostgreSQL event queue store.
 	eventQueue *eventqueue.Store
 
-	// telemetry reads the hub's own records to answer the event metrics panels
-	// when no Prometheus is configured. See metricsBackend in
+	// telemetry reads the hub's own records to answer the event metrics panels.
+	// It is the backend those panels ask by default. See metricsBackend in
 	// handlers_observability.go, which decides between the two sources.
 	telemetry *telemetry.Store
+
+	// metricsSource pins which backend answers the event metric panels, from
+	// HUB_METRICS_SOURCE. Empty means the default: the hub's own records, with
+	// Prometheus behind them. See SetMetricsSource.
+	metricsSource string
 
 	// identityTracker guards automatic identity persistence so it does not
 	// fire on every authenticated request. See identity_persist.go.

@@ -1,16 +1,19 @@
 // Package telemetry derives the hub's event metrics from its own PostgreSQL
-// records. It exists so the console's KPI cards and throughput charts keep
-// working on a hub with no Prometheus: the four counters the metrics endpoints
-// otherwise read are incremented while the hub routes, and every routing
+// records. It is the backend the console's KPI cards and throughput charts read
+// by default, on every install: the four counters those panels otherwise ask
+// Prometheus about are incremented while the hub routes, and every routing
 // decision that increments one leaves a row behind in events, agent_tasks or
 // task_logs. This package is the single place that says what those four metrics
 // mean in those tables.
 //
-// The Prometheus path and this one differ in one respect callers must know
-// about: counters are rates sampled by a scraper, so they cover everything the
-// process has ever done, while these rows are bounded by whatever retention the
-// operator has configured. A window older than the retained rows reports zero
-// here, not "no data".
+// Reading the rows rather than the counters is the more truthful of the two, not
+// merely the more available one: a counter lives in a process and restarts at zero
+// with its pod, while events and agent_tasks are never pruned. The exception
+// callers must know about is task_logs, which cmd/hub prunes after 7 days — a
+// window at or beyond that reports the errors still retained, not every error the
+// window produced. Prometheus has the same weakness in miniature (retention) and
+// the same strength (a counter that predates a prune still remembers), which is why
+// the panels remain pinnable to the counters rather than welded to this package.
 package telemetry
 
 import (

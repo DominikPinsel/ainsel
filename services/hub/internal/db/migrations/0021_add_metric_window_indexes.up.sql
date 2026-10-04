@@ -1,7 +1,7 @@
 -- The observability metric panels aggregate the hub's own records by creation
--- time when there is no Prometheus to ask (see internal/telemetry). Both tables
--- carried only partial indexes, so every dashboard poll scanned the whole table.
--- These make a time window a range scan. task_logs needs no new index: the
+-- time (see internal/telemetry), which is the backend they read by default. Both
+-- tables carried only partial indexes, so every dashboard poll scanned the whole
+-- table. These make a time window a range scan. task_logs needs no new index: the
 -- partial index on (level, created_at) already covers the error series.
 --
 -- Plain CREATE INDEX, not CONCURRENTLY: the hub applies migrations with

@@ -122,6 +122,45 @@ func TestObservability_SummaryReadsPostgresWhenPromMissing(t *testing.T) {
 	}
 }
 
+func TestObservability_SummaryPrefersRecordsOverPrometheus(t *testing.T) {
+	// Both backends configured — the shape of an install that set
+	// observability.prometheus.url. The hub's own rows must answer: the counters
+	// are a copy of the same facts, and the copy restarts at zero with the pod
+	// while these rows do not. The fake returns a value no seeded row can produce,
+	// so a 999 anywhere in the body means Prometheus was consulted.
+	s, pool := obsDBServer(t, "/api/v1/observability/metrics/summary")
+	prom, hits := countingProm(t, "999")
+	s.prom = prom
+
+	obsSeedEvent(t, pool, "pg-pref-1", time.Now().UTC())
+	obsSeedTask(t, pool, "pg-pref-1", "agent-a", time.Now().UTC())
+	obsSeedErrorLog(t, pool, time.Now().UTC())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/observability/metrics/summary", nil)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 from the hub's own records, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if n := hits.Load(); n != 0 {
+		t.Errorf("Prometheus was queried %d times; the records must answer a hub that has both", n)
+	}
+	var body MetricsSummary
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Source != metricsSourcePostgres {
+		t.Errorf("source = %q, want %q", body.Source, metricsSourcePostgres)
+	}
+	if body.EventsConsumed == 999 || body.TriggersMatched == 999 || body.EventsRouted == 999 {
+		t.Errorf("counter figures reached the response body: %+v", body)
+	}
+	if body.EventsConsumed != 1 || body.TriggersMatched != 1 || body.EventsRouted != 1 || body.RoutingErrors != 1 {
+		t.Errorf("unexpected figures from the records: %+v", body)
+	}
+}
+
 func TestObservability_SummaryWithRangeCountsWindow(t *testing.T) {
 	s, pool := obsDBServer(t, "/api/v1/observability/metrics/summary")
 

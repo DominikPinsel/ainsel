@@ -18,9 +18,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// observabilityCacheTTL is the duration cached Prometheus query results stay fresh.
-// 30s matches the Prometheus default scrape interval, so the dashboard only
-// pays for one query per metric per scrape window even under heavy fan-in.
+// observabilityCacheTTL is the duration a metrics response stays fresh. The
+// dashboard polls on a timer as well as on every range change, and the default
+// backend is now the hub's own tables, where one summary is four range scans — so
+// the cache earns its keep more than it did when it only shielded Prometheus.
+// 30s also matches the Prometheus scrape interval, so a hub pinned to the counters
+// still pays one query per metric per scrape window under heavy fan-in.
 const observabilityCacheTTL = 30 * time.Second
 
 // Values of the "source" field on metrics responses. It names the backend that
@@ -32,13 +35,26 @@ const (
 	metricsSourcePostgres   = "postgres"
 )
 
+// Values of the observability.metricsSource / HUB_METRICS_SOURCE setting. They
+// are the same tokens a response reports as "source", so an operator reading
+// either one needs a translation step for neither.
+const (
+	// MetricsSourceRecords asks the hub's own records first, falling back to
+	// Prometheus only when there is no database. This is the default.
+	MetricsSourceRecords = metricsSourcePostgres
+	// MetricsSourcePrometheus asks the scraped counters first, which is the
+	// behaviour these endpoints had before the hub could answer for itself.
+	MetricsSourcePrometheus = metricsSourcePrometheus
+)
+
 // Reasons a panel cannot be answered. Each one names the dependency that is
 // missing and where to set it, because the console shows this text to the
 // operator verbatim.
 const (
 	// metricsRequiredMessage is reported when neither Prometheus nor the hub's
-	// database can serve an event metric.
-	metricsRequiredMessage = "no metrics backend: set observability.prometheus.url, or give the hub a database to read its own records from"
+	// database can serve an event metric. The database is named first because
+	// it is the backend the hub prefers by default.
+	metricsRequiredMessage = "no metrics backend: give the hub a database to read its own records from, or set observability.prometheus.url"
 	// promRequiredMessage is reported for the panels only Prometheus can answer.
 	promRequiredMessage = "prometheus not configured: set observability.prometheus.url"
 	// logStoreRequiredMessage is reported for the panels that read the hub's log
@@ -51,8 +67,9 @@ const (
 // becomes everything still retained, which is the closest equivalent.
 var allTimeStart = time.Unix(0, 0).UTC()
 
-// hubMetric describes one of the hub-internal Prometheus counters surfaced via
-// the summary endpoint and queryable by name in the timeseries endpoint.
+// hubMetric describes one of the hub-internal Prometheus counters, queryable by
+// name in the summary and timeseries endpoints when metricsBackend chooses the
+// counters over the hub's own records.
 type hubMetric struct {
 	// Name is the user-facing identifier (also the JSON field on the summary).
 	Name string
@@ -208,11 +225,20 @@ func (c *promCache) set(key string, value interface{}) {
 }
 
 // SetTelemetryStore wires the store that reads the hub's own records for the
-// event metric panels. It is the fallback used when no Prometheus is configured,
-// which is the common case: the chart ships no Prometheus of its own and the
-// value defaults to empty.
+// event metric panels. It is the backend those panels ask first (see
+// metricsBackend); Prometheus answers them only when the hub has no database,
+// or when SetMetricsSource pins the counters.
 func (s *Server) SetTelemetryStore(store *telemetry.Store) {
 	s.telemetry = store
+}
+
+// SetMetricsSource pins which backend answers the event metric panels. The two
+// values are MetricsSourceRecords and MetricsSourcePrometheus; anything else,
+// including the unset zero value, means the default (records). cmd/hub warns at
+// startup about a value it did not recognise, so a typo cannot silently move an
+// install onto the other backend.
+func (s *Server) SetMetricsSource(source string) {
+	s.metricsSource = source
 }
 
 // handleObservability dispatches to the observability sub-handlers.
@@ -357,25 +383,54 @@ func (s *Server) prometheusMethodGate(w http.ResponseWriter, r *http.Request, h 
 	h(w, r)
 }
 
-// metricsBackend chooses the source that answers an event-metric query.
+// metricsBackend chooses the source that answers an event-metric query. It
+// returns the chosen source, or an empty source with the reason to report — the
+// reason is per-choice, because "set observability.prometheus.url" is the wrong
+// advice for an install that pinned Prometheus and has no client to set.
 //
-// Prometheus wins when configured, because counters cover everything the process
-// has done while the hub's rows are bounded by retention. With no Prometheus the
-// hub answers from the records it wrote while routing, which is what lets a
-// standalone install — the common shape, as the chart ships no Prometheus of its
-// own — show real charts instead of an empty panel.
+// The hub's own records win by default. Every one of these four metrics is a
+// fact the hub recorded while routing: the counters in hubMetrics are
+// incremented on the same code path that writes the rows, so asking Prometheus
+// about them is asking a copy of the hub's own ledger, filtered through a
+// scrape. The copy is worse in three specific ways:
+//
+//   - A counter lives in the process. sum(hub_events_consumed_total) is read
+//     from the latest sample, so it restarts at zero on every hub roll and the
+//     KPI cards report the current pod's uptime rather than the platform's.
+//   - The rows are not pruned. events and agent_tasks have no retention loop
+//     (see cmd/hub, which prunes task_logs, conversations and invocations
+//     only), so the records hold at least as much history as a retention-bounded
+//     TSDB, not less.
+//   - Scraping samples rather than records. For these four metrics that is
+//     survivable, because the hub is a long-lived Service a ServiceMonitor
+//     watches. It is not survivable for the agent token counters the same read
+//     path would serve, whose pods routinely finish before the first scrape —
+//     which is why "the console reads the hub's own ledger" is the rule worth
+//     setting while there are still only four metrics behind it.
+//
+// metricsSource pins the other choice for an install that genuinely wants
+// counters — one that charts a window wider than its own retention, say. A pin
+// whose dependency is missing is reported rather than silently answered from
+// the other backend, because an operator who asked for counters and received
+// rows would have no way to tell.
 //
 // The records are only a backend if the store can actually read them. A store
 // built over a nil pool exists but answers nothing, and naming it here would
 // turn "no metrics source configured" into a query failure.
-func (s *Server) metricsBackend() (string, bool) {
+func (s *Server) metricsBackend() (source, reason string) {
+	if s.metricsSource == MetricsSourcePrometheus {
+		if s.prom != nil {
+			return metricsSourcePrometheus, ""
+		}
+		return "", promRequiredMessage
+	}
 	switch {
-	case s.prom != nil:
-		return metricsSourcePrometheus, true
 	case s.telemetry.Ready():
-		return metricsSourcePostgres, true
+		return metricsSourcePostgres, ""
+	case s.prom != nil:
+		return metricsSourcePrometheus, ""
 	default:
-		return "", false
+		return "", metricsRequiredMessage
 	}
 }
 
@@ -397,9 +452,9 @@ func (s *Server) getMetricsSummary(w http.ResponseWriter, r *http.Request) {
 		rng = &opt
 	}
 
-	source, ok := s.metricsBackend()
-	if !ok {
-		writeError(w, http.StatusServiceUnavailable, metricsRequiredMessage)
+	source, reason := s.metricsBackend()
+	if source == "" {
+		writeError(w, http.StatusServiceUnavailable, reason)
 		return
 	}
 
@@ -480,9 +535,11 @@ func (s *Server) summaryFromPrometheus(ctx context.Context, rng *rangeOption, ra
 }
 
 // summaryFromRecords answers the same four figures from the hub's own tables.
-// It is the path a hub with no Prometheus takes, and it counts what actually
-// happened rather than what a counter remembered: a window older than the hub's
-// retained rows reports zero, because the rows it would have counted are gone.
+// It is the default path (see metricsBackend) and it counts what actually
+// happened rather than what a counter since the last process start remembered.
+// task_logs is the one table here with a shorter reach than the window it can be
+// asked about: it is pruned after 7 days, so range=7d reports the errors still
+// retained rather than every error the window produced.
 func (s *Server) summaryFromRecords(ctx context.Context, rng *rangeOption) (MetricsSummary, error) {
 	end := time.Now().UTC()
 	start := allTimeStart
@@ -530,9 +587,9 @@ func (s *Server) getMetricsTimeseries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	source, ok := s.metricsBackend()
-	if !ok {
-		writeError(w, http.StatusServiceUnavailable, metricsRequiredMessage)
+	source, reason := s.metricsBackend()
+	if source == "" {
+		writeError(w, http.StatusServiceUnavailable, reason)
 		return
 	}
 	// Two registries, deliberately kept separate: hubMetrics names what can be

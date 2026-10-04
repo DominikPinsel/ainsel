@@ -40,6 +40,7 @@ func main() {
 		hubPort:                envOrDefault("HUB_PORT", "8080"),
 		metricsPort:            envOrDefault("HUB_METRICS_PORT", "9090"),
 		promURL:                envOrDefault("HUB_PROMETHEUS_URL", ""),
+		metricsSource:          envOrDefault("HUB_METRICS_SOURCE", ""),
 		claimTimeoutSecs:       envIntOrDefault("TASK_CLAIM_TIMEOUT_SECONDS", 1800),
 		connectorCfg:           api.LoadConnectorConfig(),
 		hubAllowInsecureNoAuth: os.Getenv("HUB_ALLOW_INSECURE_NO_AUTH") == "true",
