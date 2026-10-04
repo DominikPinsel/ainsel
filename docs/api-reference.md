@@ -1184,7 +1184,7 @@ Pass `?range=1h|6h|24h|7d` for the counts inside that window; omit it for everyt
 
 ### GET /api/v1/observability/metrics/timeseries
 
-One metric across a window in `step`-wide points. The unit depends on `source`: a Prometheus point is the per-second rate of the metric's rate query — every metric currently queryable has one, and one without would report its raw counter total — a Postgres point is a count inside that bucket. Both return a **dense** series — every bucket across the window, gaps zero-filled — so a chart can place points by index without inventing its own bucketing.
+One metric across a window in `step`-wide points. The unit depends on `source`. A Prometheus point is the per-second rate of the metric's rate query (every metric currently queryable has one; one without would report its raw counter total). A Postgres point is a count inside that bucket. Both return a **dense** series — every bucket across the window, gaps zero-filled — so a chart can place points by index without inventing its own bucketing.
 
 **Query parameters:**
 - `metric` — one of `events_consumed`, `triggers_matched`, `events_routed`, `routing_errors` (default `events_consumed`).
