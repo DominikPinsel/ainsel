@@ -73,10 +73,10 @@ export function Observability() {
   const routed = useObservabilityTimeseries({ range, metric: 'events_routed' })
   const errors = useObservabilityTimeseries({ range, metric: 'routing_errors' })
 
-  // The KPI cards read the hub's event counters, which the hub answers from its
-  // own records when there is no Prometheus. Token usage is the exception: it is
-  // published by the agent runtime to Prometheus only, so a missing Prometheus
-  // must not blank the event cards — it costs the one token tile.
+  // The KPI cards read the hub's event metrics, which the hub answers from its
+  // own records. Token usage is the exception: it is published by the agent
+  // runtime to Prometheus only, so a missing Prometheus must not blank the event
+  // cards — it costs the one token tile.
   const summaryState = deriveState(
     summary.isLoading,
     summary.error,

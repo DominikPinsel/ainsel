@@ -62,10 +62,12 @@ qdrant:
   enabled: true
   storage: 1Gi
 
-# Observability off by default for a minimal local footprint.
+# Observability off by default for a minimal local footprint. The event KPIs and
+# throughput charts still work: metricsSource "postgres" reads the hub's own records.
 observability:
   prometheus:
     url: ""
+  metricsSource: "postgres"
   serviceMonitor:
     enabled: false
   podMonitor:

@@ -115,6 +115,8 @@ spec:
             - name: HUB_PROMETHEUS_URL
               value: {{ .Values.observability.prometheus.url | quote }}
             {{- end }}
+            - name: HUB_METRICS_SOURCE
+              value: {{ .Values.observability.metricsSource | default "postgres" | quote }}
             - name: HUB_DB_URL
               valueFrom:
                 secretKeyRef:

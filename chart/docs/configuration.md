@@ -116,7 +116,8 @@ via `hub.extraEnv` in your `values.yaml`.
 
 | Value | Type | Default | Description |
 |-------|------|---------|-------------|
-| `observability.prometheus.url` | string | `""` | External Prometheus URL for hub observability API |
+| `observability.prometheus.url` | string | `""` | External Prometheus URL for the hub's token endpoints and raw PromQL |
+| `observability.metricsSource` | string | `"postgres"` | Backend answering the event KPI and timeseries panels: `postgres` (the hub's own records) or `prometheus` (scraped `hub_*_total` counters) |
 | `observability.serviceMonitor.enabled` | bool | `false` | Create ServiceMonitor resources |
 | `observability.podMonitor.enabled` | bool | `false` | Create PodMonitor resources |
 | `observability.prometheusRules.enabled` | bool | `false` | Install CPU throttling / OOM PrometheusRule (requires Prometheus Operator) |

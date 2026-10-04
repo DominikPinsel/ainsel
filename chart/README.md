@@ -170,6 +170,7 @@ install failures on clusters without the Prometheus Operator.
 | `auth.allowInsecureNoAuth` | `false` | Run hub without auth middleware (local testing only) |
 | `networkPolicy.allowAcmeSolver` | `true` | Let ingress reach cert-manager HTTP-01 solver pods |
 | `observability.prometheus.url` | `""` | Prometheus for the hub's token metric endpoints and raw PromQL. Event KPIs and throughput charts do not need it — the hub serves them from its own database |
+| `observability.metricsSource` | `"postgres"` | Backend for the event KPI cards and throughput charts: `postgres` reads the hub's own records, `prometheus` reads the scraped `hub_*_total` counters. Does not affect what the hub exports on `/metrics` |
 | `observability.prometheusRules.enabled` | `false` | Install CPU throttling / OOM PrometheusRule (requires Prometheus Operator) |
 
 Run `grep -E '^[a-zA-Z]' values.yaml | grep -v '^#'` for the full

@@ -441,13 +441,24 @@ auth:
 forgejo:
   apiBase: ""
   repo: ""
-# Observability — external Prometheus endpoint
-# Leave empty to keep the hub off Prometheus entirely: the event KPIs and
-# throughput charts are then served from the hub's own database, and only the
-# token panels and raw PromQL go dark (they have no fallback).
+# Observability — external Prometheus endpoint and metric source
+#
+# metricsSource picks which backend answers the console's event KPIs and
+# throughput charts. "postgres" (default) reads the hub's own records: those rows
+# are written by the same routing decision that increments the counters, they
+# survive a hub pod restart, and nothing about them depends on a scrape
+# interval. "prometheus" asks the scraped hub_*_total counters instead, which
+# still covers activity older than the hub's database retention. The setting
+# changes only what the hub reads back — it still exports /metrics for Prometheus
+# to scrape either way, so Grafana and the alert rules are unaffected.
+#
+# Leave prometheus.url empty to keep the hub off Prometheus entirely: the event
+# KPIs and throughput charts are then still served from the hub's own database,
+# and only the token panels and raw PromQL go dark (they have no fallback).
 observability:
   prometheus:
     url: ""
+  metricsSource: "postgres"
   serviceMonitor:
     enabled: false
     labels: {}

@@ -1,11 +1,11 @@
 import { useQuery } from '@tanstack/react-query'
 import { request, ServiceUnavailableError } from './client'
 
-// Which backend answered a metrics query. The hub serves these from Prometheus
-// when it has one and from its own Postgres records when it does not, and the
-// two differ in units: Prometheus reports a rate, the hub's records report a
-// count per bucket. Panels surface this so a reader can tell which they're
-// looking at.
+// Which backend answered a metrics query. The hub serves its event panels from
+// its own Postgres records by default and from Prometheus only when pinned (or
+// when there is no database); the two differ in units, Prometheus reporting a
+// rate and the hub's records a count per bucket. Panels surface this so a reader
+// can tell which they're looking at.
 export type MetricsSource = 'prometheus' | 'postgres'
 
 // Shape mirrors what GET /api/v1/observability/metrics/summary returns:
