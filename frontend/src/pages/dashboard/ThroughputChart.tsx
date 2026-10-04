@@ -1,5 +1,5 @@
 import { ServiceUnavailableError } from '../../api/client'
-import { chartUnit, useObservabilityTimeseries } from '../../api/observability'
+import { chartUnit, unavailableDetail, useObservabilityTimeseries } from '../../api/observability'
 import { Panel } from '../../primitives/Panel'
 import { SectionStatus, type SectionState } from '../../primitives/SectionStatus'
 
@@ -50,7 +50,7 @@ export function ThroughputChart() {
                 ? 'Failed to load throughput'
                 : undefined
           }
-          detail={error instanceof Error ? error.message : undefined}
+          detail={unavailableDetail(error)}
           onRetry={() => refetch()}
         />
       ) : (
