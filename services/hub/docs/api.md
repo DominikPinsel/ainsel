@@ -580,7 +580,7 @@ Two backends can serve these, and every response names the one that did in a
 
 | `source` | Reads | Serves | Point value |
 |----------|-------|--------|-------------|
-| `prometheus` | The hub's own scraped counters (`hub_events_consumed_total`, …) | every endpoint below | per-second rate |
+| `prometheus` | The hub's own scraped counters (`hub_events_consumed_total`, …) | every endpoint below | per-second rate for a metric that defines a rate query, otherwise the counter total |
 | `postgres` | The rows the hub wrote while routing: `events`, `agent_tasks`, `task_logs` | `metrics/summary` and `metrics/timeseries` | count per bucket |
 
 Prometheus is preferred when configured. Without it the two event endpoints fall

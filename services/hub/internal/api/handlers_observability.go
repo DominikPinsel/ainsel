@@ -576,7 +576,9 @@ func (s *Server) getMetricsTimeseries(w http.ResponseWriter, r *http.Request) {
 }
 
 // pointsFromPrometheus samples a counter's rate across the window, so the chart
-// shows throughput rather than the monotonically-increasing raw counter.
+// shows throughput rather than the monotonically-increasing raw counter. Every
+// metric in hubMetrics defines RatePromQL today; the raw PromQL is the fallback
+// for one that does not, which is why the API docs qualify the reported unit.
 func (s *Server) pointsFromPrometheus(ctx context.Context, metric hubMetric, rng rangeOption, start, end time.Time) ([]TimeseriesPoint, error) {
 	query := metric.PromQL
 	if metric.RatePromQL != "" {

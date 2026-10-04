@@ -1159,7 +1159,7 @@ Two backends can answer, and every response says which one did in its `source` f
 
 | `source` | Reads | Endpoints | Point value |
 |----------|-------|-----------|-------------|
-| `prometheus` | The hub's counters, scraped from `/metrics` | all of the below | a per-second rate |
+| `prometheus` | The hub's counters, scraped from `/metrics` | all of the below | a per-second rate for the rate-backed counters, otherwise the counter total |
 | `postgres` | The rows the hub wrote while routing: `events`, `agent_tasks`, `task_logs` | `metrics/summary` and `metrics/timeseries` only | a count inside that bucket |
 
 Prometheus wins whenever it is configured. Without it the summary and timeseries fall back to the hub's own records — the normal state of an install, since the chart ships no Prometheus of its own — while the token endpoints and raw PromQL return `503` naming Prometheus as the missing backend. `502` means the backend was reachable and the query failed. Postgres sees only retained rows, so a window older than the retention reports zero where a counter would still remember the history.
@@ -1184,7 +1184,7 @@ Pass `?range=1h|6h|24h|7d` for the counts inside that window; omit it for everyt
 
 ### GET /api/v1/observability/metrics/timeseries
 
-One metric across a window in `step`-wide points. The unit depends on `source`: a Prometheus point is a per-second rate, a Postgres point is a count inside that bucket. Both return a **dense** series — every bucket across the window, gaps zero-filled — so a chart can place points by index without inventing its own bucketing.
+One metric across a window in `step`-wide points. The unit depends on `source`: a Prometheus point is the per-second rate of the metric's rate query — every metric currently queryable has one, and one without would report its raw counter total — a Postgres point is a count inside that bucket. Both return a **dense** series — every bucket across the window, gaps zero-filled — so a chart can place points by index without inventing its own bucketing.
 
 **Query parameters:**
 - `metric` — one of `events_consumed`, `triggers_matched`, `events_routed`, `routing_errors` (default `events_consumed`).
