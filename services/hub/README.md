@@ -40,9 +40,10 @@ Ports:
 - `9090` — Prometheus metrics (`HUB_METRICS_PORT`)
 
 Required env vars: `HUB_DB_URL` (Postgres DSN — event queue, task logs, MCP
-server registry). Optional: `HUB_PROMETHEUS_URL` for the token metric endpoints
-and raw PromQL — the event metrics and charts are served from `HUB_DB_URL`
-without it. `HUB_NAMESPACE` defaults to `ainsel`.
+server registry, and the source the event metrics and charts are served from).
+Optional: `HUB_PROMETHEUS_URL` for the token metric endpoints and raw PromQL,
+and `HUB_METRICS_SOURCE` (`postgres` by default, `prometheus` to pin those event
+panels onto the scraped counters). `HUB_NAMESPACE` defaults to `ainsel`.
 
 ## Testing
 

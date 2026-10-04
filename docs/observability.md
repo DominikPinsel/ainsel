@@ -67,7 +67,10 @@ Transcripts are populated by the agent runtime, which reports its messages back 
 
 ## Metrics
 
-Metrics are exposed by the hub on a dedicated metrics port (default `9090`) at `/metrics` and are proxied through the hub API at:
+Metrics are exposed by the hub on a dedicated metrics port (default `9090`) at
+`/metrics` — that export is for Prometheus, Grafana and the alert rules, and it is
+unaffected by which backend the console reads. The hub's own API serves the console
+at:
 
 ```
 GET /api/v1/observability/metrics/summary
@@ -86,25 +89,44 @@ The following counters are exported by the hub. No other ainsel components expor
 
 > **Note:** The webhook-receiver, MCP service, and agent pods do not export custom metrics today. Adding per-component metrics is follow-up work.
 
-### Enabling Prometheus scraping
+### Which backend answers
 
 The console labels the metric-backed panels **telemetry**. Those panels read
 `/api/v1/observability/metrics/*`, which the hub answers from one of two backends:
 
 | Panel | Needs |
 |-------|-------|
-| KPI cards (events consumed, triggers matched, events routed, errors) and the throughput charts | Prometheus **or** the hub's own database — one is always enough |
+| KPI cards (events consumed, triggers matched, events routed, errors) and the throughput charts | The hub's own database, by default. Prometheus answers them only if you pin it, or if the hub has no database |
 | Token tiles and tables (per agent, per subject, timeseries) | Prometheus. The agent runtime publishes token usage as a metric, and the hub keeps no cache-token columns, so Postgres cannot answer them ([issue #281](https://github.com/DominikPinsel/ainsel/issues/281) tracks adding them) |
 | Raw PromQL (`/api/v1/observability/metrics/query`, MCP `query_metrics`) | Prometheus |
 
-So the throughput charts and event KPIs work on a default install with no
-Prometheus at all: the hub counts the rows it wrote while routing. When *nothing*
-can answer — no Prometheus and no database — a panel says **No metrics source
-configured** and shows the hub's reason underneath. A panel that specifically
-needs Prometheus says **Token metrics need Prometheus** rather than blaming
-telemetry in general.
+So the throughput charts and event KPIs work on a default install with no Prometheus
+at all, and they work the same way on an install that has one. When *nothing* can
+answer — no database, and either no Prometheus or a Prometheus pinned but not
+configured — a panel says **No metrics source configured** and shows the hub's
+reason underneath. A panel that specifically needs Prometheus says **Token metrics
+need Prometheus** rather than blaming telemetry in general.
 
-Set `observability.prometheus.url` in `values.yaml` to the URL of your Prometheus instance to switch the event panels onto counters and light up the token panels. The hub reads it once at startup, so configure it and let `helm upgrade` roll the pods.
+The event panels read the hub's records rather than its counters because the hub
+wrote those records. `hub_events_consumed_total` and a row in `events` are two views
+of one routing decision, and the row is the better witness of the two:
+
+- **A counter restarts at zero with its process.** `sum(hub_events_consumed_total)`
+  reads the newest sample, so the KPI cards drop to the new pod's uptime on every
+  hub roll. `events` and `agent_tasks` are not pruned at all, so they keep counting.
+- **A scrape is a sample, not a record.** Harmless for the hub, which is a long-lived
+  Service a ServiceMonitor watches. It is not harmless for agents: the runtime
+  publishes its token counter from inside the pod, and a run shorter than the 30 s
+  scrape interval is a run that was never sampled.
+
+Pin the counters with `observability.metricsSource: prometheus` (`HUB_METRICS_SOURCE`)
+if you want them anyway. The one case that argues for it: `task_logs` is pruned after
+7 days, so a `7d` error count read from the records covers only the errors still
+retained, while a counter that predates the pruning remembers all of them.
+
+`observability.prometheus.url` is what lights up the token panels and raw PromQL, and
+nothing else, unless you also pin the source. The hub reads both settings once at
+startup, so configure them and let `helm upgrade` roll the pods.
 
 The two backends report in different units, and every metrics response carries a
 `source` field (`"prometheus"` or `"postgres"`) so a reader can tell which it is:
@@ -114,7 +136,7 @@ of rows inside that bucket. The console derives its axis label from `source` and
 window older than the retention reports zero rather than the history a counter
 would still remember.
 
-To have Prometheus scrape the hub's own `/metrics` endpoint, enable the ServiceMonitor or PodMonitor resources in `values.yaml`:
+To have Prometheus scrape the hub's own `/metrics` endpoint, enable the ServiceMonitor or PodMonitor resources in `values.yaml`. This is independent of `metricsSource`: the hub exports these counters whether or not it also reads them back.
 
 ```yaml
 observability:
@@ -131,9 +153,10 @@ observability:
 
 ## Required vs optional backends
 
-The hub's **PostgreSQL database is required** — it is the event queue, and the hub
-refuses to start without `HUB_DB_URL`. Prometheus is **optional**: the platform and
-its console work without it, and only the panels listed above are affected.
+The hub's **PostgreSQL database is required** — it is the event queue and the
+backend the console's event metrics read by default, and the hub refuses to start
+without `HUB_DB_URL`. Prometheus is **optional**: the platform and its console work
+without it, and only the panels listed above are affected.
 
 | Backend | Effect when absent |
 |---------|--------------------|

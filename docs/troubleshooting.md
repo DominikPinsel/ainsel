@@ -182,7 +182,9 @@ database.
 **Want the token panels anyway?** Set `observability.prometheus.url` in
 `values.yaml` and point the hub at a Prometheus that scrapes it. When the value is
 empty the chart never sets `HUB_PROMETHEUS_URL`, the hub starts without a Prometheus
-client, and only the Prometheus-only panels go dark.
+client, and only the Prometheus-only panels go dark. Setting it does **not** move the
+event KPI cards or throughput charts onto counters — those keep reading the hub's
+records unless you also pin them (see *Which backend is answering* below).
 
 Check it from outside the pod — the hub image is distroless and has no shell, so
 `kubectl exec … printenv` cannot work:
@@ -200,7 +202,7 @@ kubectl -n <namespace> logs deploy/hub-backend | grep -i prometheus
 Logs are JSON, so the unconfigured state reads:
 
 ```json
-{"time":"2026-09-23T10:04:12Z","level":"WARN","msg":"HUB_PROMETHEUS_URL not set, token queries will fail"}
+{"time":"2026-09-23T10:04:12Z","level":"WARN","msg":"HUB_PROMETHEUS_URL not set: token panels and raw PromQL are unavailable, event metrics come from the hub's own records"}
 ```
 
 A configured hub logs `{"time":"…","level":"INFO","msg":"prometheus client configured","url":"http://prometheus…"}`
@@ -234,6 +236,32 @@ kubectl -n <namespace> logs deploy/hub-backend | grep -i prometheus
 The last command is the ground truth: `prometheus client configured` means the hub has
 a client, `HUB_PROMETHEUS_URL not set` means the pod you are reading did not get the
 value.
+
+**Which backend is answering?** Every hub logs its choice at startup, and every
+metrics response repeats it in `source`:
+
+```json
+{"time":"…","level":"INFO","msg":"event metric source configured","source":"postgres","prometheus":true}
+```
+
+```bash
+kubectl -n <namespace> get deploy hub-backend -o json \
+  | jq -r '.spec.template.spec.containers[].env[]?
+      | select(.name=="HUB_METRICS_SOURCE") | .value'
+```
+
+`"prometheus": true` with `"source": "postgres"` is the normal state of an install that
+has both: the hub exports its counters for Prometheus to scrape and reads its own rows
+for the console. To go back to counter figures — a window wider than the 7 days
+`task_logs` retains is the case that argues for it — pin the source and roll the pods:
+
+```yaml
+observability:
+  metricsSource: "prometheus"
+```
+
+Anything other than `postgres` or `prometheus` is ignored with a
+`unknown HUB_METRICS_SOURCE, ignoring it` warning, and the hub stays on its records.
 
 **Variable present, message still there?** Two things to separate:
 

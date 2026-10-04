@@ -580,27 +580,39 @@ Two backends can serve these, and every response names the one that did in a
 
 | `source` | Reads | Serves | Point value |
 |----------|-------|--------|-------------|
-| `prometheus` | The hub's own scraped counters (`hub_events_consumed_total`, …) | every endpoint below | per-second rate for a metric that defines a rate query, otherwise the counter total |
 | `postgres` | The rows the hub wrote while routing: `events`, `agent_tasks`, `task_logs` | `metrics/summary` and `metrics/timeseries` | count per bucket |
+| `prometheus` | The hub's own scraped counters (`hub_events_consumed_total`, …) | those two when pinned, and everything else below | per-second rate for a metric that defines a rate query, otherwise the counter total |
 
-Prometheus is preferred when configured. Without it the two event endpoints fall
-back to the hub's records, so a default install — the chart ships no Prometheus —
-still shows real charts. `metrics/agents` and the `tokens/*` endpoints have no
-fallback: the agent runtime publishes token usage as a metric and the hub keeps no
-cache-token columns, so they answer `503` with
+The hub's own records answer the two event endpoints by default. Those rows are
+written by the same routing decision that increments the counters, so asking
+Prometheus about them is asking a copy of the hub's own ledger — and the copy is
+worse in two ways: a counter restarts at zero with the pod, so `sum(hub_events_consumed_total)`
+after a roll reports one pod's uptime rather than the platform's, and `events` and
+`agent_tasks` are never pruned, so they hold at least as much history as a
+retention-bounded TSDB.
+
+Set `observability.metricsSource` (`HUB_METRICS_SOURCE`) to `prometheus` to pin the
+counters instead. That is the honest choice for one case: `task_logs` is pruned
+after 7 days, so a `7d` error figure read from the records covers only the errors
+still retained, where a counter that predates the pruning remembers all of them.
+A pin whose dependency is missing is reported as `503`, not silently answered from
+the other backend.
+
+`metrics/agents` and the `tokens/*` endpoints have no fallback either way: the
+agent runtime publishes token usage as a metric and the hub keeps no cache-token
+columns, so they answer `503` with
 `{"error": "prometheus not configured: set observability.prometheus.url"}`.
 `metrics/query` (raw PromQL) is Prometheus-only too, and admin-only.
 
-Responses are cached server-side for ~30 seconds (one Prometheus scrape
-interval) keyed by backend, so a busy dashboard does not generate
-one-query-per-poll and a hub that gains Prometheus cannot serve stale figures
-from the other source.
+Responses are cached server-side for ~30 seconds keyed by backend, so a busy
+dashboard does not generate one-query-per-poll and a hub that switches source
+cannot serve stale figures from the other one.
 
 ### Canonical paths
 
 | Path | Returns |
 |------|---------|
-| `GET /api/v1/observability/metrics/summary` | Count of each hub metric, from Prometheus or the hub's records |
+| `GET /api/v1/observability/metrics/summary` | Count of each hub metric, from the hub's records (default) or from counters when pinned |
 | `GET /api/v1/observability/metrics/timeseries?metric=<name>&range=<1h\|6h\|24h\|7d>` | One metric across the window in dense, evenly-spaced points |
 | `GET /api/v1/observability/metrics/agents` | Per-agent token usage and invocations (Prometheus only) |
 
@@ -636,10 +648,10 @@ The aliases will be removed once the dashboard rewrite is deployed.
 }
 ```
 
-`source` is `"postgres"` when the hub answered from its own records and
-`"prometheus"` when it read counters. Under Postgres the counts cover only rows
-the hub still retains, and `range` omitted means "everything retained" rather than
-"lifetime".
+`source` is `"postgres"` when the hub answered from its own records — the default
+— and `"prometheus"` when it read counters. Under Postgres the counts cover only
+rows the hub still retains, and `range` omitted means "everything retained" rather
+than "lifetime".
 
 Metrics that have never been observed (e.g. fresh hub) return `0` rather
 than an error so the dashboard renders a clean zero state. Returns `400`

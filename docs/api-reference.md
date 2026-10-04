@@ -1153,16 +1153,18 @@ List recent error-level agent log entries (from the hub's `task_logs` table).
 
 ## Observability — Metrics
 
-Hub event metrics and per-agent token usage. Responses are cached server-side for ~30 s, keyed by backend so a hub that gains Prometheus cannot answer from the previous source.
+Hub event metrics and per-agent token usage. Responses are cached server-side for ~30 s, keyed by backend so a hub cannot answer from the source it no longer uses.
 
 Two backends can answer, and every response says which one did in its `source` field:
 
 | `source` | Reads | Endpoints | Point value |
 |----------|-------|-----------|-------------|
-| `prometheus` | The hub's counters, scraped from `/metrics` | all of the below | a per-second rate for the rate-backed counters, otherwise the counter total |
-| `postgres` | The rows the hub wrote while routing: `events`, `agent_tasks`, `task_logs` | `metrics/summary` and `metrics/timeseries` only | a count inside that bucket |
+| `postgres` | The rows the hub wrote while routing: `events`, `agent_tasks`, `task_logs` | `metrics/summary` and `metrics/timeseries` | a count inside that bucket |
+| `prometheus` | The hub's counters, scraped from `/metrics` | those two when pinned, and all of the below | a per-second rate for the rate-backed counters, otherwise the counter total |
 
-Prometheus wins whenever it is configured. Without it the summary and timeseries fall back to the hub's own records — the normal state of an install, since the chart ships no Prometheus of its own — while the token endpoints and raw PromQL return `503` naming Prometheus as the missing backend. `502` means the backend was reachable and the query failed. Postgres sees only retained rows, so a window older than the retention reports zero where a counter would still remember the history.
+The hub's own records answer the summary and timeseries by default, on every install, whether or not a Prometheus exists. The counters describe the same routing decisions those rows record, and the rows are the better witness: a counter restarts at zero with its pod, while `events` and `agent_tasks` are not pruned at all. Set `observability.metricsSource` (`HUB_METRICS_SOURCE`) to `prometheus` to pin the counters — the one case where they remember more is a window wider than the 7 days `task_logs` keeps. A pinned backend that is not configured returns `503` naming it, rather than falling back silently.
+
+The token endpoints and raw PromQL return `503` naming Prometheus as the missing backend on any install without one: the agent runtime publishes token usage as a metric, and the hub keeps no cache-token columns. `502` means the backend was reachable and the query failed.
 
 ### GET /api/v1/observability/metrics/summary
 
