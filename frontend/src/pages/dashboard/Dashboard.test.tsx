@@ -164,6 +164,18 @@ describe('Dashboard', () => {
   // failures get to say something, so both branches are pinned here: a 503
   // quotes the hub, anything else stays silent rather than passing a raw
   // upstream error body through to the console.
+  //
+  // Both cases look inside the throughput panel's own <section> rather than the
+  // whole page. Today it is the only Dashboard child that renders a
+  // `.ss-detail`, so a page-wide query happens to be exact — but a sibling that
+  // grows one later would otherwise fail these tests for a reason unrelated to
+  // the rule they pin.
+  function throughputPanel(): HTMLElement {
+    const panel = screen.getByText('Throughput · 24h').closest('.panel')
+    expect(panel).not.toBeNull()
+    return panel as HTMLElement
+  }
+
   it('shows the hub reason when the throughput query returns 503', async () => {
     vi.stubGlobal(
       'fetch',
@@ -185,9 +197,9 @@ describe('Dashboard', () => {
     await waitFor(() =>
       expect(screen.getByText('No metrics source configured')).toBeInTheDocument(),
     )
-    expect(
-      screen.getByText('prometheus not configured: set observability.prometheus.url'),
-    ).toBeInTheDocument()
+    expect(throughputPanel().querySelector('.ss-detail')).toHaveTextContent(
+      'prometheus not configured: set observability.prometheus.url',
+    )
   })
 
   it('shows no detail line for a throughput failure that is not a 503', async () => {
@@ -205,13 +217,13 @@ describe('Dashboard', () => {
         return Promise.resolve(routeResponse(url))
       }),
     )
-    const { container } = renderWithProviders(<Dashboard />)
+    renderWithProviders(<Dashboard />)
     await waitFor(() =>
       expect(screen.getByText('Failed to load throughput')).toBeInTheDocument(),
     )
     expect(
       screen.queryByText('query failed: context deadline exceeded'),
     ).not.toBeInTheDocument()
-    expect(container.querySelector('.ss-detail')).not.toBeInTheDocument()
+    expect(throughputPanel().querySelector('.ss-detail')).toBeNull()
   })
 })
