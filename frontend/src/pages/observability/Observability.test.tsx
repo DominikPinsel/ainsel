@@ -170,14 +170,57 @@ describe('Observability', () => {
       'fetch',
       vi.fn((url: string) => {
         if (url.includes('/observability/metrics/summary')) {
-          return Promise.resolve(new Response('', { status: 503 }))
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                error: 'no metrics backend: set observability.prometheus.url',
+              }),
+              { status: 503, headers: { 'Content-Type': 'application/json' } },
+            ),
+          )
         }
         return Promise.resolve(defaultFetch(url))
       }),
     )
     renderWithProviders(<Observability />, { route: '/observability' })
     await waitFor(() =>
-      expect(screen.getByText(/telemetry not configured/i)).toBeInTheDocument(),
+      expect(screen.getByText('No metrics source configured')).toBeInTheDocument(),
     )
+    // The hub's reason is shown, not a claim about telemetry in general.
+    expect(
+      screen.getByText('no metrics backend: set observability.prometheus.url'),
+    ).toBeInTheDocument()
+  })
+
+  it('keeps the event cards when only the token queries return 503', async () => {
+    // A standalone hub has no Prometheus: the event metrics come from its own
+    // records and only the token panels have nothing to show.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.includes('/metrics/tokens/')) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ error: 'prometheus not configured' }),
+              { status: 503, headers: { 'Content-Type': 'application/json' } },
+            ),
+          )
+        }
+        return Promise.resolve(defaultFetch(url))
+      }),
+    )
+    renderWithProviders(<Observability />, { route: '/observability' })
+
+    // Event cards come from the hub's own records, so they render. The routed
+    // and matched figures are both 1.1K here, so count tiles rather than match
+    // one by name.
+    await waitFor(() => expect(screen.getByText('1.2K')).toBeInTheDocument())
+    expect(screen.getAllByText('1.1K').length).toBe(2)
+    // The token tile has nothing to show, and says which backend is missing.
+    expect(screen.queryByText('1.2M')).not.toBeInTheDocument()
+    await waitFor(() =>
+      expect(screen.getByText('Token metrics need Prometheus')).toBeInTheDocument(),
+    )
+    expect(screen.getByText(/Token usage needs Prometheus/)).toBeInTheDocument()
   })
 })

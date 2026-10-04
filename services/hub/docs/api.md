@@ -571,22 +571,38 @@ When the invocation store is not configured, both endpoints return `503`.
 
 ## Observability Metrics
 
-The hub exposes a small read-only API over Prometheus so the frontend
+The hub exposes a small read-only API over its event metrics so the frontend
 dashboard can render hub-internal counters, time series, and per-agent token
-usage without talking to Prometheus directly. All endpoints return `503 Service
-Unavailable` with `{"error": "metrics backend not configured"}` when
-`HUB_PROMETHEUS_URL` is unset.
+usage without talking to a metrics backend directly.
+
+Two backends can serve these, and every response names the one that did in a
+`source` field:
+
+| `source` | Reads | Serves | Point value |
+|----------|-------|--------|-------------|
+| `prometheus` | The hub's own scraped counters (`hub_events_consumed_total`, …) | every endpoint below | per-second rate for a metric that defines a rate query, otherwise the counter total |
+| `postgres` | The rows the hub wrote while routing: `events`, `agent_tasks`, `task_logs` | `metrics/summary` and `metrics/timeseries` | count per bucket |
+
+Prometheus is preferred when configured. Without it the two event endpoints fall
+back to the hub's records, so a default install — the chart ships no Prometheus —
+still shows real charts. `metrics/agents` and the `tokens/*` endpoints have no
+fallback: the agent runtime publishes token usage as a metric and the hub keeps no
+cache-token columns, so they answer `503` with
+`{"error": "prometheus not configured: set observability.prometheus.url"}`.
+`metrics/query` (raw PromQL) is Prometheus-only too, and admin-only.
 
 Responses are cached server-side for ~30 seconds (one Prometheus scrape
-interval) so a busy dashboard does not generate one query-per-poll.
+interval) keyed by backend, so a busy dashboard does not generate
+one-query-per-poll and a hub that gains Prometheus cannot serve stale figures
+from the other source.
 
 ### Canonical paths
 
 | Path | Returns |
 |------|---------|
-| `GET /api/v1/observability/metrics/summary` | Current value of each hub counter |
-| `GET /api/v1/observability/metrics/timeseries?metric=<name>&range=<1h\|6h\|24h\|7d>` | Per-second rate of one counter over a range |
-| `GET /api/v1/observability/metrics/agents` | Per-agent token usage, invocations, and (if available) cost |
+| `GET /api/v1/observability/metrics/summary` | Count of each hub metric, from Prometheus or the hub's records |
+| `GET /api/v1/observability/metrics/timeseries?metric=<name>&range=<1h\|6h\|24h\|7d>` | One metric across the window in dense, evenly-spaced points |
+| `GET /api/v1/observability/metrics/agents` | Per-agent token usage and invocations (Prometheus only) |
 
 ### Deprecated aliases
 
@@ -615,13 +631,21 @@ The aliases will be removed once the dashboard rewrite is deployed.
   "triggersMatched": 30,
   "eventsRouted": 29,
   "routingErrors": 1,
-  "updatedAt": "2026-05-10T15:30:00Z"
+  "updatedAt": "2026-05-10T15:30:00Z",
+  "source": "postgres"
 }
 ```
 
-Counters that have never been observed (e.g. fresh hub) return `0` rather
+`source` is `"postgres"` when the hub answered from its own records and
+`"prometheus"` when it read counters. Under Postgres the counts cover only rows
+the hub still retains, and `range` omitted means "everything retained" rather than
+"lifetime".
+
+Metrics that have never been observed (e.g. fresh hub) return `0` rather
 than an error so the dashboard renders a clean zero state. Returns `400`
-when `range` is outside the supported set.
+when `range` is outside the supported set, `503` when the hub has neither
+Prometheus nor a database to read its own records from, and `502` when the
+backend it did pick fails to answer.
 
 ### GET /api/v1/observability/metrics/tokens/summary
 
@@ -664,15 +688,23 @@ window (used by the frontend for trend indicators). Returns `400` when
   "points": [
     {"timestamp": "2026-05-10T14:30:00Z", "value": 0.5},
     {"timestamp": "2026-05-10T14:30:30Z", "value": 0.7}
-  ]
+  ],
+  "source": "prometheus"
 }
 ```
 
 Points are spaced so each chart has roughly 60-180 samples regardless of
-range. For counter metrics the `points[].value` is the per-second rate over
-the range's natural rate window (`1m` for `1h`, `5m` for `6h`, etc.), not the
-raw counter. Returns `400` when `metric` is unknown, or when `range` is
-outside the supported set.
+range, and the series is **dense**: every bucket across the window is present,
+gaps zero-filled, so a chart can place points by index. For counter metrics
+under Prometheus the `points[].value` is the per-second rate over the range's
+natural rate window (`1m` for `1h`, `5m` for `6h`, etc.), not the raw counter;
+under Postgres it is the number of matching rows inside that bucket. The
+response's `source` says which of the two you are looking at. Returns `400`
+when `metric` is unknown, when the active backend cannot answer it, or when
+`range` is outside the supported set. A failure *during* the read is not a
+`400`: `503` when the hub has neither Prometheus nor a database, and `502`
+when the query fails or the records store returns buckets the hub cannot place
+on this window's grid — refused rather than drawn as a mis-dated chart.
 
 ### GET /api/v1/observability/metrics/agents
 
@@ -700,8 +732,8 @@ number. Agents are sorted alphabetically for stable diffing across polls.
 
 ## Observability Logs
 
-The hub exposes a thin proxy over Loki so the frontend can render agent and
-hub logs without talking to Loki directly.
+The hub serves the console's log panels from its own `task_logs` table, which
+agents fill while a task runs. No external log backend is involved.
 
 ### GET /api/observability/logs
 
@@ -711,16 +743,17 @@ Also available at `GET /api/v1/observability/logs`.
 
 | Param | Description |
 |-------|-------------|
-| `app` | Application label (e.g. `hub-backend`, `dev-agent`). Builds the selector `{namespace="<HUB_LOKI_NAMESPACE>", app="<app>"}`. Mutually exclusive with `query`. |
-| `query` | Free-form LogQL passed through to Loki untouched. Mutually exclusive with `app`. |
+| `app` | Agent **name** to filter by (the label name is a holdover from when this endpoint proxied Loki). Requires read access to that agent, else `403`. |
 | `range` | Lookback window: `1h`, `6h`, or `24h`. Defaults to `1h`. |
+| `since` | Go duration string (e.g. `90m`); overrides `range`. |
 | `limit` | Max log lines to return. Defaults to 500, capped at 1000. |
 
-When neither `app` nor `query` is supplied, the selector defaults to
-agent logs only: `{namespace="<HUB_LOKI_NAMESPACE>",app=~".+",app!="<hub-app>"}`.
-Without this scoping every stream in Loki matches (argocd, kube-system,
-etc.) and the dashboard becomes useless. Power users who want the
-truly-everything view can pass `query={app=~".+"}` explicitly.
+When `app` is omitted the result is scoped to the agents the caller may read,
+so a non-admin never receives another tenant's task logs. Error and log content
+is conversation data: whatever the agent and the user said is in it.
+
+The hub's own process log (startup, routing decisions, `activity_event` lines)
+is stdout JSON, not this table — read it with `kubectl logs`.
 
 **Response:** `200 OK`
 ```json
@@ -737,8 +770,8 @@ truly-everything view can pass `query={app=~".+"}` explicitly.
 }
 ```
 
-Lines are returned newest-first. Returns `503` when `HUB_LOKI_URL` is not
-configured and `502` when Loki itself errors.
+Lines are returned newest-first. Returns `503` when the hub has no database
+configured and `502` when the query fails.
 
 ---
 

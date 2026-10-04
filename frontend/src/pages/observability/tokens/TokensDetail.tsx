@@ -1,6 +1,11 @@
 import { useMemo } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { useTokensBySubject, useTokensSummary } from '../../../api/observability'
+import { ServiceUnavailableError } from '../../../api/client'
+import {
+  unavailableDetail,
+  useTokensBySubject,
+  useTokensSummary,
+} from '../../../api/observability'
 import type { TokensSubjectRow, Range } from '../../../api/observability'
 import { Titleblock } from '../../../layout/Titleblock'
 import { Panel } from '../../../primitives/Panel'
@@ -144,7 +149,16 @@ export function TokensDetail() {
           {bySubject.isLoading ? (
             <SectionStatus state="loading" />
           ) : bySubject.error ? (
-            <SectionStatus state="error" onRetry={() => bySubject.refetch()} />
+            <SectionStatus
+              state={bySubject.error instanceof ServiceUnavailableError ? 'unavailable' : 'error'}
+              title={
+                bySubject.error instanceof ServiceUnavailableError
+                  ? 'Token metrics need Prometheus'
+                  : undefined
+              }
+              detail={unavailableDetail(bySubject.error)}
+              onRetry={() => bySubject.refetch()}
+            />
           ) : (
             <RegisterTable
               rows={rows}

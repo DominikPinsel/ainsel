@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/DominikPinsel/ainsel/services/hub/internal/prometheus"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/tasklogs"
+	"github.com/DominikPinsel/ainsel/services/hub/internal/telemetry"
 	agentv1alpha1 "github.com/DominikPinsel/ainsel/shared/api/api/v1alpha1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -20,6 +22,34 @@ import (
 // 30s matches the Prometheus default scrape interval, so the dashboard only
 // pays for one query per metric per scrape window even under heavy fan-in.
 const observabilityCacheTTL = 30 * time.Second
+
+// Values of the "source" field on metrics responses. It names the backend that
+// answered, so an operator reading the JSON over curl — or a support report
+// quoting it — can tell Prometheus figures from the hub's own records instead of
+// guessing from which panels have data.
+const (
+	metricsSourcePrometheus = "prometheus"
+	metricsSourcePostgres   = "postgres"
+)
+
+// Reasons a panel cannot be answered. Each one names the dependency that is
+// missing and where to set it, because the console shows this text to the
+// operator verbatim.
+const (
+	// metricsRequiredMessage is reported when neither Prometheus nor the hub's
+	// database can serve an event metric.
+	metricsRequiredMessage = "no metrics backend: set observability.prometheus.url, or give the hub a database to read its own records from"
+	// promRequiredMessage is reported for the panels only Prometheus can answer.
+	promRequiredMessage = "prometheus not configured: set observability.prometheus.url"
+	// logStoreRequiredMessage is reported for the panels that read the hub's log
+	// and conversation tables.
+	logStoreRequiredMessage = "hub database not configured: these panels read the hub's own task log table"
+)
+
+// allTimeStart is the lower bound of a "no window" query. The range-less summary
+// path has always meant "everything so far"; read from the hub's records that
+// becomes everything still retained, which is the closest equivalent.
+var allTimeStart = time.Unix(0, 0).UTC()
 
 // hubMetric describes one of the hub-internal Prometheus counters surfaced via
 // the summary endpoint and queryable by name in the timeseries endpoint.
@@ -61,6 +91,9 @@ var hubMetrics = []hubMetric{
 
 // MetricsSummary holds the current values of the hub-internal counters.
 //
+// Source names the backend the figures came from: prometheus, or postgres when
+// the hub answered from its own event records.
+//
 // RoutingErrors is named for its original source (hub_routing_errors_total),
 // but with a range set it reports error-level task logs within the window —
 // the same entries the errors page lists. The routing-errors counter only
@@ -72,6 +105,7 @@ type MetricsSummary struct {
 	EventsRouted    float64   `json:"eventsRouted"`
 	RoutingErrors   float64   `json:"routingErrors"`
 	UpdatedAt       time.Time `json:"updatedAt"`
+	Source          string    `json:"source,omitempty"`
 }
 
 // TimeseriesPoint is one (timestamp, value) pair.
@@ -81,11 +115,16 @@ type TimeseriesPoint struct {
 }
 
 // MetricsTimeseries is the response for the timeseries endpoint.
+//
+// Step is the bucket width, and the unit of Value depends on Source: the
+// Prometheus path reports a per-second rate, the hub's own records report a
+// count per bucket. Point counts are dense on both paths.
 type MetricsTimeseries struct {
 	Metric string            `json:"metric"`
 	Range  string            `json:"range"`
 	Step   string            `json:"step"`
 	Points []TimeseriesPoint `json:"points"`
+	Source string            `json:"source,omitempty"`
 }
 
 // AgentMetric is per-agent token consumption + invocation counts.
@@ -168,13 +207,25 @@ func (c *promCache) set(key string, value interface{}) {
 	}
 }
 
-// handleObservability dispatches to the three observability sub-handlers.
+// SetTelemetryStore wires the store that reads the hub's own records for the
+// event metric panels. It is the fallback used when no Prometheus is configured,
+// which is the common case: the chart ships no Prometheus of its own and the
+// value defaults to empty.
+func (s *Server) SetTelemetryStore(store *telemetry.Store) {
+	s.telemetry = store
+}
+
+// handleObservability dispatches to the observability sub-handlers.
 //
 // The canonical paths live under /api/v1/observability/metrics/*. We also
 // accept the legacy /api/v1/metrics/* prefix because the deployed frontend
 // in ainsel-dev (pre-PR-50) calls those paths. Legacy responses are tagged
 // with a Deprecation/Link header pair (RFC 8594 + RFC 8288) so frontends can
 // detect the alias and migrate without us having to break them mid-flight.
+//
+// Which gate a path gets is the part worth reading: these panels need different
+// backends, so each is gated on what it actually queries. They all used to
+// require Prometheus, which blanked panels that never ask it anything.
 func (s *Server) handleObservability(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/api/v1/observability/metrics/summary":
@@ -182,13 +233,13 @@ func (s *Server) handleObservability(w http.ResponseWriter, r *http.Request) {
 	case "/api/v1/observability/metrics/timeseries":
 		s.observabilityMethodGate(w, r, s.getMetricsTimeseries)
 	case "/api/v1/observability/metrics/agents":
-		s.observabilityMethodGate(w, r, s.getAgentsMetrics)
+		s.prometheusMethodGate(w, r, s.getAgentsMetrics)
 	case "/api/v1/observability/metrics/tokens/summary":
-		s.observabilityMethodGate(w, r, s.getTokensSummary)
+		s.prometheusMethodGate(w, r, s.getTokensSummary)
 	case "/api/v1/observability/metrics/tokens/timeseries":
-		s.observabilityMethodGate(w, r, s.getTokensTimeseries)
+		s.prometheusMethodGate(w, r, s.getTokensTimeseries)
 	case "/api/v1/observability/metrics/tokens/by-subject":
-		s.observabilityMethodGate(w, r, s.getTokensBySubject)
+		s.prometheusMethodGate(w, r, s.getTokensBySubject)
 	case "/api/v1/observability/metrics/tokens/by-event":
 		s.observabilityMethodGate(w, r, s.getTokensByEvent)
 	case "/api/v1/metrics/summary":
@@ -199,7 +250,7 @@ func (s *Server) handleObservability(w http.ResponseWriter, r *http.Request) {
 		s.observabilityMethodGate(w, r, s.getMetricsTimeseries)
 	case "/api/v1/metrics/agents":
 		setDeprecationHeaders(w, "/api/v1/observability/metrics/agents")
-		s.observabilityMethodGate(w, r, s.getAgentsMetrics)
+		s.prometheusMethodGate(w, r, s.getAgentsMetrics)
 	default:
 		writeError(w, http.StatusNotFound, "not found")
 	}
@@ -222,7 +273,7 @@ func (s *Server) handleObservabilityMetricsQuery(w http.ResponseWriter, r *http.
 		return
 	}
 	if s.prom == nil {
-		writeError(w, http.StatusServiceUnavailable, "metrics backend not configured")
+		writeError(w, http.StatusServiceUnavailable, promRequiredMessage)
 		return
 	}
 	// With no authz wired there is no notion of admin and the whole API is open
@@ -287,11 +338,45 @@ func (s *Server) observabilityMethodGate(w http.ResponseWriter, r *http.Request,
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	h(w, r)
+}
+
+// prometheusMethodGate serves the panels only Prometheus can answer. Agent token
+// and invocation series are published by the runtime to metrics this hub does not
+// keep rows for, so a hub with no Prometheus has nothing to offer them — the 503
+// says as much, naming the setting that would fix it.
+func (s *Server) prometheusMethodGate(w http.ResponseWriter, r *http.Request, h func(http.ResponseWriter, *http.Request)) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
 	if s.prom == nil {
-		writeError(w, http.StatusServiceUnavailable, "metrics backend not configured")
+		writeError(w, http.StatusServiceUnavailable, promRequiredMessage)
 		return
 	}
 	h(w, r)
+}
+
+// metricsBackend chooses the source that answers an event-metric query.
+//
+// Prometheus wins when configured, because counters cover everything the process
+// has done while the hub's rows are bounded by retention. With no Prometheus the
+// hub answers from the records it wrote while routing, which is what lets a
+// standalone install — the common shape, as the chart ships no Prometheus of its
+// own — show real charts instead of an empty panel.
+//
+// The records are only a backend if the store can actually read them. A store
+// built over a nil pool exists but answers nothing, and naming it here would
+// turn "no metrics source configured" into a query failure.
+func (s *Server) metricsBackend() (string, bool) {
+	switch {
+	case s.prom != nil:
+		return metricsSourcePrometheus, true
+	case s.telemetry.Ready():
+		return metricsSourcePostgres, true
+	default:
+		return "", false
+	}
 }
 
 func (s *Server) getMetricsSummary(w http.ResponseWriter, r *http.Request) {
@@ -312,26 +397,54 @@ func (s *Server) getMetricsSummary(w http.ResponseWriter, r *http.Request) {
 		rng = &opt
 	}
 
-	cacheKey := "summary"
+	source, ok := s.metricsBackend()
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, metricsRequiredMessage)
+		return
+	}
+
+	// The cache is keyed by source so a hub that gains Prometheus after running
+	// without it cannot serve records-shaped figures under a prometheus label, or
+	// the other way round, for the length of the TTL.
+	cacheKey := "summary:" + source
 	if rng != nil {
-		cacheKey = "summary:" + rangeKey
+		cacheKey += ":" + rangeKey
 	}
 	if cached, ok := s.observabilityCache.get(cacheKey); ok {
 		writeJSON(w, http.StatusOK, cached)
 		return
 	}
 
-	summary := MetricsSummary{UpdatedAt: time.Now().UTC()}
+	var summary MetricsSummary
+	var err error
+	if source == metricsSourcePostgres {
+		summary, err = s.summaryFromRecords(r.Context(), rng)
+	} else {
+		summary, err = s.summaryFromPrometheus(r.Context(), rng, rangeKey)
+	}
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	s.observabilityCache.set(cacheKey, summary)
+	writeJSON(w, http.StatusOK, summary)
+}
+
+// summaryFromPrometheus reads the four hub counters. With a range it uses
+// increase() so the card shows the count inside the window rather than the
+// all-time total.
+func (s *Server) summaryFromPrometheus(ctx context.Context, rng *rangeOption, rangeKey string) (MetricsSummary, error) {
+	summary := MetricsSummary{UpdatedAt: time.Now().UTC(), Source: metricsSourcePrometheus}
 	for _, m := range hubMetrics {
 		// With a range set, the Errors card counts error-level task logs in
 		// the window (what the errors page lists) instead of the
 		// hub_routing_errors_total counter. The counter remains the source on
 		// the legacy range-less path and when no log store is configured.
 		if m.Name == "routing_errors" && rng != nil && s.taskLogs != nil {
-			count, err := s.taskLogs.CountByLevelSince(r.Context(), tasklogs.LevelError, time.Now().UTC().Add(-rng.Duration))
+			count, err := s.taskLogs.CountByLevelSince(ctx, tasklogs.LevelError, time.Now().UTC().Add(-rng.Duration))
 			if err != nil {
-				writeError(w, http.StatusBadGateway, fmt.Sprintf("failed to count error task logs: %s", err.Error()))
-				return
+				return MetricsSummary{}, fmt.Errorf("failed to count error task logs: %s", err.Error())
 			}
 			summary.RoutingErrors = float64(count)
 			continue
@@ -344,10 +457,9 @@ func (s *Server) getMetricsSummary(w http.ResponseWriter, r *http.Request) {
 			counter := strings.TrimSuffix(strings.TrimPrefix(m.PromQL, "sum("), ")")
 			query = fmt.Sprintf("sum(increase(%s[%s]))", counter, rangeKey)
 		}
-		val, err := singleScalar(r.Context(), s.prom, query)
+		val, err := singleScalar(ctx, s.prom, query)
 		if err != nil {
-			writeError(w, http.StatusBadGateway, fmt.Sprintf("failed to query %s: %s", m.Name, err.Error()))
-			return
+			return MetricsSummary{}, fmt.Errorf("failed to query %s: %s", m.Name, err.Error())
 		}
 		// These metrics are event counts. increase() extrapolates fractional
 		// values (e.g. 64.7826), which surfaced on the dashboard KPI cards as
@@ -364,9 +476,32 @@ func (s *Server) getMetricsSummary(w http.ResponseWriter, r *http.Request) {
 			summary.RoutingErrors = val
 		}
 	}
+	return summary, nil
+}
 
-	s.observabilityCache.set(cacheKey, summary)
-	writeJSON(w, http.StatusOK, summary)
+// summaryFromRecords answers the same four figures from the hub's own tables.
+// It is the path a hub with no Prometheus takes, and it counts what actually
+// happened rather than what a counter remembered: a window older than the hub's
+// retained rows reports zero, because the rows it would have counted are gone.
+func (s *Server) summaryFromRecords(ctx context.Context, rng *rangeOption) (MetricsSummary, error) {
+	end := time.Now().UTC()
+	start := allTimeStart
+	if rng != nil {
+		start = end.Add(-rng.Duration)
+	}
+
+	totals, err := s.telemetry.Totals(ctx, start, end)
+	if err != nil {
+		return MetricsSummary{}, fmt.Errorf("failed to read metrics from the hub database: %s", err.Error())
+	}
+	return MetricsSummary{
+		EventsConsumed:  float64(totals.EventsConsumed),
+		TriggersMatched: float64(totals.TriggersMatched),
+		EventsRouted:    float64(totals.EventsRouted),
+		RoutingErrors:   float64(totals.RoutingErrors),
+		UpdatedAt:       end,
+		Source:          metricsSourcePostgres,
+	}, nil
 }
 
 func (s *Server) getMetricsTimeseries(w http.ResponseWriter, r *http.Request) {
@@ -395,7 +530,20 @@ func (s *Server) getMetricsTimeseries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cacheKey := fmt.Sprintf("ts:%s:%s", metric.Name, rangeKey)
+	source, ok := s.metricsBackend()
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, metricsRequiredMessage)
+		return
+	}
+	// Two registries, deliberately kept separate: hubMetrics names what can be
+	// scraped, telemetry names what the hub has rows for. A metric in one but not
+	// the other must be refused, not drawn as an empty chart.
+	if source == metricsSourcePostgres && !telemetry.SupportsMetric(metric.Name) {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("metric %q is not readable from the hub's own records", metric.Name))
+		return
+	}
+
+	cacheKey := fmt.Sprintf("ts:%s:%s:%s", source, metric.Name, rangeKey)
 	if cached, ok := s.observabilityCache.get(cacheKey); ok {
 		writeJSON(w, http.StatusOK, cached)
 		return
@@ -404,30 +552,16 @@ func (s *Server) getMetricsTimeseries(w http.ResponseWriter, r *http.Request) {
 	end := time.Now().UTC()
 	start := end.Add(-rng.Duration)
 
-	// Prefer a rate query for counters so charts show throughput rather than the
-	// monotonically-increasing raw counter.
-	query := metric.PromQL
-	if metric.RatePromQL != "" {
-		query = fmt.Sprintf(metric.RatePromQL, rng.PromRange)
+	var points []TimeseriesPoint
+	var err error
+	if source == metricsSourcePostgres {
+		points, err = s.pointsFromRecords(r.Context(), metric.Name, start, end, rng.Step)
+	} else {
+		points, err = s.pointsFromPrometheus(r.Context(), metric, rng, start, end)
 	}
-
-	result, err := s.prom.QueryRange(r.Context(), query, start, end, rng.Step)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to query metrics: "+err.Error())
+		writeError(w, http.StatusBadGateway, err.Error())
 		return
-	}
-
-	points := make([]TimeseriesPoint, 0)
-	if len(result.Series) > 0 {
-		// We use sum(...) queries which collapse to a single series; if multiple
-		// come back (e.g. caller passes a custom metric with labels) we just take
-		// the first one to keep the wire format stable.
-		for _, s := range result.Series[0].Samples {
-			points = append(points, TimeseriesPoint{
-				Timestamp: s.Timestamp.UTC(),
-				Value:     s.Value,
-			})
-		}
 	}
 
 	resp := MetricsTimeseries{
@@ -435,9 +569,115 @@ func (s *Server) getMetricsTimeseries(w http.ResponseWriter, r *http.Request) {
 		Range:  rangeKey,
 		Step:   rng.Step.String(),
 		Points: points,
+		Source: source,
 	}
 	s.observabilityCache.set(cacheKey, resp)
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// pointsFromPrometheus samples a counter's rate across the window, so the chart
+// shows throughput rather than the monotonically-increasing raw counter. Every
+// metric in hubMetrics defines RatePromQL today; the raw PromQL is the fallback
+// for one that does not, which is why the API docs qualify the reported unit.
+func (s *Server) pointsFromPrometheus(ctx context.Context, metric hubMetric, rng rangeOption, start, end time.Time) ([]TimeseriesPoint, error) {
+	query := metric.PromQL
+	if metric.RatePromQL != "" {
+		query = fmt.Sprintf(metric.RatePromQL, rng.PromRange)
+	}
+
+	result, err := s.prom.QueryRange(ctx, query, start, end, rng.Step)
+	if err != nil {
+		return nil, errors.New("failed to query metrics: " + err.Error())
+	}
+
+	points := make([]TimeseriesPoint, 0)
+	if len(result.Series) > 0 {
+		// We use sum(...) queries which collapse to a single series; if multiple
+		// come back (e.g. caller passes a custom metric with labels) we just take
+		// the first one to keep the wire format stable.
+		for _, sample := range result.Series[0].Samples {
+			points = append(points, TimeseriesPoint{
+				Timestamp: sample.Timestamp.UTC(),
+				Value:     sample.Value,
+			})
+		}
+	}
+	return points, nil
+}
+
+// pointsFromRecords counts the hub's own rows into one point per bucket. Values
+// are counts per bucket, not the per-second rate the Prometheus path reports;
+// the response's source field tells the reader which of the two it is looking at.
+func (s *Server) pointsFromRecords(ctx context.Context, metric string, start, end time.Time, step time.Duration) ([]TimeseriesPoint, error) {
+	rows, err := s.telemetry.Series(ctx, metric, start, end, step)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read %s from the hub database: %s", metric, err.Error())
+	}
+	return denseBuckets(rows, start, end, step)
+}
+
+// maxBucketDrift bounds how far a bucket the records store reports may sit from
+// the grid point it is filed to. See denseBuckets.
+const maxBucketDrift = time.Millisecond
+
+// maxSeriesPoints bounds the zero-filled response. The supported ranges step to
+// at most 120-180 points; the cap exists so a future fine-grained step cannot
+// turn one dashboard poll into a megabyte of JSON.
+const maxSeriesPoints = 2000
+
+// denseBuckets lays the store's buckets onto a fixed grid spanning
+// [start, end), zero-filling the gaps. The chart places bars by index, so
+// passing the sparse result straight through would spread a handful of events
+// across the whole window and misreport when they happened.
+//
+// The grid spans [start, end): a window that divides evenly by step yields one
+// fewer point than Prometheus' QueryRange, which samples its end bound
+// inclusively. The chart lays bars out by index, so both backends render the
+// same shape; only a response diff sees the difference.
+//
+// Bucket bounds are matched to the grid by rounding, not truncating: see the
+// comment in the loop below. A bucket that is not on this grid at all is an
+// error rather than a mis-dated chart, so the function reports one.
+func denseBuckets(rows []telemetry.Bucket, start, end time.Time, step time.Duration) ([]TimeseriesPoint, error) {
+	count := int(end.Sub(start) / step)
+	if count < 0 {
+		count = 0
+	}
+	if count > maxSeriesPoints {
+		count = maxSeriesPoints
+	}
+
+	points := make([]TimeseriesPoint, count)
+	for i := range points {
+		points[i] = TimeseriesPoint{Timestamp: start.Add(time.Duration(i) * step).UTC()}
+	}
+	for _, row := range rows {
+		// Bucket bounds were derived in Postgres, which keeps timestamps to the
+		// microsecond. The window start it worked from can therefore differ from
+		// this Go-side `start` by up to 1µs, and every bucket it returns carries
+		// that same sliver of error. Truncating the division would file the whole
+		// series one bucket early — a silently mis-dated chart — so round to the
+		// nearest bucket instead. The drift is orders of magnitude smaller than
+		// any step this endpoint uses, so rounding is never ambiguous.
+		idx := int(math.Round(float64(row.Start.Sub(start)) / float64(step)))
+		if idx < 0 || idx >= count {
+			continue
+		}
+		// Rounding is only safe because telemetry.Series anchors its buckets on
+		// the `start` passed here, so the residual is that sub-microsecond Postgres
+		// sliver and nothing else. The invariant is owned by another package and
+		// rounding cannot express it — rounding a bucket a quarter-step off lands it
+		// on a neighbour just as quietly as truncation did. Fail loudly instead: a
+		// store that stopped aligning to the window is a broken fallback, not a chart
+		// whose x-axis is a guess.
+		drift := row.Start.Sub(start) - time.Duration(idx)*step
+		if drift > maxBucketDrift || drift < -maxBucketDrift {
+			return nil, fmt.Errorf("metrics bucket %s sits %s from grid point %d of the %s window starting %s: the records store must bucket from the window start",
+				row.Start.UTC().Format(time.RFC3339Nano), drift, idx, step, start.UTC().Format(time.RFC3339Nano))
+		}
+		points[idx].Value += float64(row.Count)
+	}
+	return points, nil
 }
 
 func (s *Server) getAgentsMetrics(w http.ResponseWriter, r *http.Request) {

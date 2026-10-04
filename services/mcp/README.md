@@ -6,7 +6,7 @@ surface.
 
 Speaks the MCP [streamable HTTP transport](https://modelcontextprotocol.io)
 on `/mcp` and registers tools that proxy to the hub backend. (NATS,
-Loki, and Prometheus are all reached through the hub, so the
+and Prometheus are reached through the hub, so the
 server only needs `HUB_URL`.) The endpoint is protected by OIDC
 JWT validation or `ainsel_` user-token validation; see
 [`docs/mcp.md`](../../docs/mcp.md) for the full guide.
@@ -51,7 +51,7 @@ registered in [`internal/mcp/server.go`](internal/mcp/server.go):
   `list_github_apps`, `get_github_app`.
 - **Cost / errors:** `get_token_usage`, `get_stats`, `get_recent_errors`.
 - **Events (NATS, via hub):** `get_stream_info`, `list_recent_events`.
-- **Observability (via hub):** `get_agent_logs`, `query_logs` (Loki),
+- **Observability (via hub):** `get_agent_logs`, `query_logs`,
   `get_agent_metrics`, `query_metrics` (Prometheus).
 - **Health:** `get_platform_health`.
 
@@ -96,7 +96,7 @@ Env vars (see [`internal/config/config.go`](internal/config/config.go)):
 `PORT`, `OIDC_ISSUER` (required), `OIDC_PROJECT_ID` (required),
 `OIDC_CLIENT_ID`, `MCP_RESOURCE_URL`, `HUB_URL`,
 `INTERNAL_VALIDATE_SECRET`. The server only needs `HUB_URL` to reach the
-hub; NATS, Loki, and Prometheus are all accessed through the hub.
+hub; NATS and Prometheus are accessed through the hub.
 
 ## Testing
 

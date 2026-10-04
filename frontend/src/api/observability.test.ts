@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ServiceUnavailableError } from './client'
 import {
   getObservabilityLogs,
   getObservabilitySummary,
@@ -6,6 +7,9 @@ import {
   getTokensByEvent,
   getTokensBySubject,
   getTokensSummary,
+  unavailableDetail,
+  formatStep,
+  chartUnit,
 } from './observability'
 
 const mockFetch = () => globalThis.fetch as ReturnType<typeof vi.fn>
@@ -175,5 +179,54 @@ describe('api/observability', () => {
     expect(logs[1].agent).toBeUndefined()
     expect(logs[1].app).toBeUndefined()
     expect(logs[1].level).toBeUndefined()
+  })
+})
+describe('metrics helpers', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn())
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('formatStep shortens the hub step to what a bar holds', () => {
+    expect(formatStep('10m0s')).toBe('10m')
+    expect(formatStep('1h0m0s')).toBe('1h')
+    expect(formatStep('30s')).toBe('30s')
+    expect(formatStep('3m0s')).toBe('3m')
+    expect(formatStep(undefined)).toBeUndefined()
+    expect(formatStep('nonsense')).toBeUndefined()
+  })
+
+  it('chartUnit labels each backend in the unit it actually answers in', () => {
+    // The hub's records count events per bucket, so the bucket width is the label.
+    expect(chartUnit('postgres', '10m0s')).toBe('events / 10m')
+    // A Prometheus sample is a per-second rate, not a count. Labelling it
+    // "events / hour" would overstate the bar by 3600x, so the rate branch
+    // stays unitless-but-honest no matter what step came back.
+    expect(chartUnit('prometheus', '1h0m0s')).toBe('events / period')
+    expect(chartUnit(undefined, undefined)).toBe('events / period')
+    // A missing or unparseable step still yields a label, never "undefined".
+    expect(chartUnit('postgres', undefined)).toBe('events / bucket')
+    expect(chartUnit('postgres', 'nonsense')).toBe('events / bucket')
+  })
+
+  it('unavailableDetail carries the reason the hub gave for a 503', async () => {
+    mockFetch().mockResolvedValue(
+      new Response(JSON.stringify({ error: 'prometheus not configured' }), {
+        status: 503,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    // One request only: a Response body can be read once, and the point is the
+    // message the client attaches to the error it throws.
+    const error = await getTokensSummary().catch((e) => e)
+    expect(error).toBeInstanceOf(ServiceUnavailableError)
+    expect(unavailableDetail(error)).toBe('prometheus not configured')
+  })
+
+  it('unavailableDetail stays silent for anything that is not a 503', () => {
+    expect(unavailableDetail(new Error('boom'))).toBeUndefined()
+    expect(unavailableDetail(undefined)).toBeUndefined()
   })
 })

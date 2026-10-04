@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useInvocations, invocationStatusVariant } from '../../../api/invocations'
-import { useObservabilityTimeseries, type Range } from '../../../api/observability'
+import { useObservabilityTimeseries, unavailableDetail, type Range } from '../../../api/observability'
 import { ServiceUnavailableError } from '../../../api/client'
 import { Titleblock } from '../../../layout/Titleblock'
 import { Panel } from '../../../primitives/Panel'
@@ -138,6 +138,8 @@ export function RoutingDetail() {
           ) : (
             <SectionStatus
               state={chartState}
+              title={chartState === 'unavailable' ? 'No metrics source configured' : undefined}
+              detail={unavailableDetail(matched.error ?? routed.error)}
               onRetry={() => { matched.refetch(); routed.refetch() }}
             />
           )}

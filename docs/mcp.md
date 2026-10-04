@@ -13,7 +13,7 @@ The server lives in [`services/mcp/`](../services/mcp/). It speaks the
 HTTP transport on `/mcp` and exposes a single, uniform tool surface that
 proxies to the hub backend. It stores no state of its own — every tool
 call is a typed read or write against the hub's REST API (and, for
-observability, against Loki / Prometheus through the hub).
+observability, against the hub's database and, when configured, Prometheus).
 
 ## Why a local agent?
 
@@ -277,8 +277,8 @@ as ambiguous with the candidate ids listed rather than guessed.
 
 | Tool | Mode | What it answers |
 |------|------|-----------------|
-| `get_agent_logs` | read | Recent logs for a specific agent. |
-| `query_logs` | read | Freeform LogQL query against Loki across the `ainsel` namespace. |
+| `get_agent_logs` | read | Recent task logs for a specific agent. |
+| `query_logs` | read | Recent task logs across the namespace. **Note:** the hub's log endpoint has no query language to pass through — it reads the hub's `task_logs` table and filters by agent, level and window. The `query` argument is accepted for compatibility but currently ignored, so it does not narrow the result. |
 | `get_agent_metrics` | read | Key metrics for a specific agent: processing times, event counts, error rates. |
 | `query_metrics` | read | Freeform PromQL query against Prometheus. |
 | `get_platform_health` | read | Overview of the `ainsel` namespace: pod statuses, restarts, readiness, resource usage. |
@@ -373,7 +373,7 @@ INTERNAL_VALIDATE_SECRET=<shared-secret> \
 ```
 
 The server only needs `HUB_URL` to reach the hub; everything else
-(Loki, Prometheus, mem0) is accessed through the hub. Run
+(Prometheus, mem0) is accessed through the hub. Run
 `make test` for the test suite.
 
 ## Reference

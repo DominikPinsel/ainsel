@@ -19,6 +19,7 @@ import (
 	"github.com/DominikPinsel/ainsel/services/hub/internal/personas"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/prometheus"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/tasklogs"
+	"github.com/DominikPinsel/ainsel/services/hub/internal/telemetry"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/triggers"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/usertokens"
 	"github.com/DominikPinsel/ainsel/shared/auth/oidc"
@@ -111,6 +112,11 @@ type Server struct {
 	userInfoClient *http.Client
 	// eventQueue is the PostgreSQL event queue store.
 	eventQueue *eventqueue.Store
+
+	// telemetry reads the hub's own records to answer the event metrics panels
+	// when no Prometheus is configured. See metricsBackend in
+	// handlers_observability.go, which decides between the two sources.
+	telemetry *telemetry.Store
 
 	// identityTracker guards automatic identity persistence so it does not
 	// fire on every authenticated request. See identity_persist.go.

@@ -45,7 +45,7 @@ func (s *Server) handleTokens(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listTokens(w http.ResponseWriter, r *http.Request) {
 	if s.prom == nil {
-		writeError(w, http.StatusServiceUnavailable, "metrics backend not configured")
+		writeError(w, http.StatusServiceUnavailable, promRequiredMessage)
 		return
 	}
 

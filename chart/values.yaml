@@ -441,8 +441,10 @@ auth:
 forgejo:
   apiBase: ""
   repo: ""
-# Observability — external Prometheus and Loki endpoints
-# Leave URLs empty to disable external observability queries
+# Observability — external Prometheus endpoint
+# Leave empty to keep the hub off Prometheus entirely: the event KPIs and
+# throughput charts are then served from the hub's own database, and only the
+# token panels and raw PromQL go dark (they have no fallback).
 observability:
   prometheus:
     url: ""

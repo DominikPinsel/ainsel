@@ -158,4 +158,72 @@ describe('Dashboard', () => {
     const bars = container.querySelectorAll('svg rect')
     expect(bars.length).toBeGreaterThanOrEqual(24)
   })
+
+  // The throughput panel is the one place outside /observability that shows the
+  // hub's own 503 reason. `unavailableDetail` is the rule that decides which
+  // failures get to say something, so both branches are pinned here: a 503
+  // quotes the hub, anything else stays silent rather than passing a raw
+  // upstream error body through to the console.
+  //
+  // Both cases look inside the throughput panel's own <section> rather than the
+  // whole page. Today it is the only Dashboard child that renders a
+  // `.ss-detail`, so a page-wide query happens to be exact — but a sibling that
+  // grows one later would otherwise fail these tests for a reason unrelated to
+  // the rule they pin.
+  function throughputPanel(): HTMLElement {
+    const panel = screen.getByText('Throughput · 24h').closest('.panel')
+    expect(panel).not.toBeNull()
+    return panel as HTMLElement
+  }
+
+  it('shows the hub reason when the throughput query returns 503', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.includes('/observability/metrics/timeseries')) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                error: 'prometheus not configured: set observability.prometheus.url',
+              }),
+              { status: 503, headers: { 'Content-Type': 'application/json' } },
+            ),
+          )
+        }
+        return Promise.resolve(routeResponse(url))
+      }),
+    )
+    renderWithProviders(<Dashboard />)
+    await waitFor(() =>
+      expect(screen.getByText('No metrics source configured')).toBeInTheDocument(),
+    )
+    expect(throughputPanel().querySelector('.ss-detail')).toHaveTextContent(
+      'prometheus not configured: set observability.prometheus.url',
+    )
+  })
+
+  it('shows no detail line for a throughput failure that is not a 503', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.includes('/observability/metrics/timeseries')) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ error: 'query failed: context deadline exceeded' }),
+              { status: 500, headers: { 'Content-Type': 'application/json' } },
+            ),
+          )
+        }
+        return Promise.resolve(routeResponse(url))
+      }),
+    )
+    renderWithProviders(<Dashboard />)
+    await waitFor(() =>
+      expect(screen.getByText('Failed to load throughput')).toBeInTheDocument(),
+    )
+    expect(
+      screen.queryByText('query failed: context deadline exceeded'),
+    ).not.toBeInTheDocument()
+    expect(throughputPanel().querySelector('.ss-detail')).toBeNull()
+  })
 })

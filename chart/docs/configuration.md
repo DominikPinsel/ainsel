@@ -117,7 +117,6 @@ via `hub.extraEnv` in your `values.yaml`.
 | Value | Type | Default | Description |
 |-------|------|---------|-------------|
 | `observability.prometheus.url` | string | `""` | External Prometheus URL for hub observability API |
-| `observability.loki.url` | string | `""` | External Loki URL for hub observability API |
 | `observability.serviceMonitor.enabled` | bool | `false` | Create ServiceMonitor resources |
 | `observability.podMonitor.enabled` | bool | `false` | Create PodMonitor resources |
 | `observability.prometheusRules.enabled` | bool | `false` | Install CPU throttling / OOM PrometheusRule (requires Prometheus Operator) |
