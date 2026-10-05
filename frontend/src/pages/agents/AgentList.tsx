@@ -10,6 +10,7 @@ import { Pager } from '../../primitives/Pager'
 import { Panel } from '../../primitives/Panel'
 import { RegisterTable, type Column } from '../../primitives/RegisterTable'
 import { Titleblock } from '../../layout/Titleblock'
+import { llmProviderLabel } from './agentFormModel'
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50] as const
 
@@ -54,6 +55,12 @@ export function AgentList() {
       header: 'Model',
       width: 200,
       cell: (a) => <span className="num">{a.llm?.model ?? '—'}</span>,
+    },
+    {
+      key: 'provider',
+      header: 'Provider',
+      width: 160,
+      cell: (a) => llmProviderLabel(a.llm?.provider),
     },
     {
       key: 'image',

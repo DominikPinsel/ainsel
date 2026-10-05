@@ -39,7 +39,7 @@ export type AgentSummary = {
   id: string
   name: string
   description?: string
-  llm?: { model: string }
+  llm?: { model: string; provider?: string }
   imageRef?: AgentImageRef
   persona?: AgentPersona
   replicas?: number

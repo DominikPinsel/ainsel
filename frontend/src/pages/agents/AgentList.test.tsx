@@ -17,14 +17,14 @@ describe('AgentList', () => {
                   {
                     id: 'a1',
                     name: 'doc-writer',
-                    llm: { model: 'claude-opus-4-7' },
+                    llm: { model: 'claude-opus-4-7', provider: 'ollama-cloud' },
                     imageRef: { name: 'claude-tooling-base:1.4' },
                     status: { ready: true, replicas: 3 },
                   },
                   {
                     id: 'a2',
                     name: 'triage-bot',
-                    llm: { model: 'claude-sonnet-4-6' },
+                    llm: { model: 'claude-sonnet-4-6', provider: 'alibaba-cloud' },
                     imageRef: { name: 'claude-tooling-base:1.4' },
                     status: { ready: false, replicas: 0 },
                   },
@@ -51,6 +51,45 @@ describe('AgentList', () => {
     await waitFor(() => expect(screen.getByText('doc-writer')).toBeInTheDocument())
     expect(screen.getByText('triage-bot')).toBeInTheDocument()
     expect(screen.getByText('claude-opus-4-7')).toBeInTheDocument()
+  })
+
+  it('renders each agent’s provider label next to its model', async () => {
+    renderWithProviders(<AgentList />, { route: '/agents' })
+    expect(await screen.findByText('Ollama Cloud')).toBeInTheDocument()
+    expect(screen.getByText('Alibaba Token Plan')).toBeInTheDocument()
+  })
+
+  it('falls back to None when a row has no provider', async () => {
+    // Only a1 is returned this run, stripped of its provider.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.includes('/agents')) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                items: [
+                  {
+                    id: 'a1',
+                    name: 'doc-writer',
+                    llm: { model: 'claude-opus-4-7' },
+                    status: { ready: true },
+                  },
+                ],
+                total: 1,
+                page: 1,
+                pageSize: 20,
+                totalPages: 1,
+              }),
+              { status: 200 },
+            ),
+          )
+        }
+        return Promise.resolve(new Response('{}', { status: 200 }))
+      }),
+    )
+    renderWithProviders(<AgentList />, { route: '/agents' })
+    expect(await screen.findByText('None')).toBeInTheDocument()
   })
 
   it('shows the New Agent header action', async () => {

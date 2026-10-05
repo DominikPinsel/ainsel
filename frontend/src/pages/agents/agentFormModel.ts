@@ -15,6 +15,18 @@ export const LLM_PROVIDERS = [
   { value: 'custom', label: 'Custom' },
 ] as const
 
+/**
+ * Human-readable label for a stored LLM provider id. Derived from the same
+ * LLM_PROVIDERS options the forms offer, so display can never drift from the
+ * form vocabulary — including the empty id, which the forms call 'None'.
+ * Unknown ids fall through to the raw value so a provider added later still
+ * renders honestly until this list learns it.
+ */
+export function llmProviderLabel(provider: string | undefined): string {
+  if (!provider) return 'None'
+  return LLM_PROVIDERS.find((p) => p.value === provider)?.label ?? provider
+}
+
 export const API_KEY_LABELS: Record<string, string> = {
   'ollama-cloud': 'Ollama Cloud API Key',
   opencode: 'OpenCode API Key',
