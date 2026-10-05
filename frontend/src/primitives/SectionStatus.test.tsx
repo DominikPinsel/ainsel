@@ -15,7 +15,22 @@ describe('SectionStatus', () => {
 
   it('renders default unavailable copy', () => {
     render(<SectionStatus state="unavailable" />)
-    expect(screen.getByText('Telemetry not configured')).toBeInTheDocument()
+    expect(screen.getByText('No data source configured')).toBeInTheDocument()
+  })
+
+  it('shows the hub reason for a 503 under the panel heading it belongs to', () => {
+    render(
+      <SectionStatus
+        state="unavailable"
+        title="Token metrics need Prometheus"
+        detail="prometheus not configured: set observability.prometheus.url"
+      />,
+    )
+    expect(screen.getByText('Token metrics need Prometheus')).toBeInTheDocument()
+    expect(
+      screen.getByText('prometheus not configured: set observability.prometheus.url'),
+    ).toBeInTheDocument()
+    expect(screen.queryByText('No data source configured')).not.toBeInTheDocument()
   })
 
   it('renders error with retry button', async () => {

@@ -24,7 +24,7 @@ func (s *Server) handleConversations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.taskLogs == nil {
-		writeError(w, http.StatusServiceUnavailable, "log backend not configured")
+		writeError(w, http.StatusServiceUnavailable, logStoreRequiredMessage)
 		return
 	}
 

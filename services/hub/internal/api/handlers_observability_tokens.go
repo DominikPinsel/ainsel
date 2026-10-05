@@ -346,7 +346,7 @@ func (s *Server) getTokensByEvent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.taskLogs == nil {
-		writeError(w, http.StatusServiceUnavailable, "log backend not configured")
+		writeError(w, http.StatusServiceUnavailable, logStoreRequiredMessage)
 		return
 	}
 

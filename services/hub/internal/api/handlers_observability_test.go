@@ -13,6 +13,7 @@ import (
 
 	agentv1alpha1 "github.com/DominikPinsel/ainsel/shared/api/api/v1alpha1"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/prometheus"
+	"github.com/DominikPinsel/ainsel/services/hub/internal/telemetry"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -727,5 +728,103 @@ func TestPromCache_TTLExpires(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if _, ok := c.get("k"); ok {
 		t.Fatal("expected entry to be expired")
+	}
+}
+
+// --- denseBuckets grid placement ---
+
+// TestDenseBucketsKeepsBucketsWithinSubMicrosecondDrift pins why the grid
+// lookup rounds instead of truncating. The store derives its bucket bounds in
+// Postgres, which is microsecond-accurate, so a bucket belonging on grid point
+// k arrives as start+k*step less the sub-microsecond remainder the window start
+// carried. Truncating filed every one of them a whole bucket early — a silently
+// mis-dated chart, not a cosmetic one.
+//
+// This needs no database, unlike the seeded suites that exercise the same path.
+func TestDenseBucketsKeepsBucketsWithinSubMicrosecondDrift(t *testing.T) {
+	// A wall-clock window start: the shape that actually has nanoseconds.
+	start := time.Date(2026, 10, 3, 22, 49, 40, 123456789, time.UTC)
+	end := start.Add(time.Hour)
+	const step = 30 * time.Second
+
+	// Bucket 118 as the store returns it — 118 steps in, less the 200ns that
+	// fell below the microsecond boundary.
+	drifted := start.Add(118*step - 200*time.Nanosecond)
+	points, err := denseBuckets([]telemetry.Bucket{{Start: drifted, Count: 3}}, start, end, step)
+	if err != nil {
+		t.Fatalf("sub-microsecond drift is on the grid, must not be refused: %v", err)
+	}
+
+	if len(points) != 120 {
+		t.Fatalf("expected 120 dense points for a 1h/30s window, got %d", len(points))
+	}
+	if got := points[117].Value; got != 0 {
+		t.Errorf("bucket 117 = %v, want 0: sub-microsecond drift shifted the series a whole bucket early", got)
+	}
+	if got := points[118].Value; got != 3 {
+		t.Errorf("bucket 118 = %v, want 3", got)
+	}
+
+	// The same drift on the leading bucket must not fall off the front of the
+	// grid, where an out-of-range index would drop the count outright.
+	head, err := denseBuckets([]telemetry.Bucket{{Start: start.Add(-200 * time.Nanosecond), Count: 1}}, start, end, step)
+	if err != nil {
+		t.Fatalf("leading bucket drift is on the grid, must not be refused: %v", err)
+	}
+	if got := head[0].Value; got != 1 {
+		t.Errorf("bucket 0 = %v, want 1", got)
+	}
+}
+
+// TestDenseBucketsRefusesBucketsOffItsGrid covers the guard that keeps the
+// rounding above honest. Rounding to the nearest grid point cannot tell a
+// sub-microsecond sliver of error from a bucket that belongs to a different grid
+// altogether — a store that dated its buckets from some other origin, say, would
+// arrive a fraction of a step off this window, and every one of its counts would
+// land in the wrong bucket with nothing to show it. Truncation had the same blind
+// spot, so this makes the assumption rounding rests on checkable: a store that
+// stops aligning to the window start now fails the request instead of drawing a
+// plausible lie. (A bucket exactly one step off stays invisible by construction;
+// it is indistinguishable from a legitimate neighbour.)
+func TestDenseBucketsRefusesBucketsOffItsGrid(t *testing.T) {
+	start := time.Date(2026, 10, 3, 22, 49, 40, 123456789, time.UTC)
+	end := start.Add(time.Hour)
+	const step = 30 * time.Second
+
+	for _, tc := range []struct {
+		name  string
+		start time.Time
+	}{
+		{"a quarter step late", start.Add(118*step + step/4)},
+		{"a quarter step early", start.Add(3*step - step/4)},
+		{"a few seconds off", start.Add(50*step + 2*time.Second)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			points, err := denseBuckets([]telemetry.Bucket{{Start: tc.start, Count: 7}}, start, end, step)
+			if err == nil {
+				t.Fatalf("expected an error for bucket %s, got %v", tc.start, points)
+			}
+			if !strings.Contains(err.Error(), "must bucket from the window start") {
+				t.Errorf("error should name the broken assumption, got: %v", err)
+			}
+		})
+	}
+
+	// A bucket outside the grid stays a silent drop, not an error: the response
+	// is capped at maxSeriesPoints, so a window wider than the cap legitimately
+	// returns rows the grid has no room for.
+	points, err := denseBuckets([]telemetry.Bucket{
+		{Start: start.Add(-time.Hour), Count: 4},
+		{Start: end.Add(time.Minute), Count: 4},
+	}, start, end, step)
+	if err != nil {
+		t.Fatalf("out-of-window buckets are dropped, not refused: %v", err)
+	}
+	var sum float64
+	for _, p := range points {
+		sum += p.Value
+	}
+	if sum != 0 {
+		t.Errorf("expected no counts on the grid, got %v", sum)
 	}
 }

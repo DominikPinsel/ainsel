@@ -5,6 +5,7 @@ import type { ActivityEntry, ActivityStatus } from '../../../api/events'
 import { useConnectors } from '../../../api/connectors'
 import {
   useObservabilityTimeseries,
+  unavailableDetail,
   useTokensByEvent,
   type Range,
 } from '../../../api/observability'
@@ -146,7 +147,12 @@ export function EventsDetail() {
               ariaLabel={`Events consumed over ${range}`}
             />
           ) : (
-            <SectionStatus state={chartState} onRetry={() => timeseries.refetch()} />
+            <SectionStatus
+              state={chartState}
+              title={chartState === 'unavailable' ? 'No metrics source configured' : undefined}
+              detail={unavailableDetail(timeseries.error)}
+              onRetry={() => timeseries.refetch()}
+            />
           )}
         </Panel>
 

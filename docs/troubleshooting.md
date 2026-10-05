@@ -160,21 +160,31 @@ Remember that MCP servers are reached from **two** clients: hub-backend (tool di
 
 ---
 
-## Dashboard says "Telemetry not configured"
+## Dashboard panels say "No metrics source configured"
 
-The hub answers `503 Service Unavailable` on an observability endpoint whose backend is
-not wired up, and the UI replaces that panel's body with **Telemetry not configured**.
-Nothing is broken: the hub's own records — agents, events, invocations, activity, chat —
-still render. Only the metric-backed panels go empty.
+A metrics panel answers `503 Service Unavailable` when nothing can serve it, and the
+UI replaces that panel's body with the reason. Nothing is broken: the hub's own
+records — agents, events, invocations, activity, chat — still render.
 
-You will see it on the dashboard **Throughput · 24h** panel, and on any
-**Observability** panel that reads `/api/v1/observability/metrics/*` (summary,
-timeseries, token counters, per-agent tables).
+Read the panel heading, because the two messages mean different things:
 
-**Cause.** `observability.prometheus.url` is empty in `values.yaml`, which is the chart
-default. When it is empty the chart never sets `HUB_PROMETHEUS_URL` on the hub, the hub
-starts without a Prometheus client, and every metrics query answers 503 with
-`metrics backend not configured`.
+| Panel says | Means |
+|------------|-------|
+| **No metrics source configured** | Neither Prometheus nor the hub's database can answer. Since the hub will not start without `HUB_DB_URL`, this is a broken install, not a missing optional add-on — see [Hub pod not starting](#hub-pod-not-starting). |
+| **Token metrics need Prometheus** | Expected on an install with no Prometheus. Token usage is published by the agent runtime as a metric, so those panels have no fallback. Everything else keeps working. |
+
+The event KPI cards and every throughput chart — dashboard **Throughput · 24h**,
+and the **Observability**, **Routing**, **Errors** and **Events** charts — are served
+from the rows the hub wrote while routing (`events`, `agent_tasks`, `task_logs`).
+They need no external backend. If those are empty, the hub is not reaching its
+database.
+
+**Want the token panels anyway?** Set `observability.prometheus.url` in
+`values.yaml` and point the hub at a Prometheus that scrapes it. When the value is
+empty the chart never sets `HUB_PROMETHEUS_URL`, the hub starts without a Prometheus
+client, and only the Prometheus-only panels go dark. Setting it does **not** move the
+event KPI cards or throughput charts onto counters — those keep reading the hub's
+records unless you also pin them (see *Which backend is answering* below).
 
 Check it from outside the pod — the hub image is distroless and has no shell, so
 `kubectl exec … printenv` cannot work:
@@ -192,11 +202,12 @@ kubectl -n <namespace> logs deploy/hub-backend | grep -i prometheus
 Logs are JSON, so the unconfigured state reads:
 
 ```json
-{"time":"2026-09-23T10:04:12Z","level":"WARN","msg":"HUB_PROMETHEUS_URL not set, token queries will fail"}
+{"time":"2026-09-23T10:04:12Z","level":"WARN","msg":"HUB_PROMETHEUS_URL not set: token panels and raw PromQL are unavailable, event metrics come from the hub's own records"}
 ```
 
 A configured hub logs `{"time":"…","level":"INFO","msg":"prometheus client configured","url":"http://prometheus…"}`
-instead.
+instead. That warning is about the token panels only; the event charts are
+unaffected either way.
 
 **Fix.** Point the hub at a Prometheus it can reach:
 
@@ -226,6 +237,32 @@ The last command is the ground truth: `prometheus client configured` means the h
 a client, `HUB_PROMETHEUS_URL not set` means the pod you are reading did not get the
 value.
 
+**Which backend is answering?** Every hub logs its choice at startup, and every
+metrics response repeats it in `source`:
+
+```json
+{"time":"…","level":"INFO","msg":"event metric source configured","source":"postgres","prometheus":true}
+```
+
+```bash
+kubectl -n <namespace> get deploy hub-backend -o json \
+  | jq -r '.spec.template.spec.containers[].env[]?
+      | select(.name=="HUB_METRICS_SOURCE") | .value'
+```
+
+`"prometheus": true` with `"source": "postgres"` is the normal state of an install that
+has both: the hub exports its counters for Prometheus to scrape and reads its own rows
+for the console. To go back to counter figures — a window wider than the 7 days
+`task_logs` retains is the case that argues for it — pin the source and roll the pods:
+
+```yaml
+observability:
+  metricsSource: "prometheus"
+```
+
+Anything other than `postgres` or `prometheus` is ignored with a
+`unknown HUB_METRICS_SOURCE, ignoring it` warning, and the hub stays on its records.
+
 **Variable present, message still there?** Two things to separate:
 
 - The pods you are looking at predate the value. A Deployment can carry it while an old
@@ -242,10 +279,10 @@ value.
   Any line ending in `(unset)` is a pod started before the change — restart the
   deployment to replace it.
 - The panel is a **logs** panel, not a metrics one. Those report
-  `log backend not configured`, which means the hub has no database — start from
+  `hub database not configured`, which means the hub has no database — start from
   [Hub pod not starting](#hub-pod-not-starting) instead. A wrong or unreachable URL
-  does *not* produce this message; it produces an empty panel or a load error, because
-  the hub only 503s when it has no client at all.
+  does *not* produce a 503; it produces an empty panel or a load error, because the
+  hub 503s only when it has no client at all.
 
 To scrape the hub's own metrics once Prometheus is configured, enable the
 ServiceMonitor or PodMonitor — see [Observability](observability).
@@ -288,4 +325,4 @@ kubectl logs -n <namespace> deploy/k8s-event-source-gateway-operator --tail=100
 kubectl get events -n <namespace> --sort-by='.lastTimestamp'
 ```
 
-If Loki is configured in your cluster, use its query interface to aggregate logs across all pods in the namespace by filtering on `namespace=<namespace>`. This is especially useful for correlating an ingested event with the hub routing decision and the agent pod startup that followed it.
+To read the same history in bulk rather than one task at a time, query the hub's tables directly: `task_logs` holds per-invocation agent output (filter by `agent_name`, `level`, `created_at`), `events` holds every envelope the hub received with its routing outcome, and `activity_log` holds routing decisions as they were made.

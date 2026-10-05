@@ -104,9 +104,8 @@ export function LogStream({ range }: LogStreamProps) {
       </div>
       <SectionStatus
         state={state}
-        detail={
-          state === 'error' && query.error instanceof Error ? query.error.message : undefined
-        }
+        title={state === 'unavailable' ? 'No log store configured' : undefined}
+        detail={query.error instanceof Error ? query.error.message : undefined}
         onRetry={() => query.refetch()}
       />
       {state === 'ready' ? (

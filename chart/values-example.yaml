@@ -80,6 +80,7 @@ postgres:
 observability:
   prometheus:
     url: ""
+  metricsSource: "postgres"
   serviceMonitor:
     enabled: false
     labels: {}

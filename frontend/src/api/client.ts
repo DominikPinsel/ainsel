@@ -33,8 +33,8 @@ export class UnauthorizedError extends ApiError {
 }
 
 export class ServiceUnavailableError extends ApiError {
-  constructor(body: unknown) {
-    super(503, 'Service Unavailable', body)
+  constructor(body: unknown, message = 'Service Unavailable') {
+    super(503, message, body)
     this.name = 'ServiceUnavailableError'
   }
 }
@@ -148,6 +148,6 @@ export async function request<T = unknown>(
     recoverFromUnauthorized()
     throw new UnauthorizedError(parsed)
   }
-  if (res.status === 503) throw new ServiceUnavailableError(parsed)
+  if (res.status === 503) throw new ServiceUnavailableError(parsed, message)
   throw new ApiError(res.status, message, parsed)
 }
