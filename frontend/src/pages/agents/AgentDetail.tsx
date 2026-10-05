@@ -26,6 +26,7 @@ import {
   AgentSkillsSection,
 } from './AgentImageSection'
 import { AgentEnvSection } from './AgentEnvSection'
+import { llmProviderLabel } from './agentFormModel'
 
 const TABS = [
   { value: 'overview', label: 'Overview' },
@@ -127,6 +128,10 @@ export function AgentDetail() {
                   <div>
                     <div className="k">Model</div>
                     <div className="v">{data.llm?.model ?? '—'}</div>
+                  </div>
+                  <div>
+                    <div className="k">Provider</div>
+                    <div className="v">{llmProviderLabel(data.llm?.provider)}</div>
                   </div>
                   <div>
                     <div className="k">Image</div>

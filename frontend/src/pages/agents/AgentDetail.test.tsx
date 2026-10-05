@@ -246,7 +246,7 @@ function defaultFetch(url: string, init?: RequestInit): Response {
         id: 'a1',
         name: 'doc-writer',
         description: 'Writes documentation.',
-        llm: { model: 'claude-opus-4-7' },
+        llm: { model: 'claude-opus-4-7', provider: 'ollama-cloud' },
         imageRef: { name: 'claude-tooling-base:1.4' },
         enabledTools: ['read_file', 'run_shell'],
         persona: { id: '01HXTEST00000000000000000' },
@@ -280,6 +280,7 @@ describe('AgentDetail', () => {
     )
     await waitFor(() => expect(screen.getAllByText('doc-writer')[0]).toBeInTheDocument())
     expect(screen.getByText('claude-opus-4-7')).toBeInTheDocument()
+    expect(screen.getByText('Ollama Cloud')).toBeInTheDocument()
     expect(screen.getByText('claude-tooling-base:1.4')).toBeInTheDocument()
   })
 
