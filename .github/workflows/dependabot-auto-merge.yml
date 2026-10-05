@@ -14,8 +14,15 @@ name: Dependabot auto-merge
 # force-push fails the merge instead of sneaking an unchecked sha through.
 #
 # Scope: the job-level `if` (pull_request events) plus the author assertion in
-# the script (dispatch events) restrict this to dependabot[bot] PRs. No other
-# PR is ever merged, and nothing here bypasses a red check.
+# the script (dispatch events) restrict this to Dependabot PRs. No other PR is
+# ever merged, and nothing here bypasses a red check.
+#
+# Identity caveat: GitHub exposes Dependabot inconsistently right now - the
+# pull_request event payload says `dependabot[bot]`, while the REST/GraphQL
+# API (gh pr view --json author) returns the app identity `app/dependabot`.
+# Both gates match bot logins containing "dependabot" so the gate keeps
+# working whichever form an endpoint returns. See run 37283701958 where this
+# mismatch killed the gate with "authored by 'app/dependabot'".
 #
 # The dispatch trigger exists so already-open Dependabot PRs (opened before
 # this workflow existed) and gates that hit the timeout can be re-run by hand:
@@ -31,7 +38,7 @@ on:
   workflow_dispatch:
     inputs:
       pr:
-        description: "PR number to gate and merge (must be authored by dependabot[bot])"
+        description: "PR number to gate and merge (must be authored by Dependabot)"
         required: true
 
 permissions:
@@ -52,7 +59,7 @@ jobs:
     if: >-
       github.repository == 'DominikPinsel/ainsel' &&
       (github.event_name == 'workflow_dispatch' ||
-       github.event.pull_request.user.login == 'dependabot[bot]')
+       contains(github.event.pull_request.user.login, 'dependabot'))
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_REPO: ${{ github.repository }}
@@ -66,10 +73,12 @@ jobs:
           set -euo pipefail
 
           # Belt and braces: the job-level `if` guards pull_request events,
-          # this guards dispatch (and any trigger added later).
+          # this guards dispatch (and any trigger added later). Accept both
+          # Dependabot identities (see header comment): the event payload says
+          # `dependabot[bot]`, the API says `app/dependabot`.
           author="$(gh pr view "$PR_NUMBER" --json author -q '.author.login')"
-          if [ "$author" != "dependabot[bot]" ]; then
-            echo "::error::PR #$PR_NUMBER is authored by '$author'; this workflow only merges dependabot[bot] PRs."
+          if [ "$author" != "dependabot[bot]" ] && [ "$author" != "app/dependabot" ]; then
+            echo "::error::PR #$PR_NUMBER is authored by '$author'; this workflow only merges Dependabot PRs."
             exit 1
           fi
 
