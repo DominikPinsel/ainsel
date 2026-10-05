@@ -24,6 +24,13 @@ name: Dependabot auto-merge
 # working whichever form an endpoint returns. See run 37283701958 where this
 # mismatch killed the gate with "authored by 'app/dependabot'".
 #
+# Stale-gate caveat: every check run of this workflow (its own, and failed
+# leftovers of earlier gate attempts on the same head) is excluded from the
+# rollup by workflowName. The gate judges everything OTHER than itself; its
+# own red corpses (e.g. gates that died while CI was red, then were
+# re-dispatched by hand) must not gate it. Two live gates for one PR cannot
+# race: the concurrency group cancels the in-progress one.
+#
 # The dispatch trigger exists so already-open Dependabot PRs (opened before
 # this workflow existed) and gates that hit the timeout can be re-run by hand:
 # `gh workflow run dependabot-auto-merge.yml -f pr=<number>`.
@@ -64,9 +71,6 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_REPO: ${{ github.repository }}
       PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr }}
-      # This run's own check run is excluded from the rollup by matching this
-      # path fragment in its detailsUrl (.../actions/runs/<run-id>/job/...).
-      OWN_RUN_PATH: /runs/${{ github.run_id }}/
     steps:
       - name: Wait for green checks, then squash-merge
         run: |
@@ -82,7 +86,7 @@ jobs:
             exit 1
           fi
 
-          echo "Gating PR #$PR_NUMBER; excluding this run's own check via '$OWN_RUN_PATH'."
+          echo "Gating PR #$PR_NUMBER; rolls over every check except the Auto-merge gate itself."
           # Grace period: the sibling workflows (gitleaks, pr-title, the
           # path-filtered ci-* / dev-image-* set) are triggered by the same
           # event but register their check runs moments later. Without this,
@@ -101,10 +105,12 @@ jobs:
             head="$(jq -r '.headRefOid' <<<"$pr_json")"
 
             # Normalise both rollup shapes (Actions check runs and classic
-            # commit statuses) to {name, complete, ok}.
-            checks="$(jq --arg own "$OWN_RUN_PATH" '
+            # commit statuses) to {name, complete, ok}. Drop this workflow's
+            # own check runs (current and stale, see header comment): classic
+            # commit statuses have no workflowName and are kept.
+            checks="$(jq '
               [ .statusCheckRollup[]?
-                | select(((.detailsUrl // "") | contains($own)) | not)
+                | select((.workflowName // "") != "Dependabot auto-merge")
                 | {
                     name: (.name // .context // "?"),
                     complete: (
