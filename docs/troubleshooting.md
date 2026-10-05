@@ -89,6 +89,38 @@ A counter that never increments means events are not reaching the hub. Re-check 
 
 ---
 
+## Agent stuck in Terminating after deleting it
+
+The console reports the delete as successful, but the agent reappears in the
+roster after every page refresh and its pods keep running.
+
+An **Agent** CR whose `metadata.finalizers` still contains an entry that no
+running controller completes can never leave the cluster: the Kubernetes API
+accepts the delete, stamps `metadata.deletionTimestamp`, and then waits for the
+finalizer — forever. The console only ever asked the hub, and the hub correctly
+relays what the API server still lists.
+
+First, see who is holding the object:
+
+```bash
+kubectl get agent -n <namespace> -o custom-columns=NAME:.metadata.name,DELETING:.metadata.deletionTimestamp,FINALIZERS:.metadata.finalizers
+```
+
+Agents created before the event queue moved from NATS to Postgres may still
+carry the legacy `ainsel.dev/agent-nats-cleanup` finalizer. Its cleanup code
+is gone (current operators from this release strip it on the delete path —
+upgrade the agent operator), but CRs that predate the change need one manual
+patch:
+
+```bash
+kubectl patch agent <agent-name> -n <namespace> --type=merge -p '{"metadata":{"finalizers":[]}}'
+```
+
+Removal cascades: everything the CR owns (Deployment, Service, ConfigMaps,
+Secrets) is garbage-collected immediately after.
+
+---
+
 ## Agent pod stuck in Pending or CrashLoopBackOff
 
 Describe the pod to get the full picture:

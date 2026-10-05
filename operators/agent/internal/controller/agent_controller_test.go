@@ -2280,6 +2280,54 @@ var _ = Describe("Agent Controller", func() {
 		})
 	})
 
+	Context("When deleting an agent", func() {
+		const delAgentName = "terminating-legacy-agent"
+		delKey := types.NamespacedName{Name: delAgentName, Namespace: "default"}
+
+		It("strips the legacy NATS-cleanup finalizer so the CR can actually go away", func() {
+			By("creating an agent shaped like one from the NATS era")
+			agent := &ainselv1alpha1.Agent{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      delAgentName,
+					Namespace: "default",
+					Finalizers: []string{
+						legacyNatsCleanupFinalizer,
+					},
+				},
+				Spec: ainselv1alpha1.AgentSpec{
+					DisplayName: "Terminating Legacy Agent",
+					ImageRef:    ainselv1alpha1.AgentImageRef{Name: "any-image"},
+					Runtime:     ainselv1alpha1.AgentRuntime{},
+					LLM:         ainselv1alpha1.AgentLLM{Model: "glm-5.1:cloud"},
+					Persona:     ainselv1alpha1.AgentPersona{ID: "01hxtestpersona00000000000"},
+				},
+			}
+			Expect(k8sClient.Create(ctx, agent)).To(Succeed())
+
+			By("issuing the delete — the finalizer holds the CR in Terminating only")
+			Expect(k8sClient.Delete(ctx, agent)).To(Succeed())
+			terminating := &ainselv1alpha1.Agent{}
+			Expect(k8sClient.Get(ctx, delKey, terminating)).To(Succeed())
+			Expect(terminating.DeletionTimestamp.IsZero()).To(BeFalse(),
+				"a finalizer-bearing CR must be pending deletion, not removed")
+
+			By("reconciling — the operator completes the orphaned finalization")
+			controllerReconciler := &AgentReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: delKey,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("verifying the CR is gone, so hub list reads stop returning it")
+			gone := &ainselv1alpha1.Agent{}
+			Expect(k8sClient.Get(ctx, delKey, gone)).NotTo(Succeed(),
+				"the stripped CR must have completed deletion")
+		})
+	})
+
 	Context("When scaling on the hub's queue signal", func() {
 		const (
 			qImageName = "img-queue-scaling"

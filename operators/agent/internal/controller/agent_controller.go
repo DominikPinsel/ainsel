@@ -58,6 +58,15 @@ const (
 	// ConfigMap data changes, the hash changes, which causes Kubernetes to
 	// perform a rolling restart automatically so agents pick up skill updates.
 	skillHashAnnotation = "ainsel.dev/skill-hash"
+
+	// legacyNatsCleanupFinalizer is what the NATS-era operator stamped on Agent
+	// CRs so it could clean up JetStream consumers before removal. The event
+	// queue has since moved to Postgres and that cleanup code is gone, but CRs
+	// created before the move still carry the finalizer — and nothing removes
+	// it, so their deletion never completes: the hub reports success, the CR
+	// sits in Terminating forever, and the API keeps listing the agent, which
+	// made it reappear in the console after every page refresh.
+	legacyNatsCleanupFinalizer = "ainsel.dev/agent-nats-cleanup"
 )
 
 // AgentReconciler reconciles a Agent object
@@ -119,10 +128,17 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, err
 	}
 
-	// 1.5. Finalizer handling — ensure the JetStream consumer is cleaned up
-	// before the CR is removed.
+	// 1.5. Finalizer handling — complete the deletion of legacy agents.
 	if !agent.DeletionTimestamp.IsZero() {
-		// The CR is being deleted.
+		// The CR is being deleted. NATS-era agents still carry the
+		// legacyNatsCleanupFinalizer; the JetStream cleanup it once guarded no
+		// longer exists, so finalize here by dropping it — otherwise the CR
+		// would be stuck Terminating and keep showing up in reads.
+		if controllerutil.RemoveFinalizer(&agent, legacyNatsCleanupFinalizer) {
+			if updErr := r.Update(ctx, &agent); updErr != nil {
+				return ctrl.Result{}, updErr
+			}
+		}
 		return ctrl.Result{}, nil
 	}
 
