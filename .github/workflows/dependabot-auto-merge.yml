@@ -31,6 +31,19 @@ name: Dependabot auto-merge
 # re-dispatched by hand) must not gate it. Two live gates for one PR cannot
 # race: the concurrency group cancels the in-progress one.
 #
+# Cancelled caveat: sibling workflows (pr-title, gitleaks) run with their own
+# cancel-in-progress concurrency. Rapid rebase force-pushes cancel their
+# runs and leave a CANCELLED check run on the head while the replacement run
+# is seconds behind. A cancelled run says nothing about the head - the gate
+# skips CANCELLED and waits for the replacement instead.
+#
+# Merge-race caveat: when parallel gates squash-merge into develop one after
+# another, the base moves between a poll and the merge attempt and GitHub
+# rejects with "Base branch was modified". The merge is retried: each failed
+# attempt loops back to the poll, which re-reads the PR state/head and
+# re-verifies checks. Transient races self-heal; real conflicts exit red
+# within minutes (five attempts).
+#
 # The dispatch trigger exists so already-open Dependabot PRs (opened before
 # this workflow existed) and gates that hit the timeout can be re-run by hand:
 # `gh workflow run dependabot-auto-merge.yml -f pr=<number>`.
@@ -94,6 +107,7 @@ jobs:
           sleep 30
 
           deadline=$(( $(date +%s) + 5100 )) # 85 min; the job timeout is 90
+          attempts=0                         # merge attempts (merge-race caveat)
           while true; do
             pr_json="$(gh pr view "$PR_NUMBER" --json state,headRefOid,statusCheckRollup)"
 
@@ -111,6 +125,7 @@ jobs:
             checks="$(jq '
               [ .statusCheckRollup[]?
                 | select((.workflowName // "") != "Dependabot auto-merge")
+                | select((.conclusion // .state // "") != "CANCELLED")
                 | {
                     name: (.name // .context // "?"),
                     complete: (
@@ -131,8 +146,25 @@ jobs:
               jq -r '.[] | select(.complete and (.ok | not)) | "  - \(.name)"' <<<"$checks"
               exit 1
             fi
+            # Merge-race caveat (header comment): merge failures loop back to
+            # the poll above, which re-reads the PR state/head and re-verifies
+            # every check before the next attempt. Transient races self-heal;
+            # a hard failure (e.g. conflicts) burns the five attempts and
+            # exits red within minutes.
             if [ "$total" -gt 0 ] && [ "$pending" -eq 0 ]; then
-              break
+              if [ "$attempts" -eq 0 ]; then
+                echo "All checks green on ${head:0:7}; merging."
+              fi
+              if merge_err="$(gh pr merge "$PR_NUMBER" --squash --match-head-commit "$head" 2>&1)"; then
+                echo "PR #$PR_NUMBER merged."
+                exit 0
+              fi
+              attempts=$((attempts + 1))
+              echo "Merge attempt $attempts failed: $merge_err"
+              if [ "$attempts" -ge 5 ]; then
+                echo "::error::Gave up after $attempts merge attempts - waiting for a human."
+                exit 1
+              fi
             fi
             if [ "$(date +%s)" -ge "$deadline" ]; then
               echo "Timed out with $pending pending check(s) - not merging."
@@ -140,9 +172,3 @@ jobs:
             fi
             sleep 30
           done
-
-          echo "All checks green on ${head:0:7}; merging."
-          # No --delete-branch: the repo auto-deletes head branches on merge,
-          # and there is no local checkout here to clean up.
-          gh pr merge "$PR_NUMBER" --squash --match-head-commit "$head"
-          echo "PR #$PR_NUMBER merged."
