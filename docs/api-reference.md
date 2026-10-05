@@ -1087,7 +1087,7 @@ List recent events (the console's Activity page), newest first.
 
 **Access:** scoped to the caller. An event is visible when the caller can read the connector that ingested it *or* any agent it was routed to. `connector` and `agent` filters naming a resource the caller cannot read return an empty page rather than `403`, so the parameters cannot be used to probe which resources exist. Because the scope is applied in SQL, `total` counts only rows the caller may see, so pagination stays truthful. Admins see everything.
 
-**Query parameters:** `limit` (default `100`, max `500`), `offset`, `connector`, `agent`, `status` (`matched` | `unmatched` | `error`), `since` (RFC3339).
+**Query parameters:** `limit` (default `100`, max `500`), `offset`, `connector`, `agent`, `status` (`matched` | `unmatched` | `error`), `outcome` (`running` | `success` | `failure` | `timeout`), `since` (RFC3339).
 
 **Response:** `200 OK`
 ```json
@@ -1110,6 +1110,10 @@ List recent events (the console's Activity page), newest first.
 `status` is derived from the event's tasks: no tasks → `unmatched`, any failed
 task → `error`, otherwise `matched`. `matches` entries are enriched with
 invocation run state when still within the invocation store's retention.
+`outcome` narrows to events with at least one run in that invocation status,
+so the console's Outcome filter walks the whole history, not just the loaded
+page. Events whose tasks have no invocation record (pruned or never created)
+match no outcome — exactly the rows the UI renders with "—" as run state.
 
 **Status codes:** `200`, `400` (invalid parameters), `500`, `503` (event queue not configured).
 

@@ -556,6 +556,13 @@ type EventFilter struct {
 	// "error". Any other value applies no filter; callers are expected to
 	// validate.
 	Status string
+	// Outcome filters by invocation run status via agent_tasks → invocations:
+	// "running", "success", "failure" or "timeout". Any other value applies
+	// no filter; callers are expected to validate. An event matches when any
+	// of its tasks' invocations carries the status; tasks without an
+	// invocation record (pruned or never created) match no outcome, mirroring
+	// the UI, which renders "—" for those matches.
+	Outcome string
 	// Agent limits results to events routed to this agent.
 	Agent string
 	// Agents limits results to events routed to any of these agents. Combined
@@ -623,6 +630,16 @@ func (f EventFilter) conditions() (conds []string, args []any) {
 	case "error":
 		conds = append(conds,
 			"EXISTS (SELECT 1 FROM agent_tasks t WHERE t.event_id = e.id AND t.status = 'failed')")
+	}
+	// Outcome filter: an event matches when any of its tasks' invocations is in
+	// the given run status. Joins agent_tasks to invocations on the stored id —
+	// the same source buildActivityEntry reads for runStatus enrichment, so the
+	// filter and the rendered rows can never disagree.
+	if f.Outcome != "" {
+		args = append(args, f.Outcome)
+		conds = append(conds, fmt.Sprintf(
+			`EXISTS (SELECT 1 FROM agent_tasks t JOIN invocations i ON i.id = t.invocation_id
+				WHERE t.event_id = e.id AND i.status = $%d)`, len(args)))
 	}
 	// Subject filter: parse a subject pattern of the form "<connector>.<eventType>"
 	// with "*"/">" wildcards and add SQL conditions. A pattern that can never

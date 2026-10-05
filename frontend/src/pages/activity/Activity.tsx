@@ -45,16 +45,18 @@ export function Activity() {
     ? pageSizeParam
     : 25
 
-  // Pagination and the status/connector/agent filters are server-side so
+  // Pagination and all dropdown filters (status/connector/agent via their
+  // own parameters, outcome via joined invocation status) are server-side so
   // the full event history is queryable, not just the most recent window.
-  // Outcome and free-text search (which rely on invocation state and
-  // resolved display names) still apply client-side to the loaded page.
+  // Free-text search (which relies on resolved display names) still applies
+  // client-side to the loaded page.
   const { data, isLoading, error } = useEventsPage({
     limit: pageSize,
     offset: (page - 1) * pageSize,
     status: filterStatus ? (filterStatus as ActivityStatus) : undefined,
     connector: filterConnector || undefined,
     agent: filterAgent || undefined,
+    outcome: filterOutcome ? (filterOutcome as RunStatus) : undefined,
   })
   const { data: connectorData } = useConnectors({ pageSize: 200 })
   const { data: triggerData } = useTriggers({ pageSize: 200 })
@@ -183,14 +185,13 @@ export function Activity() {
     }
 
     return rows.filter((r) => {
-      if (filterOutcome && !(r.matches ?? []).some((m) => m.runStatus === (filterOutcome as RunStatus))) return false
       if (searchTerms.length > 0) {
         const haystack = buildHaystack(r)
         if (!searchTerms.every((t) => haystack.includes(t))) return false
       }
       return true
     })
-  }, [rows, filterOutcome, searchTerms, connectorNameById, triggerNameById, agentNameById])
+  }, [rows, searchTerms, connectorNameById, triggerNameById, agentNameById])
 
   const sorted: ActivityEntry[] = useMemo(
     () =>
@@ -200,7 +201,9 @@ export function Activity() {
     [filtered],
   )
 
-  const localFilterActive = filterOutcome !== '' || searchTerms.length > 0
+  // Only free-text search filters after the page loads now; every dropdown
+  // filter narrows server-side, so `total` already reflects them.
+  const localFilterActive = searchTerms.length > 0
   const anyFilterActive =
     localFilterActive || filterStatus !== '' || filterConnector !== '' || filterAgent !== ''
   const panelTitle = localFilterActive

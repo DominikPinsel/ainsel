@@ -174,6 +174,19 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
 		filter.Status = v
 	}
 
+	if v := q.Get("outcome"); v != "" {
+		switch v {
+		case invocations.StatusRunning,
+			invocations.StatusSuccess,
+			invocations.StatusFailure,
+			invocations.StatusTimeout:
+			filter.Outcome = v
+		default:
+			writeError(w, http.StatusBadRequest, "invalid outcome: expected running, success, failure or timeout")
+			return
+		}
+	}
+
 	if v := q.Get("since"); v != "" {
 		t, err := time.Parse(time.RFC3339, v)
 		if err != nil {
