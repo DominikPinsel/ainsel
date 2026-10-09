@@ -130,6 +130,31 @@ spec:
     - ports:
         - port: 8080
 ---
+# Allow Kubernetes MCP server ingress (from agent pods)
+{{- if .Values.kubernetesMcp.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kubernetes-mcp
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "ainsel.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kubernetes-mcp
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: kubernetes-mcp
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: agents
+      ports:
+        - port: {{ .Values.kubernetesMcp.port }}
+{{- end }}
+---
 # Allow Qdrant ingress from agents and hub
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -190,6 +215,15 @@ spec:
               app.kubernetes.io/component: hub-backend
       ports:
         - port: 8080
+    # Kubernetes MCP server (read-only cluster tools for agents)
+    {{- if .Values.kubernetesMcp.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: kubernetes-mcp
+      ports:
+        - port: {{ .Values.kubernetesMcp.port }}
+    {{- end }}
     # DNS
     - ports:
         - port: 53

@@ -1,0 +1,32 @@
+{{- if .Values.kubernetesMcp.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kubernetes-mcp-server
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: kubernetes-mcp-server
+    app.kubernetes.io/component: kubernetes-mcp
+data:
+  config.toml: |
+    port = "{{ .Values.kubernetesMcp.port }}"
+    log_level = {{ .Values.kubernetesMcp.config.logLevel }}
+    read_only = {{ .Values.kubernetesMcp.config.readOnly }}
+    stateless = {{ .Values.kubernetesMcp.config.stateless }}
+    list_output = "{{ .Values.kubernetesMcp.config.listOutput }}"
+    {{- with .Values.kubernetesMcp.config.toolsets }}
+    toolsets = [{{ range $i, $t := . }}{{ if $i }}, {{ end }}"{{ $t }}"{{ end }}]
+    {{- end }}
+    {{- with .Values.kubernetesMcp.config.disabledTools }}
+    disabled_tools = [{{ range $i, $t := . }}{{ if $i }}, {{ end }}"{{ $t }}"{{ end }}]
+    {{- end }}
+    {{- range .Values.kubernetesMcp.config.deniedResources }}
+    [[denied_resources]]
+    group = {{ .group | default "" | quote }}
+    version = {{ .version | default "" | quote }}
+    kind = {{ .kind | quote }}
+    {{- end }}
+    server_instructions = """This MCP server exposes read-only access to a
+    Kubernetes cluster. Do not attempt write operations; they are not
+    available. When a tool accepts a namespace, use it explicitly."""
+{{- end }}
