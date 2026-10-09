@@ -115,21 +115,3 @@ mcp:
       # nginx.ingress.kubernetes.io/ssl-redirect: "true"
       # nginx.ingress.kubernetes.io/auth-url: http://authelia.auth.svc.cluster.local:9091/authelia/api/authz/auth-request
       # nginx.ingress.kubernetes.io/auth-signin: https://ainsel.example.com/authelia/?rd=$scheme://$host$request_uri
-
-# Read-only Kubernetes tool surface for agents. After enabling, register
-# a MCP server entry named like registryName and list it in agents'
-# enabledMCPs. Default scope: namespace-read-only (see values.yaml).
-kubernetesMcp:
-  enabled: true
-  access:
-    # Example: also watch a second namespace that agents operate in:
-    # namespaces:
-    #   - workloads
-    config:
-      # Example: hide tools that cannot work under namespace-scoped RBAC
-      # disabledTools: ["namespaces_list"]
-      # Example hardening beyond the `view` role (Secrets already excluded there):
-      # deniedResources:
-      #   - group: ""
-      #     version: "v1"
-      #     kind: Secret
