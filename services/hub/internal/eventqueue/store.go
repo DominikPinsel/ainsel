@@ -332,6 +332,41 @@ func (s *Store) GetTask(ctx context.Context, taskID int64, agentName string) (*T
 	return &t, nil
 }
 
+// EventConnector resolves the connector an event arrived through. Returns
+// false when the event row no longer exists (pruned). Used to give
+// re-recorded retry invocations the same source label as the original.
+func (s *Store) EventConnector(ctx context.Context, eventID string) (string, bool, error) {
+	var connector string
+	err := s.pool.QueryRow(ctx,
+		`SELECT connector FROM events WHERE id = $1`, eventID,
+	).Scan(&connector)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("eventqueue: connector of event %q: %w", eventID, err)
+	}
+	return connector, true, nil
+}
+
+// UpdateTaskInvocation points a task at a different invocation row and
+// rewrites its cached headers. Used when a retry claim records a fresh
+// invocation so the task — and the runner's view of it — reference the
+// attempt that is actually running, not the closed record of a failed one.
+func (s *Store) UpdateTaskInvocation(ctx context.Context, taskID int64, invocationID string, headers json.RawMessage) error {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE agent_tasks SET invocation_id = $2, headers = $3 WHERE id = $1`,
+		taskID, invocationID, headers,
+	)
+	if err != nil {
+		return fmt.Errorf("eventqueue: update invocation of task %d: %w", taskID, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("eventqueue: update invocation of task %d: task not found", taskID)
+	}
+	return nil
+}
+
 // NotifyAgent sends a pg_notify on the "agent_tasks" channel with the agent
 // name as payload, waking any long-poll waiters for that agent.
 func (s *Store) NotifyAgent(ctx context.Context, agentName string) error {

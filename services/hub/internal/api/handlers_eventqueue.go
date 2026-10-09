@@ -1,8 +1,10 @@
 package api
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -10,6 +12,7 @@ import (
 	"time"
 
 	"github.com/DominikPinsel/ainsel/services/hub/internal/eventqueue"
+	"github.com/DominikPinsel/ainsel/services/hub/internal/invocations"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/tasklogs"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/types"
 )
@@ -132,7 +135,117 @@ func (s *Server) handleAgentNextTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A re-claimed task (attempts >= 2) is a retry of an attempt that already
+	// finished — its original invocation row was closed 'failure' by the nack
+	// handler when that attempt gave up. Retrying under the dead id would run
+	// invisibly: nothing in 'running' for the Activity feed, logs and
+	// transcript filed under a completed record. Record a fresh invocation and
+	// repoint the task at it so the attempt is observable end to end.
+	if err := recordRetryInvocation(r.Context(), s.invocations, s.eventQueue, s.eventQueue, task); err != nil {
+		slog.Error("retry invocation not recorded", "task_id", task.ID, "agent", agentName, "error", err)
+	}
+
 	writeJSON(w, http.StatusOK, task)
+}
+
+// headerInvocationID names the task header carrying the invocation id. The
+// same constant lives in the router and cron packages; the api package needs
+// its own copy because it must rewrite the header when re-pointing a retry at
+// a fresh invocation row.
+const headerInvocationID = "X-Invocation-ID"
+
+// taskInvocationUpdater and eventConnectorReader narrow the *eventqueue.Store
+// surface recordRetryInvocation depends on, so tests can use fakes instead of
+// a live PostgreSQL pool.
+type taskInvocationUpdater interface {
+	UpdateTaskInvocation(ctx context.Context, taskID int64, invocationID string, headers json.RawMessage) error
+}
+
+type eventConnectorReader interface {
+	EventConnector(ctx context.Context, eventID string) (string, bool, error)
+}
+
+// recordRetryInvocation re-points a re-claimed (retry) task at a freshly
+// recorded invocation row, mutating task in place so the long-poll response
+// hands the runner the new id.
+//
+// A task is claimed once per attempt, and attempts only grows on claims, so
+// Attempts >= 2 reliably identifies a retry. Only a finished ('terminal')
+// invocation is superseded: a 'running' row or one that was pruned (unknown)
+// means there is nothing to supersede and the task keeps its current id.
+// The closed rows of earlier attempts are left untouched as history, which
+// gives the Activity feed one row per attempt instead of a single row whose
+// status flip-flops under concurrent attempts.
+func recordRetryInvocation(ctx context.Context, rec invocations.Store, upd taskInvocationUpdater, events eventConnectorReader, task *eventqueue.Task) error {
+	if task == nil || task.Attempts < 2 || task.AgentName == "" {
+		return nil
+	}
+	if task.InvocationID != "" {
+		// Only supersede a finished invocation. Get returning false means the
+		// row was pruned (e.g. capacity eviction) — then keep the old id rather
+		// than orphan the task on a row that was never persisted.
+		if orig, ok := rec.Get(task.InvocationID); !ok || !orig.IsTerminal() {
+			return nil
+		}
+	} // else: tasks routed without an invocation (e.g. channel transfers) also
+	// get one from this retry on — until now they had none at any attempt.
+
+	connector := ""
+	if events != nil {
+		c, known, err := events.EventConnector(ctx, task.EventID)
+		if err != nil {
+			// Best effort: an unknown connector does not justify hiding the
+			// attempt — record without the label rather than fail the hook.
+			slog.Warn("retry invocation: connector lookup failed", "task_id", task.ID, "event_id", task.EventID, "error", err)
+		} else if known {
+			connector = c
+		}
+	}
+
+	recorded := rec.Record(invocations.Invocation{
+		AgentName:   task.AgentName,
+		TriggerName: task.TriggerName,
+		EventID:     task.EventID,
+		Connector:   connector,
+	})
+
+	headers := rewriteInvocationHeader(task.Headers, recorded.ID)
+	if err := upd.UpdateTaskInvocation(ctx, task.ID, recorded.ID, headers); err != nil {
+		return fmt.Errorf("repoint task %d to invocation %s: %w", task.ID, recorded.ID, err)
+	}
+
+	previous := task.InvocationID
+	task.InvocationID = recorded.ID
+	task.Headers = headers
+	slog.Info("retry invocation recorded",
+		"task_id", task.ID,
+		"attempt", task.Attempts,
+		"agent", task.AgentName,
+		"trigger", task.TriggerName,
+		"invocation_id", recorded.ID,
+		"previous_invocation_id", previous,
+	)
+	return nil
+}
+
+// rewriteInvocationHeader replaces the X-Invocation-ID entry in a task's
+// cached headers. Headers without one (or unparsable JSON) are returned
+// unchanged — the runner reads the id from the task's invocation_id field,
+// the header is only kept for context parity with the first attempt.
+func rewriteInvocationHeader(headers json.RawMessage, invocationID string) json.RawMessage {
+	if len(headers) == 0 {
+		return headers
+	}
+	var m map[string]any
+	if err := json.Unmarshal(headers, &m); err != nil {
+		return headers
+	}
+	m[headerInvocationID] = invocationID
+	out, err := json.Marshal(m)
+	if err != nil {
+		return headers
+	}
+	return out
 }
 
 // handleAgentTaskAck serves POST /api/internal/agents/{name}/tasks/{id}/ack.
