@@ -121,3 +121,41 @@ via `hub.extraEnv` in your `values.yaml`.
 | `observability.serviceMonitor.enabled` | bool | `false` | Create ServiceMonitor resources |
 | `observability.podMonitor.enabled` | bool | `false` | Create PodMonitor resources |
 | `observability.prometheusRules.enabled` | bool | `false` | Install CPU throttling / OOM PrometheusRule (requires Prometheus Operator) |
+
+### Kubernetes MCP Server (opt-in)
+
+Deploys the upstream [`containers/kubernetes-mcp-server`](https://github.com/containers/kubernetes-mcp-server)
+binary as a cluster-internal MCP endpoint that gives agents read-only
+visibility into the Kubernetes cluster (pods, generic resources, events).
+Native Go implementation — talks directly to the API server, no kubectl
+involved.
+
+| Value | Type | Default | Description |
+|-------|------|---------|-------------|
+| `kubernetesMcp.enabled` | bool | `false` | Enable/disable the component |
+| `kubernetesMcp.registryName` | string | `kubernetes` | MCP registry name agents reference in `Agent.spec.enabledMCPs`. Creates the Service as `mcp-<registryName>` |
+| `kubernetesMcp.image` | object | ghcr.io / v0.0.67 | Upstream image (pin the tag — the config surface changes between minor versions) |
+| `kubernetesMcp.port` | int | `8080` | Listening port |
+| `kubernetesMcp.config.readOnly` | bool | `true` | Only read-only tools are registered |
+| `kubernetesMcp.config.stateless` | bool | `true` | No change notifications; recommended for container deployments |
+| `kubernetesMcp.config.toolsets` | list | `['core']` | Toolset bundles (core, helm, tekton, kubevirt, ...) |
+| `kubernetesMcp.config.disabledTools` | list | `[]` | Denylist of individual tools |
+| `kubernetesMcp.config.deniedResources` | list | `[]` | Resource kinds agents must never touch (`[[denied_resources]]`) |
+| `kubernetesMcp.access.namespaces` | list | `[]` | Namespaces granted `view` (empty = chart namespace only) |
+| `kubernetesMcp.access.clusterScope` | bool | `false` | Escalate to whole-cluster `view` (ClusterRoleBinding) |
+| `kubernetesMcp.resources` | object | 50m/64Mi limits | Pod resources |
+
+**Wiring agents:** after enabling, create a MCP-server registry entry via
+the hub API/frontend with the name matching `kubernetesMcp.registryName`
+and list it in an Agent's `enabledMCPs`. The agent operator resolves the
+name against the Service `mcp-<registryName>` (port `http`, MCP path
+`/mcp`) and injects the URL into the agent pod's `MCP_SERVERS` env.
+
+**Security model:** two independent layers. The MCP layer (`readOnly`)
+only registers read-only tools; the Kubernetes layer is RBAC — a
+RoleBinding to the built-in `view` ClusterRole per namespace in
+`access.namespaces` (read-only, Secrets excluded). Cluster-scoped objects
+(namespace/nodes listing) are denied under the default namespace scope.
+Write tools would be pointless even if enabled, because RBAC never grants
+write verbs. Agent pods reach the server through the NetworkPolicy; no
+Ingress exists — this is a cluster-internal component.

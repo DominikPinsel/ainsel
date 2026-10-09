@@ -11,6 +11,9 @@ Helm chart that deploys the entire AInsel platform into a single namespace.
 - PostgreSQL event queue and Postgres (in-cluster, optional).
 - Vector database infrastructure (Qdrant).
 - The MCP server ([`services/mcp`](../services/mcp/), opt-in).
+- The Kubernetes MCP server (`kubernetesMcp`) — agents' read-only cluster
+  view, opt-in. See
+  [configuration.md](docs/configuration.md#kubernetes-mcp-server-opt-in).
 - All CRDs (`Agent`, `AgentImage`, `WebhookConnector`).
 
 ## Usage
@@ -166,6 +169,7 @@ install failures on clusters without the Prometheus Operator.
 | `connectorOperator.enabled` / `replicas` | `true` / `1` | Toggle and scale the event gateway operator |
 | `connectorOperator.clusterWideRbac` | `true` | ClusterRole/CRB required by released operator images |
 | `mcp.enabled` | `false` | Enable the AInsel MCP server (`services/mcp`) |
+| `kubernetesMcp.enabled` | `false` | Enable the read-only Kubernetes MCP server for agents (registry name `kubernetes`) |
 | `qdrant` / `postgres` | enabled | In-cluster vector DB + relational DB |
 | `auth.allowInsecureNoAuth` | `false` | Run hub without auth middleware (local testing only) |
 | `networkPolicy.allowAcmeSolver` | `true` | Let ingress reach cert-manager HTTP-01 solver pods |
