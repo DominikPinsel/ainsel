@@ -49,7 +49,7 @@ List all Agents in the configured namespace, sorted by resource name.
       "description": "...",
       "imageRef": {"name": "img-claude-coder"},
       "runtime": {"provider": "ollama-cloud"},
-      "llm": {"model": "unsloth/gpt-oss-120b-GGUF:F16", "maxTurns": 25, "vision": false},
+      "llm": {"model": "unsloth/gpt-oss-120b-GGUF", "maxTurns": 25, "vision": false},
       "persona": {"inline": "..."},
       "enabledTools": ["read", "edit"],
       "replicas": 2,
@@ -100,7 +100,7 @@ Create a new Agent. The hub generates the resource name (`a-<short id>`); the re
   "description": "...",
   "imageRef": {"name": "img-claude-coder"},
   "runtime": {"provider": "ollama-cloud"},
-  "llm": {"model": "unsloth/gpt-oss-120b-GGUF:F16", "maxTurns": 25, "temperature": 0.2, "vision": true},
+  "llm": {"model": "unsloth/gpt-oss-120b-GGUF", "maxTurns": 25, "temperature": 0.2, "vision": true},
   "persona": {"inline": "..."},
   "enabledTools": ["read", "edit"],
   "scaling": {"minReplicas": 0, "maxReplicas": 3, "cooldownPeriod": 300, "lagThreshold": 5},
@@ -1239,7 +1239,7 @@ Return agent conversation messages captured from agent turns and stored in the `
       "agentName": "a-3f9a2b",
       "role": "assistant",
       "content": "[{\"type\":\"text\",\"text\":\"Looking into this issue...\"}]",
-      "model": "unsloth/gpt-oss-120b-GGUF:F16",
+      "model": "unsloth/gpt-oss-120b-GGUF",
       "inputTokens": 2400,
       "outputTokens": 900,
       "stopReason": "end_turn",
@@ -1270,7 +1270,7 @@ Per-`(agent, repository, issueNumber, model)` token consumption from Prometheus.
 ```json
 {
   "tokens": [
-    {"agent": "a-3f9a2b", "repository": "AInsel/ainsel", "issueNumber": "42", "model": "unsloth/gpt-oss-120b-GGUF:F16", "inputTokens": 2400, "outputTokens": 900}
+    {"agent": "a-3f9a2b", "repository": "AInsel/ainsel", "issueNumber": "42", "model": "unsloth/gpt-oss-120b-GGUF", "inputTokens": 2400, "outputTokens": 900}
   ],
   "total": {"inputTokens": 2400, "outputTokens": 900}
 }

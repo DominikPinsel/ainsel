@@ -71,7 +71,7 @@ func (a *AgentTools) UpdateAgentTool() mcp.Tool {
 		mcp.WithString("name", mcp.Required(), mcp.Description("Agent ID (e.g. a-director)")),
 		mcp.WithString("display_name", mcp.Description("New user-facing agent name (e.g. agent-developer). Updates the agent's label and its channel name; does not change the agent ID.")),
 		mcp.WithString("description", mcp.Description("New one-line description shown in the console and on the agent's channel")),
-		mcp.WithString("model", mcp.Description("LLM model to use (e.g. unsloth/gpt-oss-120b-GGUF:F16, qwen3.5:cloud)")),
+		mcp.WithString("model", mcp.Description("LLM model to use (e.g. unsloth/gpt-oss-120b-GGUF, qwen3.5:cloud)")),
 		mcp.WithNumber("max_turns", mcp.Description("Maximum turns per invocation")),
 		mcp.WithNumber("temperature", mcp.Description("LLM temperature")),
 	)
