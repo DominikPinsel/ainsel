@@ -53,7 +53,7 @@ func TestSubscriptionsComposesTriggersAndBridges(t *testing.T) {
 	}}}
 	svc := NewService(s, eq, reg)
 
-	if _, err := s.CreateBridge(ctx, src, group, "everything else"); err != nil {
+	if _, err := s.CreateBridge(ctx, src, group, "everything else", nil); err != nil {
 		t.Fatalf("attach: %v", err)
 	}
 
@@ -125,10 +125,10 @@ func TestCountsSeparateBirthsDeliveriesAndFailures(t *testing.T) {
 
 	// src → group → dst, so one event is born in src, passes through group and
 	// is delivered to dst.
-	if _, err := s.CreateBridge(ctx, src, group, ""); err != nil {
+	if _, err := s.CreateBridge(ctx, src, group, "", nil); err != nil {
 		t.Fatalf("attach: %v", err)
 	}
-	if _, err := s.CreateBridge(ctx, group, dst, ""); err != nil {
+	if _, err := s.CreateBridge(ctx, group, dst, "", nil); err != nil {
 		t.Fatalf("attach: %v", err)
 	}
 
@@ -243,10 +243,10 @@ func TestTimelineFilterPerKind(t *testing.T) {
 	}
 
 	// Once attached, it reports the union of the channels reaching it.
-	if _, err := s.CreateBridge(ctx, src, group, ""); err != nil {
+	if _, err := s.CreateBridge(ctx, src, group, "", nil); err != nil {
 		t.Fatalf("attach: %v", err)
 	}
-	if _, err := s.CreateBridge(ctx, other, group, ""); err != nil {
+	if _, err := s.CreateBridge(ctx, other, group, "", nil); err != nil {
 		t.Fatalf("attach: %v", err)
 	}
 	events, total, err = svc.Events(ctx, group, EventQuery{})
@@ -339,7 +339,7 @@ func TestCustomChannelLifecycle(t *testing.T) {
 	}
 
 	// Attaching an edge makes the channel in use.
-	if _, err := svc.Attach(ctx, prov, ch.ID, ""); err != nil {
+	if _, err := svc.Attach(ctx, prov, ch.ID, "", nil); err != nil {
 		t.Fatalf("attach: %v", err)
 	}
 	if err := svc.Delete(ctx, ch.ID); err != ErrInUse {
@@ -370,7 +370,7 @@ func TestDeliveriesSkipTriggerMatchedAgents(t *testing.T) {
 	second := seed(t, s, KindAgent, "second-"+uniqueName("skip"))
 
 	for _, edge := range [][2]string{{src, group}, {group, first}, {group, second}} {
-		if _, err := s.CreateBridge(ctx, edge[0], edge[1], ""); err != nil {
+		if _, err := s.CreateBridge(ctx, edge[0], edge[1], "", nil); err != nil {
 			t.Fatalf("attach: %v", err)
 		}
 	}

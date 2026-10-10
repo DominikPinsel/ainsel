@@ -1,15 +1,19 @@
 package channels
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	ainselapishared "github.com/DominikPinsel/ainsel/shared/api"
 )
 
 // Sentinel errors surfaced by the store and mapped to HTTP statuses by the API.
@@ -264,18 +268,26 @@ func (s *Store) MarkOrphans(ctx context.Context, kind Kind, liveRefs []string) (
 // Bridges
 // ---------------------------------------------------------------------------
 
-const bridgeColumns = `id, name, from_channel, to_channel, created_at, updated_at`
+const bridgeColumns = `id, name, from_channel, to_channel, coalesce(filters, '[]'::jsonb)::text, created_at, updated_at`
 
 func scanBridge(row pgx.Row) (Bridge, error) {
 	var b Bridge
-	err := row.Scan(&b.ID, &b.Name, &b.FromChannel, &b.ToChannel, &b.CreatedAt, &b.UpdatedAt)
+	var filters []byte
+	err := row.Scan(&b.ID, &b.Name, &b.FromChannel, &b.ToChannel, &filters, &b.CreatedAt, &b.UpdatedAt)
+	if err == nil && len(filters) > 0 {
+		if uerr := json.Unmarshal(filters, &b.Filters); uerr != nil {
+			return b, fmt.Errorf("channels: scan bridge %s filters: %w", b.ID, uerr)
+		}
+	}
 	return b, err
 }
 
 // CreateBridge attaches one channel's stream to another. Both endpoints must
 // exist, at least one must be a custom channel, and the edge must not close a
-// loop. The returned error is one of the sentinels above.
-func (s *Store) CreateBridge(ctx context.Context, fromID, toID, name string) (*Bridge, error) {
+// loop. The returned error is one of the sentinels above. Filters, when given,
+// gate what the bridge transfers: an event moves only when at least one group
+// of filters matches it.
+func (s *Store) CreateBridge(ctx context.Context, fromID, toID, name string, filters [][]ainselapishared.Filter) (*Bridge, error) {
 	if fromID == toID {
 		return nil, ErrSelfEdge
 	}
@@ -299,11 +311,19 @@ func (s *Store) CreateBridge(ctx context.Context, fromID, toID, name string) (*B
 	}
 
 	id := newID("br")
+	var filtersArg any
+	if len(filters) > 0 {
+		encoded, err := json.Marshal(filters)
+		if err != nil {
+			return nil, fmt.Errorf("channels.CreateBridge: marshal filters: %w", err)
+		}
+		filtersArg = encoded
+	}
 	tag, err := s.pool.Exec(ctx,
-		`INSERT INTO channel_bridges (id, name, from_channel, to_channel)
-		 VALUES ($1, $2, $3, $4)
+		`INSERT INTO channel_bridges (id, name, from_channel, to_channel, filters)
+		 VALUES ($1, $2, $3, $4, $5)
 		 ON CONFLICT (from_channel, to_channel) DO NOTHING`,
-		id, name, fromID, toID)
+		id, name, fromID, toID, filtersArg)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -390,12 +410,13 @@ func (s *Store) DeleteBridge(ctx context.Context, id string) error {
 
 // walkRow is one node reached by following bridges.
 type walkRow struct {
-	channelID  string
-	kind       Kind
-	entityRef  string
-	depth      int
-	bridgeID   string
-	bridgeName string
+	channelID     string
+	kind          Kind
+	entityRef     string
+	depth         int
+	bridgeID      string
+	bridgeName    string
+	bridgeFilters []byte
 }
 
 // Walk follows bridges forward from a channel and returns every channel it
@@ -407,17 +428,17 @@ func (s *Store) Walk(ctx context.Context, fromChannelID string) ([]walkRow, erro
 		`WITH RECURSIVE walk AS (
 		     SELECT c.id AS id, c.kind::text AS kind, COALESCE(c.entity_ref, '') AS entity_ref,
 		            0 AS depth, ARRAY[c.id]::text[] AS path,
-		            ''::text AS bridge_id, ''::text AS bridge_name
+		            ''::text AS bridge_id, ''::text AS bridge_name, NULL::jsonb AS bridge_filters
 		       FROM channels c WHERE c.id = $1
 		     UNION ALL
 		     SELECT b.to_channel, c2.kind::text, COALESCE(c2.entity_ref, ''), w.depth + 1,
-		            w.path || b.to_channel, b.id, b.name
+		            w.path || b.to_channel, b.id, b.name, b.filters
 		       FROM walk w
 		       JOIN channel_bridges b ON b.from_channel = w.id
 		       JOIN channels c2 ON c2.id = b.to_channel
 		      WHERE NOT b.to_channel = ANY(w.path) AND w.depth < $2
 		 )
-		 SELECT id, kind, entity_ref, depth, bridge_id, bridge_name
+		 SELECT id, kind, entity_ref, depth, bridge_id, bridge_name, coalesce(bridge_filters, 'null'::jsonb)::text
 		   FROM walk WHERE depth > 0 ORDER BY depth, id`,
 		fromChannelID, maxWalkDepth)
 	if err != nil {
@@ -428,7 +449,7 @@ func (s *Store) Walk(ctx context.Context, fromChannelID string) ([]walkRow, erro
 	var out []walkRow
 	for rows.Next() {
 		var w walkRow
-		if err := rows.Scan(&w.channelID, &w.kind, &w.entityRef, &w.depth, &w.bridgeID, &w.bridgeName); err != nil {
+		if err := rows.Scan(&w.channelID, &w.kind, &w.entityRef, &w.depth, &w.bridgeID, &w.bridgeName, &w.bridgeFilters); err != nil {
 			return nil, fmt.Errorf("channels.Walk: %w", err)
 		}
 		out = append(out, w)
@@ -453,12 +474,20 @@ func (s *Store) Deliveries(ctx context.Context, fromChannelID string) ([]Deliver
 			continue
 		}
 		seen[w.channelID] = true
-		out = append(out, Delivery{
+		d := Delivery{
 			AgentChannel: w.channelID,
 			AgentName:    w.entityRef,
 			BridgeID:     w.bridgeID,
 			BridgeName:   w.bridgeName,
-		})
+		}
+		// A walk row that arrived without an edge carries no filters (the SQL
+		// coalesces to 'null'); unmarshal any real gate the bridge defines.
+		if w.bridgeFilters != nil && !bytes.Equal(w.bridgeFilters, []byte("null")) {
+			if err := json.Unmarshal(w.bridgeFilters, &d.BridgeFilters); err != nil {
+				return nil, fmt.Errorf("channels.Deliveries: bridge %s filters: %w", w.bridgeID, err)
+			}
+		}
+		out = append(out, d)
 	}
 	return out, nil
 }
