@@ -31,6 +31,9 @@ export type ListEventsParams = {
   status?: ActivityStatus
   connector?: string
   agent?: string
+  /** Invocation run status; filtered in SQL so the whole history is walked,
+   *  not just the loaded page. */
+  outcome?: RunStatus
   since?: string
 }
 
@@ -86,6 +89,7 @@ export function useEventsPage(params: ListEventsParams) {
       params.status ?? null,
       params.connector ?? null,
       params.agent ?? null,
+      params.outcome ?? null,
       params.since ?? null,
     ],
     queryFn: () => listEventsPage(params),

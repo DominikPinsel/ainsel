@@ -651,3 +651,162 @@ func TestGetEvent_RunStateEnrichment(t *testing.T) {
 		t.Error("expected durationMs to be set for completed invocation")
 	}
 }
+
+// outcomeFixture seeds events for the outcome-filter tests: every run status
+// is represented, one event mixes outcomes across its tasks, and two events
+// carry tasks without a usable invocation record (empty id, or a pruned one).
+// Returns the server wired with a Postgres-backed invocation store so the
+// SQL outcome filter and the runStatus enrichment read the same table — the
+// production wiring.
+func outcomeFixture(t *testing.T) (*Server, *eventqueue.Store, context.CancelFunc) {
+	t.Helper()
+	store, cleanup := newTestEventStore(t)
+	s := eventsTestServer(t, store)
+	s.invocations = invocations.NewPgStore(store.Pool())
+
+	record := func(id, eventID, agent, status string) {
+		s.invocations.Record(invocations.Invocation{
+			ID: id, AgentName: agent, TriggerName: "trig-" + agent, EventID: eventID, Status: status,
+		})
+	}
+
+	seedEvent(t, store, "evt-oc-ok", "github", `{"a":1}`)
+	seedTaskWithInvocation(t, store, "evt-oc-ok", "agent-a", "trig-1", "completed", "inv-oc-ok")
+	record("inv-oc-ok", "evt-oc-ok", "agent-a", invocations.StatusSuccess)
+
+	seedEvent(t, store, "evt-oc-failed", "github", `{"b":2}`)
+	seedTaskWithInvocation(t, store, "evt-oc-failed", "agent-b", "trig-2", "failed", "inv-oc-failed")
+	record("inv-oc-failed", "evt-oc-failed", "agent-b", invocations.StatusFailure)
+
+	// Mixed event: one success and one failure run — matches both filters.
+	seedEvent(t, store, "evt-oc-mixed", "slack", `{"c":3}`)
+	seedTaskWithInvocation(t, store, "evt-oc-mixed", "agent-c", "trig-3", "completed", "inv-oc-mixed-ok")
+	record("inv-oc-mixed-ok", "evt-oc-mixed", "agent-c", invocations.StatusSuccess)
+	seedTaskWithInvocation(t, store, "evt-oc-mixed", "agent-d", "trig-4", "failed", "inv-oc-mixed-fail")
+	record("inv-oc-mixed-fail", "evt-oc-mixed", "agent-d", invocations.StatusFailure)
+
+	seedEvent(t, store, "evt-oc-running", "github", `{"d":4}`)
+	seedTaskWithInvocation(t, store, "evt-oc-running", "agent-e", "trig-5", "claimed", "inv-oc-run")
+	record("inv-oc-run", "evt-oc-running", "agent-e", invocations.StatusRunning)
+
+	// A task with no invocation record: matches the activity status filters
+	// but no outcome, mirroring the UI which renders "—".
+	seedEvent(t, store, "evt-oc-no-inv", "github", `{"e":5}`)
+	seedTaskWithInvocation(t, store, "evt-oc-no-inv", "agent-f", "trig-6", "completed", "")
+
+	// A task whose invocation id exists but whose record was pruned.
+	seedEvent(t, store, "evt-oc-pruned", "github", `{"f":6}`)
+	seedTaskWithInvocation(t, store, "evt-oc-pruned", "agent-g", "trig-7", "completed", "inv-oc-gone")
+
+	return s, store, cleanup
+}
+
+// listEventsOutcome runs GET /api/v1/events with the given query and returns
+// the decoded envelope.
+func listEventsOutcome(t *testing.T, s *Server, query string) eventsEnvelope {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/events?"+query, nil)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("query %q: expected 200, got %d: %s", query, rec.Code, rec.Body.String())
+	}
+	return decodeEnvelope(t, rec)
+}
+
+// assertEventIDs checks the envelope holds exactly the wanted event ids.
+func assertEventIDs(t *testing.T, env eventsEnvelope, want []string) {
+	t.Helper()
+	if env.Total != len(want) {
+		t.Errorf("expected total %d, got %d", len(want), env.Total)
+	}
+	got := map[string]bool{}
+	for _, e := range env.Events {
+		got[e.ID] = true
+	}
+	for _, id := range want {
+		if !got[id] {
+			t.Errorf("expected event %q in result, got %+v", id, got)
+		}
+		delete(got, id)
+	}
+	if len(got) != 0 {
+		t.Errorf("unexpected events in result: %+v", got)
+	}
+}
+
+func TestListEvents_OutcomeFilter(t *testing.T) {
+	s, _, cleanup := outcomeFixture(t)
+	defer cleanup()
+
+	cases := []struct {
+		outcome string
+		want    []string
+	}{
+		{"success", []string{"evt-oc-ok", "evt-oc-mixed"}},
+		{"failure", []string{"evt-oc-failed", "evt-oc-mixed"}},
+		{"running", []string{"evt-oc-running"}},
+		// No event has a timeout run; the events without invocation records
+		// match no outcome at all.
+		{"timeout", nil},
+	}
+	for _, tc := range cases {
+		env := listEventsOutcome(t, s, "outcome="+tc.outcome)
+		assertEventIDs(t, env, tc.want)
+	}
+
+	// AND with the activity status filter: evt-oc-mixed is the only event
+	// whose runs include a success while its derived status is error (one
+	// failed task).
+	env := listEventsOutcome(t, s, "outcome=success&status=error")
+	assertEventIDs(t, env, []string{"evt-oc-mixed"})
+
+	env = listEventsOutcome(t, s, "outcome=failure&status=matched")
+	assertEventIDs(t, env, nil)
+}
+
+// TestListEvents_OutcomeFilterPaginates is the regression the frontend bug
+// was: a matching event deeper in history had to belong to a page the
+// server-side filter can reach. With limit=1 the filtered set is walked one
+// event at a time, oldest and newest failure both visible.
+func TestListEvents_OutcomeFilterPaginates(t *testing.T) {
+	s, store, cleanup := outcomeFixture(t)
+	defer cleanup()
+
+	// Pin received_at so the (received_at DESC, id DESC) page order is fully
+	// deterministic: evt-oc-mixed is newer and must land on page one,
+	// evt-oc-failed trails on page two.
+	base := time.Now().UTC().Truncate(time.Second)
+	pinTime := func(id string, at time.Time) {
+		t.Helper()
+		if _, err := store.Pool().Exec(context.Background(),
+			`UPDATE events SET received_at = $1 WHERE id = $2`, at, id); err != nil {
+			t.Fatalf("pin received_at(%s): %v", id, err)
+		}
+	}
+	pinTime("evt-oc-failed", base.Add(-10*time.Second))
+	pinTime("evt-oc-mixed", base.Add(-5*time.Second))
+
+	page1 := listEventsOutcome(t, s, "outcome=failure&status=error&limit=1&offset=0")
+	if len(page1.Events) != 1 || page1.Events[0].ID != "evt-oc-mixed" || page1.Total != 2 {
+		t.Fatalf("first failure page: got %+v (total %d)", page1.Events, page1.Total)
+	}
+
+	page2 := listEventsOutcome(t, s, "outcome=failure&status=error&limit=1&offset=1")
+	if len(page2.Events) != 1 || page2.Events[0].ID != "evt-oc-failed" || page2.Total != 2 {
+		t.Fatalf("second failure page: got %+v (total %d)", page2.Events, page2.Total)
+	}
+}
+
+func TestListEvents_InvalidOutcome_400(t *testing.T) {
+	s, _, cleanup := outcomeFixture(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/events?outcome=bogus", nil)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}

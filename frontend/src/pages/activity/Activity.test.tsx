@@ -50,9 +50,9 @@ const sampleEvents = [
   },
 ]
 
-// mockFetch simulates the hub /events API: it applies the status, connector
-// and agent filters server-side, sorts newest-first, and paginates via
-// limit/offset. total reflects all filtered events, not just the page.
+// mockFetch simulates the hub /events API: it applies the status, outcome,
+// connector and agent filters server-side, sorts newest-first, and paginates
+// via limit/offset. total reflects all filtered events, not just the page.
 function mockFetch(events: Record<string, unknown>[] = sampleEvents) {
   vi.stubGlobal(
     'fetch',
@@ -62,6 +62,7 @@ function mockFetch(events: Record<string, unknown>[] = sampleEvents) {
         const status = q.get('status') ?? ''
         const connector = q.get('connector') ?? ''
         const agent = q.get('agent') ?? ''
+        const outcome = q.get('outcome') ?? ''
         const limit = Number(q.get('limit') ?? '100')
         const offset = Number(q.get('offset') ?? '0')
 
@@ -72,6 +73,10 @@ function mockFetch(events: Record<string, unknown>[] = sampleEvents) {
             if (agent) {
               const matches = (e.matches ?? []) as { agent: string }[]
               if (!matches.some((m) => m.agent === agent)) return false
+            }
+            if (outcome) {
+              const matches = (e.matches ?? []) as { runStatus?: string }[]
+              if (!matches.some((m) => m.runStatus === outcome)) return false
             }
             return true
           })
@@ -610,6 +615,56 @@ describe('Activity', () => {
       })
       const body = container.querySelector('tbody') as HTMLElement
       expect(body.textContent).not.toContain('Monorepo Connector') // o1
+    })
+
+    it('sends the outcome filter to the events API', async () => {
+      renderWithProviders(<Activity />, { route: '/activity' })
+      await waitFor(() => expect(screen.getByLabelText(/filter by outcome/i)).toBeInTheDocument())
+      await userEvent.selectOptions(screen.getByLabelText(/filter by outcome/i), 'failure')
+      await waitFor(() => {
+        const calls = (fetch as ReturnType<typeof vi.fn>).mock.calls as [string][]
+        const lastEventsCall = calls.filter(([u]) => u.includes('/events')).at(-1)
+        expect(new URL(lastEventsCall![0], 'http://localhost').searchParams.get('outcome')).toBe(
+          'failure',
+        )
+      })
+    })
+
+    it('finds a failure on page 2 of the unfiltered history', async () => {
+      // 30 successful runs fill the default 25-row first page; the single
+      // failure is the OLDEST event and would never appear there. The
+      // client-side filter this page used to run hid it entirely — the pager
+      // paged over successes, so "failure" showed nothing. Server-side the
+      // filter must walk the whole history.
+      const history = [
+        ...Array.from({ length: 30 }, (_, i) => ({
+          id: `ok-${i}`,
+          timestamp: new Date(now - i * 10_000).toISOString(),
+          connector: 'c-111',
+          status: 'matched' as const,
+          matches: [{ trigger: 't1', agent: 'doc-writer', runStatus: 'success' }],
+        })),
+        {
+          id: 'fail-deep-in-history',
+          timestamp: new Date(now - 400_000).toISOString(),
+          connector: 'c-111',
+          status: 'error' as const,
+          matches: [{ trigger: 't2', agent: 'infra-bot', runStatus: 'failure', error: 'boom' }],
+        },
+      ]
+      mockFetch(history)
+
+      const { container } = renderWithProviders(<Activity />, { route: '/activity' })
+      await waitFor(() => expect(container.querySelector('tbody tr')).not.toBeNull())
+      expect(screen.queryByText('No events match the filter.')).toBeNull()
+
+      await userEvent.selectOptions(screen.getByLabelText(/filter by outcome/i), 'failure')
+      await waitFor(() => {
+        const rows = container.querySelectorAll('tbody tr.activity-row')
+        expect(rows.length).toBe(1)
+        // The failure is the only event routed to infra-bot in this history.
+        expect(rows[0].textContent).toContain('Infra Bot')
+      })
     })
 
     it('includes an event when any of its matches has the selected outcome', async () => {
