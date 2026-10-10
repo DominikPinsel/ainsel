@@ -27,6 +27,7 @@ pi/
 ├── pi-extensions/
 │   ├── ainsel-runner/         # NATS consumer + sendUserMessage event loop + hub publish
 │   ├── ainsel-mcp/            # registers tools from remote MCP servers as mcp__<server>__<tool>
+│   ├── pi-auto-compact/       # preflight context compaction before each prompt (upstream pi-auto-compact)
 └── Dockerfile                 # base image
 └── Dockerfile.go              # Go toolchain variant
 └── Dockerfile.maui            # .NET MAUI toolchain variant
