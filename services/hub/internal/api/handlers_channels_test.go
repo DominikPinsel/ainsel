@@ -229,7 +229,7 @@ func TestChannelsAPI_BridgeLifecycle(t *testing.T) {
 		t.Fatalf("bridge: %+v", bridge)
 	}
 
-	if _, err := s.channelSvc.Attach(ctx, group, inbox, ""); err != nil {
+	if _, err := s.channelSvc.Attach(ctx, group, inbox, "", nil); err != nil {
 		t.Fatalf("attach inbox leg: %v", err)
 	}
 
@@ -315,7 +315,7 @@ func TestChannelsAPI_SubscriptionsMergeBothRegistries(t *testing.T) {
 	if err := ts.CreateTrigger(ctx, trigger); err != nil {
 		t.Fatalf("seed trigger: %v", err)
 	}
-	if _, err := s.channelSvc.Attach(ctx, connector, group, ""); err != nil {
+	if _, err := s.channelSvc.Attach(ctx, connector, group, "", nil); err != nil {
 		t.Fatalf("attach: %v", err)
 	}
 
@@ -381,7 +381,7 @@ func TestChannelsAPI_TimelineReflectsBirthAndDelivery(t *testing.T) {
 	if events = timelineIDs(t, s, group); len(events) != 0 {
 		t.Fatalf("empty group timeline = %v", events)
 	}
-	if _, err := s.channelSvc.Attach(ctx, connector, group, ""); err != nil {
+	if _, err := s.channelSvc.Attach(ctx, connector, group, "", nil); err != nil {
 		t.Fatalf("attach: %v", err)
 	}
 	if events = timelineIDs(t, s, group); len(events) != 1 || events[0] != "api-tl-1" {

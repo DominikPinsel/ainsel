@@ -74,12 +74,20 @@ type Channel struct {
 // always a custom channel: a plain connector→agent edge is a trigger, and
 // letting both exist for the same pair would put event routing in two places.
 type Bridge struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	FromChannel string    `json:"fromChannel"`
-	ToChannel   string    `json:"toChannel"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	FromChannel string `json:"fromChannel"`
+	ToChannel   string `json:"toChannel"`
+	// Filters gate what this bridge transfers, as a disjunction of groups:
+	// the bridge delivers an event when ANY group matches, and a group matches
+	// when ALL of its filters match. Each filter is evaluated against the same
+	// merged payload triggers see (data fields at the top level, headers under
+	// "headers", and the canonical webhook type as "type"). Nil or empty
+	// Filters means unconditional; the bridge then transfers everything, which
+	// is what pre-filter bridges were created as.
+	Filters   [][]ainselapishared.Filter `json:"filters,omitempty"`
+	CreatedAt time.Time                  `json:"createdAt"`
+	UpdatedAt time.Time                  `json:"updatedAt"`
 }
 
 // Subscription is one channel→channel edge, whatever registry owns it. Source
@@ -144,6 +152,11 @@ type Delivery struct {
 	// event, for invocation records and task headers.
 	BridgeID   string
 	BridgeName string
+	// BridgeFilters are the transfer gate of the bridge this delivery rides
+	// on; the Transfer evaluates them against the event before enqueueing a
+	// task or recording an invocation, so a filtered-out delivery costs a
+	// walk, not a run.
+	BridgeFilters [][]ainselapishared.Filter
 }
 
 // Entity is a registry entry the reconciler provisions channels from.

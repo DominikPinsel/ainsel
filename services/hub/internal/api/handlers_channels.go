@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"sort"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/DominikPinsel/ainsel/services/hub/internal/channels"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/eventqueue"
+	ainselapishared "github.com/DominikPinsel/ainsel/shared/api"
 )
 
 // channelDefaultWindow is how far the per-channel rates on a list cover when the
@@ -612,6 +614,12 @@ type bridgeCreateRequest struct {
 	To string `json:"to"`
 	// Name optionally labels the edge; it defaults to "<from> → <to>".
 	Name string `json:"name,omitempty"`
+	// Filters optionally gates the transfer, as a disjunction of groups: the
+	// bridge delivers an event when ANY group matches, and a group matches
+	// when ALL of its filters match — the same shape and semantics as trigger
+	// filters, just wrapped in groups so one edge can express "push OR a
+	// mentioning comment". Nil or absent Filters transfers everything.
+	Filters [][]ainselapishared.Filter `json:"filters,omitempty"`
 }
 
 // handleAttachBridge records that events arriving at the path channel are
@@ -644,7 +652,22 @@ func (s *Server) attachBridge(w http.ResponseWriter, r *http.Request, id string)
 		return
 	}
 
-	bridge, err := s.channelSvc.Attach(r.Context(), from.ID, to.ID, req.Name)
+	// Validate the gate up front so an operator typo fails at attach time and
+	// not as a silently-skipped delivery at transfer time.
+	for gi, group := range req.Filters {
+		if len(group) == 0 {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("filters group %d is empty", gi))
+			return
+		}
+		for fi, f := range group {
+			if strings.TrimSpace(f.Field) == "" || strings.TrimSpace(f.Op) == "" {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("filters group %d, filter %d needs field and op", gi, fi))
+				return
+			}
+		}
+	}
+
+	bridge, err := s.channelSvc.Attach(r.Context(), from.ID, to.ID, req.Name, req.Filters)
 	if err != nil {
 		channelError(w, err)
 		return

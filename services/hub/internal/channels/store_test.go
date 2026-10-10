@@ -135,7 +135,7 @@ func TestDeleteRefusesWhileBridgesRemain(t *testing.T) {
 
 	group := seedCustom(t, s)
 	connector := seed(t, s, KindConnector, uniqueName("in-use"))
-	if _, err := s.CreateBridge(ctx, connector, group, ""); err != nil {
+	if _, err := s.CreateBridge(ctx, connector, group, "", nil); err != nil {
 		t.Fatalf("create bridge: %v", err)
 	}
 	if err := s.Delete(ctx, group); err != ErrInUse {
@@ -165,23 +165,23 @@ func TestCreateBridgeValidation(t *testing.T) {
 	inbox := seed(t, s, KindAgent, uniqueName("bridge-dst"))
 	other := seed(t, s, KindConnector, uniqueName("bridge-other"))
 
-	if _, err := s.CreateBridge(ctx, group, group, ""); err != ErrSelfEdge {
+	if _, err := s.CreateBridge(ctx, group, group, "", nil); err != ErrSelfEdge {
 		t.Errorf("self edge: got %v, want ErrSelfEdge", err)
 	}
 	// Two provisioned streams are connected by a trigger, never by a bridge —
 	// otherwise routing would live in two places.
-	if _, err := s.CreateBridge(ctx, connector, inbox, ""); err != ErrNoCustomEndpoint {
+	if _, err := s.CreateBridge(ctx, connector, inbox, "", nil); err != ErrNoCustomEndpoint {
 		t.Errorf("connector→agent: got %v, want ErrNoCustomEndpoint", err)
 	}
-	if _, err := s.CreateBridge(ctx, connector, other, ""); err != ErrNoCustomEndpoint {
+	if _, err := s.CreateBridge(ctx, connector, other, "", nil); err != ErrNoCustomEndpoint {
 		t.Errorf("connector→connector: got %v, want ErrNoCustomEndpoint", err)
 	}
 	// A missing endpoint is a 404, not a silent create.
-	if _, err := s.CreateBridge(ctx, "ch-nope", group, ""); err != ErrNotFound {
+	if _, err := s.CreateBridge(ctx, "ch-nope", group, "", nil); err != ErrNotFound {
 		t.Errorf("missing endpoint: got %v, want ErrNotFound", err)
 	}
 
-	bridge, err := s.CreateBridge(ctx, connector, group, "")
+	bridge, err := s.CreateBridge(ctx, connector, group, "", nil)
 	if err != nil {
 		t.Fatalf("attach: %v", err)
 	}
@@ -190,23 +190,23 @@ func TestCreateBridgeValidation(t *testing.T) {
 	if bridge.Name == "" || bridge.FromChannel != connector || bridge.ToChannel != group {
 		t.Fatalf("unexpected bridge: %+v", bridge)
 	}
-	if _, err := s.CreateBridge(ctx, connector, group, ""); err != ErrBridgeExists {
+	if _, err := s.CreateBridge(ctx, connector, group, "", nil); err != ErrBridgeExists {
 		t.Errorf("duplicate edge: got %v, want ErrBridgeExists", err)
 	}
 
 	// A cycle: group reaches inbox, so inbox→group would close the loop.
-	if _, err := s.CreateBridge(ctx, group, inbox, ""); err != nil {
+	if _, err := s.CreateBridge(ctx, group, inbox, "", nil); err != nil {
 		t.Fatalf("attach group→inbox: %v", err)
 	}
-	if _, err := s.CreateBridge(ctx, inbox, group, ""); err != ErrCycle {
+	if _, err := s.CreateBridge(ctx, inbox, group, "", nil); err != ErrCycle {
 		t.Errorf("cycle: got %v, want ErrCycle", err)
 	}
 	// The same cycle reached through a longer path: inbox→otherGroup→connector→group.
 	far := seedCustom(t, s)
-	if _, err := s.CreateBridge(ctx, inbox, far, ""); err != nil {
+	if _, err := s.CreateBridge(ctx, inbox, far, "", nil); err != nil {
 		t.Fatalf("attach inbox→far: %v", err)
 	}
-	if _, err := s.CreateBridge(ctx, far, connector, ""); err != ErrCycle {
+	if _, err := s.CreateBridge(ctx, far, connector, "", nil); err != ErrCycle {
 		t.Errorf("indirect cycle: got %v, want ErrCycle", err)
 	}
 }
@@ -223,7 +223,7 @@ func TestDeliveriesFollowBridgePathsAndSkipDelivered(t *testing.T) {
 
 	mustAttach := func(from, to string) {
 		t.Helper()
-		if _, err := s.CreateBridge(ctx, from, to, "edge "+from+"→"+to); err != nil {
+		if _, err := s.CreateBridge(ctx, from, to, "edge "+from+"→"+to, nil); err != nil {
 			t.Fatalf("attach %s→%s: %v", from, to, err)
 		}
 	}
@@ -287,7 +287,7 @@ func TestReachesAndReachingInto(t *testing.T) {
 	island := seed(t, s, KindConnector, uniqueName("reach-island"))
 
 	for _, edge := range [][2]string{{src, group}, {group, nested}, {nested, inbox}} {
-		if _, err := s.CreateBridge(ctx, edge[0], edge[1], ""); err != nil {
+		if _, err := s.CreateBridge(ctx, edge[0], edge[1], "", nil); err != nil {
 			t.Fatalf("attach: %v", err)
 		}
 	}

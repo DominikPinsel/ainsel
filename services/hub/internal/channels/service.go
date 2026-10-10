@@ -10,6 +10,7 @@ import (
 
 	"github.com/DominikPinsel/ainsel/services/hub/internal/eventqueue"
 	"github.com/DominikPinsel/ainsel/services/hub/internal/triggers"
+	ainselapishared "github.com/DominikPinsel/ainsel/shared/api"
 )
 
 // DefaultWindow is the traffic window reported alongside a channel when the
@@ -341,8 +342,11 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 }
 
 // Attach records a bridge from one channel into another and returns it.
-func (s *Service) Attach(ctx context.Context, fromID, toID, name string) (*Bridge, error) {
-	return s.store.CreateBridge(ctx, fromID, toID, name)
+// Attach records a bridge from one channel to another. Filters, when given,
+// gate the transfer: an event moves only when at least one group of filters
+// matches it (groups OR, filters within a group AND).
+func (s *Service) Attach(ctx context.Context, fromID, toID, name string, filters [][]ainselapishared.Filter) (*Bridge, error) {
+	return s.store.CreateBridge(ctx, fromID, toID, name, filters)
 }
 
 // Detach removes a bridge.
