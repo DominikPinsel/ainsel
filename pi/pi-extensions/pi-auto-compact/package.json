@@ -1,0 +1,14 @@
+{
+  "name": "pi-ainsel-auto-compact",
+  "version": "0.1.0",
+  "description": "Ships the upstream pi-auto-compact extension in the ainsel-pi runtime: preflight-compacts context at a configurable usage threshold before each prompt, so long-running agents on one pod do not grind to an overflow stop.",
+  "main": "index.ts",
+  "type": "module",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "pi-auto-compact": "^1.3.1"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}
