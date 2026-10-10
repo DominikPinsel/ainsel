@@ -209,7 +209,7 @@ spec:
   runtime:
     provider: ollama-cloud
   llm:
-    model: unsloth/gpt-oss-120b-GGUF:F16
+    model: unsloth/gpt-oss-120b-GGUF
     maxTurns: 15
     temperature: 0.2
   persona:
@@ -303,7 +303,7 @@ spec:
   runtime:
     provider: ollama-cloud
   llm:
-    model: unsloth/gpt-oss-120b-GGUF:F16
+    model: unsloth/gpt-oss-120b-GGUF
     maxTurns: 10
     temperature: 0.3
   persona:
@@ -395,7 +395,7 @@ spec:
   runtime:
     provider: ollama-cloud
   llm:
-    model: unsloth/gpt-oss-120b-GGUF:F16
+    model: unsloth/gpt-oss-120b-GGUF
     maxTurns: 10
     temperature: 0.2
   persona:
@@ -512,7 +512,7 @@ spec:
         cpu: 2000m
         memory: 4Gi
   llm:
-    model: unsloth/gpt-oss-120b-GGUF:F16
+    model: unsloth/gpt-oss-120b-GGUF
     maxTurns: 50
     temperature: 0.2
   persona:
