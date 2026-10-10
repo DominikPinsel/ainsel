@@ -89,7 +89,7 @@ done
 # setup-pi-models init container). PI_PROVIDER selects which provider
 # entry pi uses; defaults to ollama-api-key for backwards compatibility.
 PI_PROVIDER="${PI_PROVIDER:-ollama-api-key}"
-set -- "$@" --provider "$PI_PROVIDER" --model "${OLLAMA_CLOUD_MODEL:-glm-5.1:cloud}"
+set -- "$@" --provider "$PI_PROVIDER" --model "${OLLAMA_CLOUD_MODEL:-unsloth/gpt-oss-120b-GGUF:F16}"
 
 echo "entrypoint: exec pi $*" >&2
 
