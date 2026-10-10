@@ -33,7 +33,7 @@ for its container image and tool catalog.
 | `imageRef.name` | string | Yes | Name of the `AgentImage` CR in the same namespace that provides the container image and tool catalog |
 | `runtime.imagePullPolicy` | string | No | Kubernetes image pull policy (`Always`, `Never`, `IfNotPresent`) |
 | `runtime.resources` | ResourceRequirements | No | CPU/memory requests and limits for the agent pod |
-| `llm.model` | string | Yes | LLM model identifier (e.g. `glm-5.1:cloud`) |
+| `llm.model` | string | Yes | LLM model identifier (e.g. `unsloth/gpt-oss-120b-GGUF:F16`) |
 | `llm.provider` | string | No | LLM provider backend. One of `ollama-cloud`, `opencode`, `custom` |
 | `llm.maxTurns` | int | No | Maximum tool-use loop turns |
 | `llm.temperature` | float64 | No | LLM sampling temperature |
@@ -95,7 +95,7 @@ spec:
         cpu: 500m
         memory: 512Mi
   llm:
-    model: glm-5.1:cloud
+    model: unsloth/gpt-oss-120b-GGUF:F16
     provider: ollama-cloud
     maxTurns: 25
     temperature: 0.3
